@@ -1,0 +1,88 @@
+
+import ccxt from 'ccxt';
+import logger from '../utils/logger';
+
+export class BingXService {
+    private exchange: any; // Using any to avoid specific version type mismatches for now
+
+    constructor(apiKey?: string, secretKey?: string) {
+        // @ts-ignore
+        this.exchange = new ccxt.bingx({
+            apiKey: apiKey,
+            secret: secretKey,
+            options: {
+                defaultType: 'swap', // 'swap' for futures/perpetuals
+                adjustForTimeDifference: true,
+            },
+            enableRateLimit: true,
+        });
+        this.exchange.loadMarkets().catch((err: any) => logger.error('Failed to load markets:', err));
+    }
+
+    async setLeverage(symbol: string, leverage: number, side: 'LONG' | 'SHORT' = 'LONG') {
+        const cleanSide = side.toUpperCase();
+        const cleanLeverage = Math.floor(leverage); // Ensure integer
+
+        try {
+            await this.exchange.loadMarkets(); // Ensure markets are loaded for precision
+            logger.info(`Attempting to set leverage: ${cleanLeverage}x for ${symbol} side=${cleanSide}`);
+            await this.exchange.setLeverage(cleanLeverage, symbol, { side: cleanSide });
+            logger.info(`✅ Leverage set to ${cleanLeverage}x for ${symbol} (${cleanSide})`);
+        } catch (error: any) {
+            logger.error(`❌ Failed to set leverage for ${symbol} ${cleanSide}: ${error.message}`);
+            // No retry here, let TradeManager handle logic if needed
+            throw error;
+        }
+    }
+
+    async priceToPrecision(symbol: string, price: number) {
+        await this.exchange.loadMarkets();
+        return parseFloat(this.exchange.priceToPrecision(symbol, price));
+    }
+
+    async amountToPrecision(symbol: string, amount: number) {
+        await this.exchange.loadMarkets();
+        return parseFloat(this.exchange.amountToPrecision(symbol, amount));
+    }
+
+    async getBalance() {
+        try {
+            const balance = await this.exchange.fetchBalance({ type: 'swap' });
+            return balance.total['USDT']; // Assuming USDT-M
+        } catch (error) {
+            logger.error('Error fetching balance:', error);
+            throw error;
+        }
+    }
+
+    async getMarketPrice(symbol: string) {
+        try {
+            const ticker = await this.exchange.fetchTicker(symbol);
+            return ticker.last;
+        } catch (error) {
+            logger.error(`Error fetching price for ${symbol}: `, error);
+            throw error;
+        }
+    }
+
+    /*
+     * Place an order
+     * @param symbol e.g., 'BTC/USDT:USDT'
+     * @param type 'market' or 'limit'
+     * @param side 'buy' or 'sell'
+     * @param amount quantity in contracts or base currency
+     * @param price limit price (optional)
+     * @param params params for SL/TP
+     */
+    async placeOrder(symbol: string, type: 'market' | 'limit', side: 'buy' | 'sell', amount: number, price?: number, params: any = {}) {
+        try {
+            logger.info(`Placing Order: ${symbol} ${side} ${amount} with params: ${JSON.stringify(params)}`);
+            const order = await this.exchange.createOrder(symbol, type, side, amount, price, params);
+            logger.info(`Order placed: ${order.id} for ${symbol} ${side} ${amount} `);
+            return order;
+        } catch (error) {
+            logger.error(`Error placing order for ${symbol}: `, error);
+            throw error;
+        }
+    }
+}

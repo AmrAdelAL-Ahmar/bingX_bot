@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  bot:
+    build: .
+    container_name: bingx-trading-bot
+    restart: always
+    env_file:
+      - .env
+    depends_on:
+      - mongo
+    volumes:
+      - ./logs:/app/logs
+
+  mongo:
+    image: mongo:latest
+    container_name: bingx-bot-mongo
+    restart: always
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+
+volumes:
+  mongo-data:
