@@ -41,9 +41,18 @@ export class SignalParser {
             let leverage: number | undefined;
 
             // 3. Extract Symbol
-            const symbolMatch = text.match(/#?([A-Z0-9]+)(?:USDT|\/USDT|[\s]USDT)/);
-            if (symbolMatch) {
-                symbol = `${symbolMatch[1]}/USDT:USDT`;
+            // Special handling for GOLD/XAU
+            if (text.includes('XAU') || text.includes('GOLD') || text.includes('الذهب')) {
+                symbol = 'XAU/USDT:USDT';
+            } else {
+                // Matches: GHSTUSDT, #BTCUSDT, BTC/USDT, BTC USDT, PIPPIN/USDT
+                const symbolMatch = text.match(/#?([A-Z0-9]+)(?:USDT|\/USDT|[\s]USDT)/) ||
+                    text.match(/^([A-Z0-9]+)USDT/m) ||
+                    text.match(/([A-Z0-9]+)\/USDT/);
+
+                if (symbolMatch) {
+                    symbol = `${symbolMatch[1]}/USDT:USDT`;
+                }
             }
 
             // 4. Extract Direction & Leverage
@@ -64,9 +73,11 @@ export class SignalParser {
                 const line = lines[i].toUpperCase();
 
                 // Entry Search
-                if (line.includes('ENTRY') || line.includes('ENTER PRICE') || line.includes('سعر الدخول') || line.includes('EP')) {
+                if (line.includes('ENTRY') || line.includes('ENTER PRICE') ||
+                    line.includes('سعر الدخول') || line.includes('الدخول') ||
+                    line.includes('EP')) {
                     // Check if value is on this line or next
-                    const valMatch = lines[i] + (lines[i + 1] || '');
+                    const valMatch = lines[i] + ' ' + (lines[i + 1] || '');
                     const matches = valMatch.match(/([\d.]+)(?:\s*-\s*([\d.]+))?/);
                     if (matches && entry.length === 0) {
                         entry.push(parseFloat(matches[1]));
@@ -75,37 +86,41 @@ export class SignalParser {
                 }
 
                 // Targets Search
-                if (line.includes('TARGET') || line.includes('TP') || line.includes('الاهداف') || line.includes('الأهداف')) {
+                // Trigger only on explicit headers, NOT just emojis
+                if (line.includes('TARGET') || line.includes('TP') ||
+                    line.includes('الاهداف') || line.includes('الأهداف') ||
+                    (line.includes('هدف') && !line.includes('الهدف'))) {
+
                     // Check next few lines for prices
-                    let j = i + 1;
+                    let j = i;
+                    if (!line.match(/[\d.]+/)) j++; // If no number on this line, look next
+
                     while (j < lines.length) {
-                        const priceMatch = lines[j].match(/^([\d.]+)/);
+                        // Check for stop keywords to break loop
+                        if (lines[j].toUpperCase().match(/(STOP|SL|استوب|الأستوب|❌|RISK|LEVERAGE)/)) break;
+
+                        // Check for numbers (potentially with emojis like ✅)
+                        const priceMatch = lines[j].match(/(?:✅|🪙|\s|^)([\d.]+)/);
                         if (priceMatch) {
-                            targets.push(parseFloat(priceMatch[1]));
-                            j++;
-                        } else if (lines[j].toUpperCase().includes('STOP') || lines[j].toUpperCase().includes('SL')) {
-                            break; // Stop if we hit next section
-                        } else {
-                            // Maybe it's TP1: 0.1 format
-                            const inlineMatch = lines[j].match(/(?:TP\d*|TARGET\d*)[\s:.-]*([\d.]+)/i);
-                            if (inlineMatch) {
-                                targets.push(parseFloat(inlineMatch[1]));
-                                j++;
-                            } else {
-                                break;
+                            const val = parseFloat(priceMatch[1]);
+                            if (!isNaN(val) && !entry.includes(val) && !targets.includes(val)) {
+                                targets.push(val);
                             }
+                        } else {
+                            // Break on unrelated headers
+                            if (lines[j].match(/(ENTRY|DOCK|LEV|STOP)/i)) break;
                         }
-                    }
-                    if (targets.length === 0) {
-                        // Check if it's inline like TP1: 0.1
-                        const inlineMatches = [...message.matchAll(/(?:TP\d*|TARGET\d*)[\s:.-]*([\d.]+)/gi)];
-                        targets = inlineMatches.map(m => parseFloat(m[1]));
+                        j++;
+                        if (j > i + 8) break;
                     }
                 }
 
                 // Stop Loss Search
-                if (line.includes('STOP') || line.includes('SL') || line.includes('الاستوب') || line.includes('الأستوب')) {
-                    const valMatch = lines[i] + (lines[i + 1] || '');
+                if (line.includes('STOP') || line.includes('SL') ||
+                    line.includes('الاستوب') || line.includes('الأستوب') ||
+                    line.includes('استوب') || // Added missing keyword
+                    line.includes('❌')) {
+                    const valMatch = lines[i] + ' ' + (lines[i + 1] || '');
                     const match = valMatch.match(/([\d.]+)/);
                     if (match) stopLoss = parseFloat(match[1]);
                 }

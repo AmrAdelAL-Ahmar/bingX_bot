@@ -86,14 +86,25 @@ export class BingXService {
         }
     }
 
-    async getPositions(symbol: string) {
+    async getPositions(symbol?: string) {
         try {
             await this.exchange.loadMarkets();
-            const positions = await this.exchange.fetchPositions([symbol]);
+            const symbols = symbol ? [symbol] : undefined;
+            const positions = await this.exchange.fetchPositions(symbols);
             return positions;
         } catch (error) {
-            logger.error(`Error fetching positions for ${symbol}: `, error);
+            logger.error(`Error fetching positions for ${symbol || 'all'}: `, error);
             throw error;
+        }
+    }
+
+    async getOrder(symbol: string, orderId: string) {
+        try {
+            return await this.exchange.fetchOrder(orderId, symbol);
+        } catch (error) {
+            logger.error(`Error fetching order ${orderId}:`, error);
+            // Don't throw, return null to handle gracefully in monitor
+            return null;
         }
     }
 }

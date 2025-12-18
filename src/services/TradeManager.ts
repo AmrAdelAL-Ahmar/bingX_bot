@@ -4,6 +4,20 @@ import Trade, { ITrade } from '../models/Trade';
 import User from '../models/User';
 import logger from '../utils/logger';
 
+// Define return interface
+export interface TradeResult {
+    tradeId: string;
+    symbol: string;
+    direction: 'LONG' | 'SHORT';
+    entryPrice: number;
+    amount: number; // Quantity in coins
+    margin: number; // USDT used
+    leverage: number;
+    riskPercentage: number;
+    targets: { price: number; pnlPercent: number }[];
+    stopLoss: { price: number; pnlPercent: number };
+}
+
 export class TradeManager {
     private bingX: BingXService;
 
@@ -11,7 +25,7 @@ export class TradeManager {
         this.bingX = bingXService;
     }
 
-    async executeSignal(signal: ParsedSignal, userId: string) {
+    async executeSignal(signal: ParsedSignal, userId: string): Promise<TradeResult | undefined> {
         try {
             const user = await User.findById(userId);
             if (!user || !user.isActive) {
@@ -32,7 +46,6 @@ export class TradeManager {
                 logger.info(`Processing CLOSE signal for ${signal.symbol}`);
                 // Logic to close existing position
                 try {
-                    // Fetch open position to see if we have one and what side it is
                     const positions = await this.bingX.getPositions(signal.symbol);
                     if (positions.length === 0) {
                         logger.info(`No open positions found for ${signal.symbol} to close.`);
@@ -51,11 +64,12 @@ export class TradeManager {
                             { positionSide: pos.side.toUpperCase() }
                         );
                         logger.info(`✅ Successfully closed ${pos.side} position for ${signal.symbol}`);
+                        // Update DB Status if needed (will be handled by PositionMonitor eventually)
                     }
                 } catch (error) {
                     logger.error(`Error closing position for ${signal.symbol}:`, error);
                 }
-                return;
+                return; // CLOSE signals don't return a TradeResult for now
             }
 
             // --- Standard Trade Execution ---
@@ -67,15 +81,13 @@ export class TradeManager {
 
                 const entryPrice = signal.entry[0];
                 const stopLossPrice = await this.bingX.priceToPrecision(signal.symbol, signal.stopLoss);
-                const takeProfitPrice = await this.bingX.priceToPrecision(signal.symbol, signal.targets[0]);
+                const takeProfitPrices = await Promise.all(signal.targets.map(t => this.bingX.priceToPrecision(signal.symbol, t)));
 
                 // 2. Position Sizing
                 const riskPercentage = signal.risk || user.riskPercentage || 2;
                 const leverage = signal.leverage || 10;
-
-                // Position size in USDT = Balance * (Risk %) * Leverage
                 const positionSizeUSDT = (balance * (riskPercentage / 100)) * leverage;
-                logger.info(`Trade Setup: Symbol=${signal.symbol}, Risk=${riskPercentage}%, Lev=${leverage}, PosSize=${positionSizeUSDT.toFixed(2)} USDT`);
+                const marginUsed = balance * (riskPercentage / 100);
 
                 // 3. Set Leverage
                 await this.bingX.setLeverage(signal.symbol, leverage, signal.direction);
@@ -85,11 +97,8 @@ export class TradeManager {
                 const amountContracts = await this.bingX.amountToPrecision(signal.symbol, rawAmount);
 
                 if (amountContracts <= 0) {
-                    logger.error(`Calculated amount ${amountContracts} is too small for ${signal.symbol}`);
                     throw new Error(`Trade size is too small for ${signal.symbol}. Check your balance or risk settings.`);
                 }
-
-                logger.info(`Placing Order: ${amountContracts} contracts at Market`);
 
                 // 5. Place Market Order
                 const order = await this.bingX.placeOrder(
@@ -101,11 +110,11 @@ export class TradeManager {
                     {
                         positionSide: signal.direction,
                         stopLoss: stopLossPrice,
-                        takeProfit: takeProfitPrice
+                        takeProfit: takeProfitPrices[0] // Set first TP as hard TP
                     }
                 );
 
-                // 5. Save to DB
+                // 6. Save to DB
                 const trade = new Trade({
                     userId: user._id,
                     symbol: signal.symbol,
@@ -114,6 +123,7 @@ export class TradeManager {
                     stopLoss: signal.stopLoss,
                     targets: signal.targets.map(t => ({ price: t, hit: false })),
                     amount: positionSizeUSDT,
+                    leverage: leverage,
                     bingxOrderId: order.id,
                     currentStatus: 'OPEN',
                     logs: [`Opened trade at ${new Date().toISOString()} via Signal. Risk: ${riskPercentage}%, Lev: ${leverage}x`]
@@ -121,7 +131,35 @@ export class TradeManager {
                 await trade.save();
 
                 logger.info(`✅ Trade successfully executed for ${signal.symbol}: ${order.id}`);
-                return trade;
+
+                // 7. Calculate PnL stats for reporting
+                const calculatePnL = (entry: number, exit: number, direction: string, lev: number) => {
+                    const diff = direction === 'LONG' ? (exit - entry) : (entry - exit);
+                    return (diff / entry) * 100 * lev;
+                };
+
+                const targetsResult = signal.targets.map(t => ({
+                    price: t,
+                    pnlPercent: parseFloat(calculatePnL(entryPrice, t, signal.direction!, leverage).toFixed(2))
+                }));
+
+                const slResult = {
+                    price: signal.stopLoss,
+                    pnlPercent: parseFloat(calculatePnL(entryPrice, signal.stopLoss, signal.direction!, leverage).toFixed(2))
+                };
+
+                return {
+                    tradeId: trade._id.toString(),
+                    symbol: signal.symbol,
+                    direction: signal.direction!,
+                    entryPrice: order.average || entryPrice,
+                    amount: amountContracts,
+                    margin: parseFloat(marginUsed.toFixed(2)),
+                    leverage,
+                    riskPercentage,
+                    targets: targetsResult,
+                    stopLoss: slResult
+                };
             }
 
         } catch (error) {

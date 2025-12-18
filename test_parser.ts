@@ -42,7 +42,36 @@ Entry:0.096
 TP1: 0.098
 SL: 0.095
 Risk: 2%
-Leverage: 10x`
+Leverage: 10x`,
+
+    // Case 6: Gold (XAU) with Emojis
+    `صفقة على الذهب لمن يريد 
+
+🪙SELL XAU
+
+ENTER PRICE
+
+✅ 4337
+
+TARGET:
+
+✅ 3300
+
+❌ STOPLOSS 
+4350`,
+
+    // Case 7: GHST with Arabic labels
+    `GHSTUSDT
+LONG 
+X50
+الدخول من السعر الحالي 
+0.193
+هدف اول
+0.1977
+هدف ثاتي
+0.210
+استوب 
+0.184`
 ];
 
 signals.forEach((msg, i) => {

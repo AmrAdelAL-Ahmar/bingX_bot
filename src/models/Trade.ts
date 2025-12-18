@@ -12,6 +12,7 @@ export interface ITrade extends Document {
     }[];
     currentStatus: 'PENDING' | 'OPEN' | 'TP1_HIT' | 'TP2_HIT' | 'TP3_HIT' | 'CLOSED_PROFIT' | 'CLOSED_LOSS' | 'CANCELLED';
     amount: number; // Position size in USDT
+    leverage: number;
     pnl: number;
     bingxOrderId?: string;
     entryTime: Date;
@@ -35,6 +36,7 @@ const TradeSchema: Schema = new Schema({
         default: 'PENDING'
     },
     amount: { type: Number, required: true },
+    leverage: { type: Number, default: 10 },
     pnl: { type: Number, default: 0 },
     bingxOrderId: { type: String },
     entryTime: { type: Date, default: Date.now },
