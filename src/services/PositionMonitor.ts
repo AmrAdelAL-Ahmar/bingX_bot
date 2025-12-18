@@ -55,7 +55,43 @@ export class PositionMonitor {
                     );
 
                     if (matchingPos) {
-                        // Position is active
+                        // Position is still active - check if we should move SL to BE
+                        if (!trade.isBreakEvenSet && trade.targets.length > 0) {
+                            const currentPrice = await this.bingX.getMarketPrice(symbol);
+                            const tp1 = trade.targets[0].price;
+                            const entry = trade.entryPrice;
+
+                            // Check if TP1 has been hit
+                            const tp1Hit = trade.direction === 'LONG'
+                                ? currentPrice >= tp1
+                                : currentPrice <= tp1;
+
+                            if (tp1Hit) {
+                                logger.info(`TP1 hit for ${trade.symbol}. Moving SL to Break-Even (${entry})`);
+                                try {
+                                    await this.bingX.setStopLoss(symbol, entry, trade.direction);
+                                    trade.isBreakEvenSet = true;
+                                    trade.logs.push(`Auto-adjusted SL to BE at ${entry} after TP1 hit`);
+                                    await trade.save();
+
+                                    // Notify user
+                                    let user = trade.userId as any;
+                                    if (!user || !user.telegramId) {
+                                        const User = (trade.constructor as any).db.model('User');
+                                        user = await User.findById(trade.userId);
+                                    }
+
+                                    if (user && user.telegramId) {
+                                        const msg = `🔒 <b>Break-Even Set</b>\n` +
+                                            `Symbol: ${trade.symbol}\n` +
+                                            `TP1 hit! Stop-loss moved to entry (${entry}) to protect profits.`;
+                                        await this.notifier(user.telegramId, msg);
+                                    }
+                                } catch (error) {
+                                    logger.error(`Failed to set BE for ${trade.symbol}:`, error);
+                                }
+                            }
+                        }
                         continue;
                     } else {
                         // Position is GONE

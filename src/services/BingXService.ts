@@ -107,4 +107,20 @@ export class BingXService {
             return null;
         }
     }
+
+    async setStopLoss(symbol: string, stopPrice: number, side: 'LONG' | 'SHORT') {
+        try {
+            await this.exchange.loadMarkets();
+            const orderSide = side === 'LONG' ? 'sell' : 'buy';
+            const params = {
+                stopPrice: stopPrice,
+                positionSide: side,
+                type: 'STOP'
+            };
+            return await this.exchange.createOrder(symbol, 'STOP', orderSide, 0, undefined, params);
+        } catch (error) {
+            logger.error(`Error setting stop loss for ${symbol}: `, error);
+            throw error;
+        }
+    }
 }

@@ -1,6 +1,8 @@
-node_modules
-dist
+node_modules/
+dist/
 .env
+.env.*
+*.log
 .DS_Store
-logs
-coverage
+debug_*.ts
+test_*.ts

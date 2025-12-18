@@ -14,6 +14,7 @@ export interface ITrade extends Document {
     amount: number; // Position size in USDT
     leverage: number;
     pnl: number;
+    isBreakEvenSet?: boolean;
     bingxOrderId?: string;
     entryTime: Date;
     closeTime?: Date;
@@ -38,6 +39,7 @@ const TradeSchema: Schema = new Schema({
     amount: { type: Number, required: true },
     leverage: { type: Number, default: 10 },
     pnl: { type: Number, default: 0 },
+    isBreakEvenSet: { type: Boolean, default: false },
     bingxOrderId: { type: String },
     entryTime: { type: Date, default: Date.now },
     closeTime: { type: Date },

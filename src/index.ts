@@ -260,6 +260,78 @@ bot.command('history', async (ctx) => {
     }
 });
 
+bot.command('report', async (ctx) => {
+    try {
+        const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+        if (!user) return;
+
+        const allTrades = await Trade.find({
+            userId: user._id,
+            currentStatus: { $in: ['CLOSED_PROFIT', 'CLOSED_LOSS'] }
+        });
+
+        if (allTrades.length === 0) {
+            ctx.reply('لا يوجد بيانات كافية لإصدار تقرير حالياً.');
+            return;
+        }
+
+        const total = allTrades.length;
+        const wins = allTrades.filter(t => t.currentStatus === 'CLOSED_PROFIT').length;
+        const losses = allTrades.filter(t => t.currentStatus === 'CLOSED_LOSS').length;
+        const totalPnl = allTrades.reduce((sum, t) => sum + (t.pnl || 0), 0);
+        const winRate = ((wins / total) * 100).toFixed(2);
+
+        const msg = `📊 <b>Trading Performance Report</b>\n\n` +
+            `✅ Total Trades: ${total}\n` +
+            `🏆 Wins: ${wins}\n` +
+            `💀 Losses: ${losses}\n` +
+            `📈 Win Rate: ${winRate}%\n` +
+            `💰 Total PnL: ${totalPnl.toFixed(2)}%\n\n` +
+            `<i>Keep up the good work! 🚀</i>`;
+
+        ctx.replyWithHTML(msg);
+    } catch (error) {
+        logger.error('Error in /report:', error);
+        ctx.reply('Error generating report.');
+    }
+});
+
+bot.command('settings', async (ctx) => {
+    try {
+        const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+        if (!user) return;
+
+        const parts = ctx.message.text.split(' ');
+        if (parts.length === 1) {
+            // Show current settings
+            const msg = `⚙️ <b>Current Settings:</b>\n\n` +
+                `🎯 Risk per trade: ${user.riskPercentage}%\n` +
+                `🚀 Default Leverage (if not in signal): 10x\n\n` +
+                `To update risk, use: <code>/settings risk 5</code>`;
+            ctx.replyWithHTML(msg);
+            return;
+        }
+
+        if (parts.length === 3 && parts[1].toLowerCase() === 'risk') {
+            const risk = parseFloat(parts[2]);
+            if (isNaN(risk) || risk <= 0 || risk > 20) {
+                ctx.reply('⚠️ Please provide a valid risk percentage (1-20).');
+                return;
+            }
+            user.riskPercentage = risk;
+            await user.save();
+            ctx.reply(`✅ Risk updated to ${risk}%`);
+            return;
+        }
+
+        ctx.reply('❓ Unknown settings command. Use <code>/settings</code> to see current values.', { parse_mode: 'HTML' });
+
+    } catch (error) {
+        logger.error('Error in /settings:', error);
+        ctx.reply('Error updating settings.');
+    }
+});
+
 bot.command('update', async (ctx) => {
     try {
         const parts = ctx.message.text.split(' ');
