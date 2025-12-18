@@ -1,13 +1,14 @@
 import logger from '../utils/logger';
 
 export interface ParsedSignal {
+    type: 'TRADE' | 'CLOSE';
     symbol: string;
-    direction: 'LONG' | 'SHORT';
-    entry: number[]; // Support entry ranges e.g. [50000, 50500]
-    targets: number[];
-    stopLoss: number;
-    risk?: number;      // Optional risk override (e.g. 2 for 2%)
-    leverage?: number;  // Optional leverage override (e.g. 10 for 10x)
+    direction?: 'LONG' | 'SHORT';
+    entry?: number[];
+    targets?: number[];
+    stopLoss?: number;
+    risk?: number;
+    leverage?: number;
 }
 
 export class SignalParser {
@@ -17,7 +18,20 @@ export class SignalParser {
 
     static parse(message: string): ParsedSignal | null {
         try {
-            const lines = message.split('\n');
+            const text = message.toUpperCase();
+
+            // 1. Check for Exit/Close Signal
+            if (text.includes('CLOSE') || text.includes('EXIT') || text.includes('أغلق') || text.includes('خروج')) {
+                const symbolMatch = text.match(/#?([A-Z0-9]+)(?:USDT|\/USDT|[\s]USDT)/);
+                if (symbolMatch) {
+                    return {
+                        type: 'CLOSE',
+                        symbol: `${symbolMatch[1]}/USDT:USDT`
+                    };
+                }
+            }
+
+            // 2. Initialize variables
             let symbol = '';
             let direction: 'LONG' | 'SHORT' = 'LONG';
             let entry: number[] = [];
@@ -26,60 +40,102 @@ export class SignalParser {
             let risk: number | undefined;
             let leverage: number | undefined;
 
-            // Normalize message for key checks
-            const text = message.toUpperCase();
-
-            // 1. Extract Symbol
-            // Matches: #BTCUSDT, BTC/USDT, BTC USDT, PIPPIN/USDT
+            // 3. Extract Symbol
             const symbolMatch = text.match(/#?([A-Z0-9]+)(?:USDT|\/USDT|[\s]USDT)/);
             if (symbolMatch) {
-                symbol = `${symbolMatch[1]}/USDT:USDT`; // CCXT Format for BingX Swap
+                symbol = `${symbolMatch[1]}/USDT:USDT`;
             }
 
-            // 2. Extract Direction
-            const dirMatch = text.match(/\b(LONG|BUY)\b|\b(SHORT|SELL)\b/);
-            if (dirMatch) {
-                direction = dirMatch[1] ? 'LONG' : 'SHORT';
+            // 4. Extract Direction & Leverage
+            if (text.includes('SHORT') || text.includes('SELL') || text.includes('🔽')) {
+                direction = 'SHORT';
+            } else if (text.includes('LONG') || text.includes('BUY') || text.includes('🔼')) {
+                direction = 'LONG';
             }
 
-            // 3. Extract Entry
-            const entryMatch = message.match(/(?:Entry|EP|E\.P)[\s:-]*([\d.]+)(?:\s*-\s*([\d.]+))?/i);
-            if (entryMatch) {
-                entry.push(parseFloat(entryMatch[1]));
-                if (entryMatch[2]) entry.push(parseFloat(entryMatch[2]));
+            const levMatch = text.match(/(?:X|LEVERAGE|LEV|X)[\s:]*(\d+)/i);
+            if (levMatch) leverage = parseInt(levMatch[1]);
+
+            // 5. Block-based Parsing for complex formats
+            // Split by lines and search for keywords
+            const lines = message.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i].toUpperCase();
+
+                // Entry Search
+                if (line.includes('ENTRY') || line.includes('ENTER PRICE') || line.includes('سعر الدخول') || line.includes('EP')) {
+                    // Check if value is on this line or next
+                    const valMatch = lines[i] + (lines[i + 1] || '');
+                    const matches = valMatch.match(/([\d.]+)(?:\s*-\s*([\d.]+))?/);
+                    if (matches && entry.length === 0) {
+                        entry.push(parseFloat(matches[1]));
+                        if (matches[2]) entry.push(parseFloat(matches[2]));
+                    }
+                }
+
+                // Targets Search
+                if (line.includes('TARGET') || line.includes('TP') || line.includes('الاهداف') || line.includes('الأهداف')) {
+                    // Check next few lines for prices
+                    let j = i + 1;
+                    while (j < lines.length) {
+                        const priceMatch = lines[j].match(/^([\d.]+)/);
+                        if (priceMatch) {
+                            targets.push(parseFloat(priceMatch[1]));
+                            j++;
+                        } else if (lines[j].toUpperCase().includes('STOP') || lines[j].toUpperCase().includes('SL')) {
+                            break; // Stop if we hit next section
+                        } else {
+                            // Maybe it's TP1: 0.1 format
+                            const inlineMatch = lines[j].match(/(?:TP\d*|TARGET\d*)[\s:.-]*([\d.]+)/i);
+                            if (inlineMatch) {
+                                targets.push(parseFloat(inlineMatch[1]));
+                                j++;
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                    if (targets.length === 0) {
+                        // Check if it's inline like TP1: 0.1
+                        const inlineMatches = [...message.matchAll(/(?:TP\d*|TARGET\d*)[\s:.-]*([\d.]+)/gi)];
+                        targets = inlineMatches.map(m => parseFloat(m[1]));
+                    }
+                }
+
+                // Stop Loss Search
+                if (line.includes('STOP') || line.includes('SL') || line.includes('الاستوب') || line.includes('الأستوب')) {
+                    const valMatch = lines[i] + (lines[i + 1] || '');
+                    const match = valMatch.match(/([\d.]+)/);
+                    if (match) stopLoss = parseFloat(match[1]);
+                }
+
+                // Risk Search
+                if (line.includes('RISK')) {
+                    const match = line.match(/RISK[\s:.-]*([\d.]+)/);
+                    if (match) risk = parseFloat(match[1]);
+                }
             }
 
-            // 4. Extract Targets (TPs)
-            const tpMatches = [...message.matchAll(/(?:TP\d*|Target\s*\d*)[\s:.-]*([\d.]+)/gi)];
-            for (const m of tpMatches) {
-                const val = parseFloat(m[1]);
-                if (!isNaN(val)) targets.push(val);
+            // Fallback for simple formats
+            if (targets.length === 0) {
+                const tpMatches = [...message.matchAll(/(?:TP\d*|TARGET\d*)[\s:.-]*([\d.]+)/gi)];
+                targets = tpMatches.map(m => parseFloat(m[1]));
+            }
+            if (entry.length === 0) {
+                const eMatch = message.match(/(?:ENTRY|EP)[\s:.-]*([\d.]+)/i);
+                if (eMatch) entry.push(parseFloat(eMatch[1]));
             }
 
-            // 5. Extract Stop Loss
-            const slMatch = message.match(/(?:SL|Stop|Stop Loss)[\s:.-]*([\d.]+)/i);
-            if (slMatch) {
-                stopLoss = parseFloat(slMatch[1]);
-            }
-
-            // 6. Extract Risk (New)
-            const riskMatch = message.match(/(?:Risk)[\s:.-]*([\d.]+)/i);
-            if (riskMatch) {
-                risk = parseFloat(riskMatch[1]);
-            }
-
-            // 7. Extract Leverage (New)
-            const levMatch = message.match(/(?:Leverage|Lev)[\s:.-]*(\d+)/i);
-            if (levMatch) {
-                leverage = parseInt(levMatch[1]);
-            }
-
+            // Final check
             if (!symbol || entry.length === 0 || targets.length === 0 || stopLoss === 0) {
-                logger.warn('Failed to parse all signal components', { symbol, entry, targets, stopLoss });
+                // If we have symbol and something else, we might still want to try?
+                // But generally fail to avoid bad trades.
                 return null;
             }
 
             return {
+                type: 'TRADE',
                 symbol,
                 direction,
                 entry,
@@ -90,7 +146,7 @@ export class SignalParser {
             };
 
         } catch (error) {
-            logger.error('Error parsing signal:', error);
+            console.error('Error parsing signal:', error);
             return null;
         }
     }

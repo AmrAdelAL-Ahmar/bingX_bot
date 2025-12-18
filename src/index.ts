@@ -57,23 +57,29 @@ bot.on('text', async (ctx) => {
     const signal = SignalParser.parse(message);
 
     if (signal) {
-        logger.info(`Signal detected from ${ctx.from.username}: ${signal.symbol}`);
-        ctx.reply(`Signal Detected: ${signal.direction} ${signal.symbol}\nEntry: ${signal.entry.join('-')}\nProcessing...`);
+        const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+        if (!user) {
+            ctx.reply('User not found in DB. Please start a chat with the bot first.');
+            return;
+        }
 
         try {
-            const user = await User.findOne({ telegramId: ctx.from.id.toString() });
-            if (user) {
-                // Execute Trade
+            if (signal.type === 'TRADE') {
+                logger.info(`Signal detected from ${ctx.from.username}: ${signal.symbol} ${signal.direction} Entry=${signal.entry?.[0]}`);
+                ctx.reply(`✅ Trade Signal Parsed: ${signal.symbol}\nDirection: ${signal.direction}\nEntry: ${signal.entry?.[0]}\nTarget: ${signal.targets?.[0]}\nSL: ${signal.stopLoss}\nProcessing...`);
                 const trade = await tradeManager.executeSignal(signal, user._id.toString());
                 if (trade) {
                     ctx.reply(`✅ Trade Executed!\nID: ${trade.bingxOrderId}\nSize: ${trade.amount.toFixed(2)} USDT`);
                 }
-            } else {
-                ctx.reply('User not found in DB.');
+            } else if (signal.type === 'CLOSE') {
+                logger.info(`Close Signal detected from ${ctx.from.username}: ${signal.symbol}`);
+                ctx.reply(`🛑 Close Signal Parsed: ${signal.symbol}\nAttempting to close position...`);
+                await tradeManager.executeSignal(signal, user._id.toString());
+                ctx.reply(`✅ Close order sent for ${signal.symbol}`);
             }
         } catch (error: any) {
-            logger.error('Trade execution failed', error);
-            ctx.reply(`❌ Trade Failed: ${error.message}`);
+            logger.error(`Error processing signal: ${error.message}`);
+            ctx.reply(`❌ Error: ${error.message}`);
         }
     } else {
         // Optional: Reply validation error or ignore non-signal messages

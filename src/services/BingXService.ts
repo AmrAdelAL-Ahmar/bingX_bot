@@ -85,4 +85,15 @@ export class BingXService {
             throw error;
         }
     }
+
+    async getPositions(symbol: string) {
+        try {
+            await this.exchange.loadMarkets();
+            const positions = await this.exchange.fetchPositions([symbol]);
+            return positions;
+        } catch (error) {
+            logger.error(`Error fetching positions for ${symbol}: `, error);
+            throw error;
+        }
+    }
 }
