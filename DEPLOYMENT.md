@@ -170,7 +170,10 @@ BINGX_SECRET_KEY=your_secret
 TELEGRAM_BOT_TOKEN=your_token
 MONGO_URI=your_mongodb_uri
 RISK_PERCENTAGE=5
+PORT=10000
 ```
+
+> **ملاحظة:** Render يوفر متغير `PORT` تلقائياً، لكن يمكنك تحديده يدوياً إذا أردت.
 
 #### 5. اختيار الخطة
 - **Free:** مجاني (يتوقف بعد 15 دقيقة)

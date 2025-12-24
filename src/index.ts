@@ -9,6 +9,7 @@ import { TradeManager } from './services/TradeManager';
 import { SignalParser } from './services/SignalParser';
 import { ReportingService } from './services/ReportingService';
 import { PositionMonitor } from './services/PositionMonitor';
+import { startHealthServer } from './server';
 
 dotenv.config();
 
@@ -425,6 +426,10 @@ bot.command('update', async (ctx) => {
 
 const start = async () => {
     await connectDB();
+
+    // Start HTTP health check server for Render deployment
+    const port = parseInt(process.env.PORT || '3000');
+    startHealthServer(port);
 
     // Start Monitor before bot launch
     positionMonitor.start();
