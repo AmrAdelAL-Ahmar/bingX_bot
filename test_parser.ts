@@ -47,7 +47,7 @@ Leverage: 10x`,
     // Case 6: Gold (XAU) with Emojis
     `صفقة على الذهب لمن يريد 
 
-🪙SELL XAU
+🪙SELL XAUT
 
 ENTER PRICE
 

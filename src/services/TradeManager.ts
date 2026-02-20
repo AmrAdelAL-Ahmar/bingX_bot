@@ -74,12 +74,19 @@ export class TradeManager {
 
             // --- Standard Trade Execution ---
             if (signal.type === 'TRADE') {
-                if (!signal.entry || !signal.targets || !signal.stopLoss || !signal.direction) {
+                if (!signal.targets || !signal.stopLoss || !signal.direction) {
                     logger.error('Missing required trade components', { signal });
                     return;
                 }
 
-                const entryPrice = signal.entry[0];
+                let entryPrice: number;
+                if (signal.entry && signal.entry.length > 0) {
+                    entryPrice = signal.entry[0];
+                } else {
+                    logger.info(`No entry price provided for ${signal.symbol}. Fetching current market price...`);
+                    entryPrice = await this.bingX.getMarketPrice(signal.symbol);
+                    logger.info(`Fetched Market Price for ${signal.symbol}: ${entryPrice}`);
+                }
                 const stopLossPrice = await this.bingX.priceToPrecision(signal.symbol, signal.stopLoss);
                 const takeProfitPrices = await Promise.all(signal.targets.map(t => this.bingX.priceToPrecision(signal.symbol, t)));
 
@@ -89,7 +96,8 @@ export class TradeManager {
                 const positionSizeUSDT = (balance * (riskPercentage / 100)) * leverage;
                 const marginUsed = balance * (riskPercentage / 100);
 
-                // 3. Set Leverage
+                // 3. Set Leverage & Margin Mode
+                await this.bingX.setMarginMode(signal.symbol, signal.marginMode || 'CROSS');
                 await this.bingX.setLeverage(signal.symbol, leverage, signal.direction);
 
                 // 4. Calculate Contracts
@@ -100,19 +108,42 @@ export class TradeManager {
                     throw new Error(`Trade size is too small for ${signal.symbol}. Check your balance or risk settings.`);
                 }
 
-                // 5. Place Market Order
-                const order = await this.bingX.placeOrder(
-                    signal.symbol,
-                    'market',
-                    signal.direction === 'LONG' ? 'buy' : 'sell',
-                    amountContracts,
-                    undefined,
-                    {
-                        positionSide: signal.direction,
-                        stopLoss: stopLossPrice,
-                        takeProfit: takeProfitPrices[0] // Set first TP as hard TP
+                // 5. Place Market Order (With Retry Logic)
+                let order: any;
+                try {
+                    order = await this.bingX.placeOrder(
+                        signal.symbol,
+                        'market',
+                        signal.direction === 'LONG' ? 'buy' : 'sell',
+                        amountContracts,
+                        undefined,
+                        {
+                            positionSide: signal.direction,
+                            stopLoss: stopLossPrice,
+                            takeProfit: takeProfitPrices[0]
+                        }
+                    );
+                } catch (err: any) {
+                    // Retry with 50% size if Insufficient Margin
+                    if (err.message && err.message.includes('Insufficient margin')) {
+                        logger.warn(`Insufficient margin for full size. Retrying with 50% size...`);
+                        const reducedAmount = amountContracts * 0.5;
+                        order = await this.bingX.placeOrder(
+                            signal.symbol,
+                            'market',
+                            signal.direction === 'LONG' ? 'buy' : 'sell',
+                            reducedAmount,
+                            undefined,
+                            {
+                                positionSide: signal.direction,
+                                stopLoss: stopLossPrice,
+                                takeProfit: takeProfitPrices[0]
+                            }
+                        );
+                    } else {
+                        throw err;
                     }
-                );
+                }
 
                 // 6. Save to DB
                 const trade = new Trade({

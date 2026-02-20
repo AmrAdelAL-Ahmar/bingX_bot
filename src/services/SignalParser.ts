@@ -9,6 +9,7 @@ export interface ParsedSignal {
     stopLoss?: number;
     risk?: number;
     leverage?: number;
+    marginMode?: 'CROSS' | 'ISOLATED';
 }
 
 export class SignalParser {
@@ -39,31 +40,62 @@ export class SignalParser {
             let stopLoss = 0;
             let risk: number | undefined;
             let leverage: number | undefined;
+            let marginMode: 'CROSS' | 'ISOLATED' = 'CROSS'; // Default to CROSS
 
             // 3. Extract Symbol
-            // Special handling for GOLD/XAU
-            if (text.includes('XAU') || text.includes('GOLD') || text.includes('الذهب')) {
-                symbol = 'XAU/USDT:USDT';
-            } else {
-                // Matches: GHSTUSDT, #BTCUSDT, BTC/USDT, BTC USDT, PIPPIN/USDT
-                const symbolMatch = text.match(/#?([A-Z0-9]+)(?:USDT|\/USDT|[\s]USDT)/) ||
-                    text.match(/^([A-Z0-9]+)USDT/m) ||
-                    text.match(/([A-Z0-9]+)\/USDT/);
+            // 3. Extract Symbol
+            const symbolMatch = text.match(/#?([A-Z0-9]+)(?:USDT|\/USDT|[\s]USDT)/) ||
+                text.match(/symbol\s*[:=]\s*([A-Z0-9]+)/i);
 
-                if (symbolMatch) {
-                    symbol = `${symbolMatch[1]}/USDT:USDT`;
+            if (symbolMatch) {
+                const extracted = symbolMatch[1].toUpperCase();
+
+                // Normaliztion Mapping
+                if (extracted === 'GOLD' || extracted === 'XAU' || extracted === 'XAUT') {
+                    symbol = 'XAUT/USDT:USDT';
+                } else if (extracted === 'BTC') {
+                    symbol = 'BTC/USDT:USDT';
                 }
+                else if (extracted === 'BTC') {
+                    symbol = 'BTC/USDT:USDT';
+                } else {
+                    symbol = `${extracted}/USDT:USDT`;
+                }
+            } else if (text.includes('XAU')) {
+                // Fallback for Arabic "Gold" or strict keyword without tickers
+                symbol = 'XAUT/USDT:USDT';
+            }
+            else if (
+                text.includes('GOLD') || text.includes('الذهب')
+            ) {
+                symbol = 'GOLD/USDT:USD';
+
+            }
+            // else: symbol remains empty, will be caught by validation check later
+
+            // 3.1 Extract Margin Mode
+            if (text.includes('ISOLATED') || text.includes('معزول')) {
+                marginMode = 'ISOLATED';
+            } else if (text.includes('CROSS') || text.includes('متبادل')) {
+                marginMode = 'CROSS';
             }
 
-            // 4. Extract Direction & Leverage
+            // 4. Extract Direction
             if (text.includes('SHORT') || text.includes('SELL') || text.includes('🔽')) {
                 direction = 'SHORT';
             } else if (text.includes('LONG') || text.includes('BUY') || text.includes('🔼')) {
                 direction = 'LONG';
             }
 
-            const levMatch = text.match(/(?:X|LEVERAGE|LEV|X)[\s:]*(\d+)/i);
-            if (levMatch) leverage = parseInt(levMatch[1]);
+            // 6. Leverage (Default 10)
+            const levMatch = text.match(/x(\d+)/i) || text.match(/(\d+)x/i);
+            if (levMatch) {
+                leverage = parseInt(levMatch[1]);
+            }
+            // Cap XAUT leverage to 50x (common limit for commodities)
+            if (symbol.includes('XAUT') && leverage && leverage > 50) {
+                leverage = 50;
+            }
 
             // 5. Block-based Parsing for complex formats
             // Split by lines and search for keywords
@@ -143,7 +175,8 @@ export class SignalParser {
             }
 
             // Final check
-            if (!symbol || entry.length === 0 || targets.length === 0 || stopLoss === 0) {
+            // Entry is optional now (will use market price if missing)
+            if (!symbol || targets.length === 0 || stopLoss === 0) {
                 // If we have symbol and something else, we might still want to try?
                 // But generally fail to avoid bad trades.
                 return null;
@@ -157,7 +190,8 @@ export class SignalParser {
                 targets,
                 stopLoss,
                 risk,
-                leverage
+                leverage,
+                marginMode
             };
 
         } catch (error) {

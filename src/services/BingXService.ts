@@ -35,6 +35,20 @@ export class BingXService {
         }
     }
 
+    async setMarginMode(symbol: string, mode: 'CROSS' | 'ISOLATED') {
+        try {
+            await this.exchange.loadMarkets();
+            const marginMode = mode.toUpperCase();
+            logger.info(`Attempting to set margin mode: ${marginMode} for ${symbol}`);
+            // BingX specific params might be needed, but ccxt unified usually handles it
+            await this.exchange.setMarginMode(marginMode, symbol);
+            logger.info(`✅ Margin mode set to ${marginMode} for ${symbol}`);
+        } catch (error: any) {
+            logger.error(`❌ Failed to set margin mode for ${symbol}: ${error.message}`);
+            // Don't throw fatal error, just log. Some pairs might process differently.
+        }
+    }
+
     async priceToPrecision(symbol: string, price: number) {
         await this.exchange.loadMarkets();
         return parseFloat(this.exchange.priceToPrecision(symbol, price));
@@ -48,7 +62,9 @@ export class BingXService {
     async getBalance() {
         try {
             const balance = await this.exchange.fetchBalance({ type: 'swap' });
-            return balance.total['USDT']; // Assuming USDT-M
+            // Strictly use 'free' (available) balance. Default to 0 if undefined.
+            // Do NOT fallback to 'total' because 'free' might be 0 (falsy) but valid.
+            return balance.free['USDT'] !== undefined ? balance.free['USDT'] : 0;
         } catch (error) {
             logger.error('Error fetching balance:', error);
             throw error;
