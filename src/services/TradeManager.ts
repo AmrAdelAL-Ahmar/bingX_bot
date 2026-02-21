@@ -90,11 +90,39 @@ export class TradeManager {
                 const stopLossPrice = await this.bingX.priceToPrecision(signal.symbol, signal.stopLoss);
                 const takeProfitPrices = await Promise.all(signal.targets.map(t => this.bingX.priceToPrecision(signal.symbol, t)));
 
-                // 2. Position Sizing
-                const riskPercentage = signal.risk || user.riskPercentage || 2;
+                // 2. Position Sizing & Risk Caps
+                let riskPercentage = signal.risk || user.riskPercentage || 2;
+                if (riskPercentage > 5) {
+                    logger.warn(`Requested risk ${riskPercentage}% exceeds single trade limit of 5%. Capping at 5%.`);
+                    riskPercentage = 5;
+                }
+
                 const leverage = signal.leverage || 10;
-                const positionSizeUSDT = (balance * (riskPercentage / 100)) * leverage;
-                const marginUsed = balance * (riskPercentage / 100);
+                let marginUsed = balance * (riskPercentage / 100);
+
+                // 2.5 Total Exposure Limit check (Max 10%)
+                const positions = await this.bingX.getPositions();
+                let totalMarginUsed = 0;
+                for (const pos of positions) {
+                    const posMargin = pos.initialMargin || (pos.notional ? Math.abs(pos.notional) / (pos.leverage || 1) : 0);
+                    totalMarginUsed += posMargin;
+                }
+
+                const maxAllowedExposure = balance * 0.10; // 10% max global risk
+                const availableMarginForNewTrade = maxAllowedExposure - totalMarginUsed;
+
+                if (availableMarginForNewTrade <= 0) {
+                    const msg = `Trade rejected: Current total margin (${totalMarginUsed.toFixed(2)} USDT) has already reached or exceeded the 10% global exposure limit (${maxAllowedExposure.toFixed(2)} USDT).`;
+                    logger.error(msg);
+                    throw new Error(msg);
+                }
+
+                if (marginUsed > availableMarginForNewTrade) {
+                    logger.warn(`Requested margin (${marginUsed.toFixed(2)} USDT) exceeds the available remaining global limit. Scaling down to the remaining margin: ${availableMarginForNewTrade.toFixed(2)} USDT.`);
+                    marginUsed = availableMarginForNewTrade;
+                }
+
+                const positionSizeUSDT = marginUsed * leverage;
 
                 // 3. Set Leverage & Margin Mode
                 await this.bingX.setMarginMode(signal.symbol, signal.marginMode || 'CROSS');
