@@ -44,31 +44,7 @@ export class TradeManager {
 
             if (signal.type === 'CLOSE') {
                 logger.info(`Processing CLOSE signal for ${signal.symbol}`);
-                // Logic to close existing position
-                try {
-                    const positions = await this.bingX.getPositions(signal.symbol);
-                    if (positions.length === 0) {
-                        logger.info(`No open positions found for ${signal.symbol} to close.`);
-                        return;
-                    }
-
-                    for (const pos of positions) {
-                        const side = pos.side.toLowerCase() === 'long' ? 'sell' : 'buy';
-                        const amount = pos.contracts;
-                        await this.bingX.placeOrder(
-                            signal.symbol,
-                            'market',
-                            side,
-                            amount,
-                            undefined,
-                            { positionSide: pos.side.toUpperCase() }
-                        );
-                        logger.info(`✅ Successfully closed ${pos.side} position for ${signal.symbol}`);
-                        // Update DB Status if needed (will be handled by PositionMonitor eventually)
-                    }
-                } catch (error) {
-                    logger.error(`Error closing position for ${signal.symbol}:`, error);
-                }
+                await this.closeSpecificPosition(userId, signal.symbol);
                 return; // CLOSE signals don't return a TradeResult for now
             }
 
@@ -137,7 +113,11 @@ export class TradeManager {
                 }
 
                 // 4.5 Maximum Stop Loss Capital Risk Limit Check (Max 6% Loss)
-                if (process.env.ENFORCE_MAX_SL_LOSS === 'true') {
+                const shouldEnforceMaxSlLoss = user.enforceMaxSlLoss !== null && user.enforceMaxSlLoss !== undefined
+                    ? user.enforceMaxSlLoss
+                    : process.env.ENFORCE_MAX_SL_LOSS === 'true';
+
+                if (shouldEnforceMaxSlLoss) {
                     // Maximum amount of money we are willing to lose completely if SL is hit
                     const maxAllowedSLLoss = balance * 0.06;
 
@@ -250,6 +230,92 @@ export class TradeManager {
 
         } catch (error) {
             logger.error('Error executing trade:', error);
+            throw error;
+        }
+    }
+
+    async closeAllPositions(userId: string): Promise<number> {
+        let closedCount = 0;
+        try {
+            const user = await User.findById(userId);
+            if (!user) throw new Error('User not found');
+
+            const positions = await this.bingX.getPositions();
+            if (!positions || positions.length === 0) {
+                return 0; // No positions to close
+            }
+
+            for (const pos of positions) {
+                if (parseFloat(pos.contracts) === 0) continue;
+
+                try {
+                    const side = pos.side.toLowerCase() === 'long' ? 'sell' : 'buy';
+                    await this.bingX.placeOrder(
+                        pos.symbol,
+                        'market',
+                        side,
+                        parseFloat(pos.contracts),
+                        undefined,
+                        { positionSide: pos.side.toUpperCase() }
+                    );
+                    logger.info(`✅ Successfully closed ${pos.side} position for ${pos.symbol} via 'Close All'`);
+                    closedCount++;
+
+                    // Optimistically update the database
+                    await Trade.updateMany(
+                        { userId: user._id, symbol: pos.symbol, currentStatus: 'OPEN' },
+                        { currentStatus: 'CLOSED_MANUAL', closeTime: new Date() } // We'll use CLOSED_MANUAL
+                    );
+
+                } catch (err: any) {
+                    logger.error(`Failed to close position ${pos.symbol}: ${err.message}`);
+                }
+            }
+        } catch (error: any) {
+            logger.error('Error in closeAllPositions:', error);
+            throw error;
+        }
+        return closedCount;
+    }
+
+    async closeSpecificPosition(userId: string, symbol: string): Promise<boolean> {
+        try {
+            const user = await User.findById(userId);
+            if (!user) throw new Error('User not found');
+
+            const matchedSymbol = symbol.includes('USDT') ? symbol.toUpperCase() : `${symbol.toUpperCase()}/USDT:USDT`;
+            const positions = await this.bingX.getPositions(matchedSymbol);
+
+            // Filter out empty
+            const activePos = positions.filter((p: any) => parseFloat(p.contracts) > 0);
+
+            if (activePos.length === 0) {
+                logger.info(`No open positions found for ${matchedSymbol} to close.`);
+                return false;
+            }
+
+            for (const pos of activePos) {
+                const side = pos.side.toLowerCase() === 'long' ? 'sell' : 'buy';
+                const amount = parseFloat(pos.contracts);
+                await this.bingX.placeOrder(
+                    pos.symbol,
+                    'market',
+                    side,
+                    amount,
+                    undefined,
+                    { positionSide: pos.side.toUpperCase() }
+                );
+                logger.info(`✅ Successfully closed ${pos.side} position for ${pos.symbol} via 'Close Specific'`);
+
+                // Optimistically update DB
+                await Trade.updateMany(
+                    { userId: user._id, symbol: pos.symbol, currentStatus: 'OPEN' },
+                    { currentStatus: 'CLOSED_MANUAL', closeTime: new Date() }
+                );
+            }
+            return true;
+        } catch (error: any) {
+            logger.error(`Error closing position for ${symbol}:`, error);
             throw error;
         }
     }

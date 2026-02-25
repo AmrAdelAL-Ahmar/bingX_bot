@@ -47,10 +47,367 @@ const ensureUser = async (ctx: Context, next: () => Promise<void>) => {
     }
 };
 
+// --- HELPER: GET MAIN MENU KEYBOARD ---
+const getMainMenuKeyboard = (user: any) => {
+    const riskStatus = (user.enforceMaxSlLoss !== null && user.enforceMaxSlLoss !== undefined)
+        ? user.enforceMaxSlLoss
+        : process.env.ENFORCE_MAX_SL_LOSS === 'true';
+    const riskIcon = riskStatus ? '🟢 مفعل' : '🔴 معطل';
+
+    return {
+        keyboard: [
+            [
+                { text: '💰 رصيدي وملخص الأرباح' },
+                { text: '💼 صفقاتي المفتوحة' }
+            ],
+            [
+                { text: '📊 تقرير يومي' },
+                { text: '📈 تقرير شامل' }
+            ],
+            [
+                { text: '🔍 الاستعلام عن صفقة محددة' },
+                { text: '❌ إلغاء صفقة محددة' }
+            ],
+            [
+                { text: '🛑 إلغاء كل الصفقات المفتوحة' }
+            ],
+            [
+                { text: `🛡 حماية رأس المال (6% SL): ${riskIcon}` }
+            ],
+            [
+                { text: 'ℹ️ تعليمات الاستخدام (Help)' }
+            ]
+        ],
+        resize_keyboard: true,
+        is_persistent: true
+    };
+};
+
 bot.use(ensureUser);
 
-bot.start((ctx) => {
-    ctx.reply('Welcome! I am ready to trade. Send me a signal or add me to your signal channel.');
+bot.start(async (ctx) => {
+    const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+    ctx.reply('مرحباً بك! أنا جاهز للتداول. يمكنك إرسال إشارة تداول أو استخدام القائمة أدناه:', {
+        reply_markup: user ? getMainMenuKeyboard(user) : undefined
+    });
+});
+
+bot.command('menu', async (ctx) => {
+    try {
+        const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+        if (!user) return;
+
+        await ctx.reply('مرحباً بك في قائمة التحكم الخاصة بالبوت 🤖\nاختر أحد الإجراءات التالية:', {
+            reply_markup: getMainMenuKeyboard(user)
+        });
+    } catch (error) {
+        logger.error('Error in /menu:', error);
+    }
+});
+
+// --- ACTION HANDLERS ---
+bot.hears('💰 رصيدي وملخص الأرباح', async (ctx) => {
+    try {
+        const balance = await bingXService.getBalance();
+
+        let msg = `<b>💰 تفاصيل الحساب:</b>\n\n`;
+        msg += `الرصيد المتاح (USDT): <b>${balance.toFixed(2)}</b>\n`;
+
+        const positions = await bingXService.getPositions();
+        let totalPnl = 0;
+
+        if (positions && positions.length > 0) {
+            for (const pos of positions) {
+                if (parseFloat(pos.contracts) === 0) continue;
+                const pnl = pos.unrealizedPnl !== undefined ? pos.unrealizedPnl :
+                    (pos.info && pos.info.unrealizedProfit ? parseFloat(pos.info.unrealizedProfit) : 0);
+                totalPnl += pnl;
+            }
+            const pnlEmoji = totalPnl >= 0 ? '🟢' : '🔴';
+            msg += `الأرباح/الخسائر غير المحققة للصفقات المفتوحة: ${pnlEmoji} <b>${totalPnl.toFixed(2)} USDT</b>\n`;
+        } else {
+            msg += `لا يوجد صفقات مفتوحة حالياً.\n`;
+        }
+
+        ctx.replyWithHTML(msg);
+    } catch (error) {
+        ctx.reply('حدث خطأ أثناء جلب الرصيد.');
+    }
+});
+
+bot.hears('💼 صفقاتي المفتوحة', async (ctx) => {
+    try {
+        const positions = await bingXService.getPositions();
+
+        if (!positions || positions.length === 0) {
+            ctx.reply('لا يوجد صفقات مفتوحة حالياً.');
+            return;
+        }
+
+        let msg = '<b>💼 صفقاتي المفتوحة (Live) 🟢:</b>\n\n';
+        let totalPnl = 0;
+
+        for (const pos of positions) {
+            if (parseFloat(pos.contracts) === 0) continue;
+
+            const pnl = pos.unrealizedPnl !== undefined ? pos.unrealizedPnl :
+                (pos.info && pos.info.unrealizedProfit ? parseFloat(pos.info.unrealizedProfit) : 0);
+
+            totalPnl += pnl;
+
+            let roe = pos.percentage;
+            if (roe === undefined || roe === null) {
+                if (pos.initialMargin && pos.initialMargin > 0) {
+                    roe = (pnl / pos.initialMargin) * 100;
+                } else {
+                    roe = pos.info && pos.info.profitRate ? parseFloat(pos.info.profitRate) * 100 : 0;
+                }
+            }
+
+            const emoji = pnl >= 0 ? '🟢' : '🔴';
+            const entryPrice = parseFloat(pos.entryPrice).toFixed(4);
+            const markPrice = parseFloat(pos.markPrice).toFixed(4);
+
+            msg += `<b>${pos.symbol}</b> (${pos.side.toUpperCase()})\n` +
+                `الدخول: ${entryPrice} ➡️ الحالي: ${markPrice}\n` +
+                `الكمية: ${parseFloat(pos.contracts)} (${pos.leverage}x)\n` +
+                `الأرباح/الخسائر: ${emoji} ${pnl.toFixed(2)} USDT (${roe.toFixed(2)}%)\n` +
+                `-------------------\n`;
+        }
+
+        const totalEmoji = totalPnl >= 0 ? '🟢' : '🔴';
+        msg += `\n<b>إجمالي الربح/الخسارة العائم: ${totalEmoji} ${totalPnl.toFixed(2)} USDT</b>`;
+
+        ctx.replyWithHTML(msg);
+    } catch (error) {
+        logger.error('Error in btn_positions_all:', error);
+        ctx.reply('Error fetching positions from BingX.');
+    }
+});
+
+bot.hears('📊 تقرير يومي', async (ctx) => {
+    try {
+        if (!ctx.from) return;
+        const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+        if (!user) return;
+
+        // Get start of today
+        const startOfDay = new Date();
+        startOfDay.setHours(0, 0, 0, 0);
+
+        const trades = await Trade.find({
+            userId: user._id,
+            currentStatus: { $in: ['CLOSED_PROFIT', 'CLOSED_LOSS'] },
+            closeTime: { $gte: startOfDay }
+        });
+
+        if (trades.length === 0) {
+            ctx.reply('لم يتم إغلاق أي صفقات هذا اليوم.');
+            return;
+        }
+
+        const total = trades.length;
+        const wins = trades.filter(t => t.currentStatus === 'CLOSED_PROFIT').length;
+        const losses = trades.filter(t => t.currentStatus === 'CLOSED_LOSS').length;
+        const totalPnl = trades.reduce((sum, t) => sum + (t.pnl || 0), 0);
+        const winRate = ((wins / total) * 100).toFixed(2);
+
+        const msg = `📊 <b>تقرير الأداء اليومي</b>\n\n` +
+            `✅ إجمالي الصفقات: ${total}\n` +
+            `🏆 ربح: ${wins}\n` +
+            `💀 خسارة: ${losses}\n` +
+            `📈 معدل النجاح: ${winRate}%\n` +
+            `💰 صافي الربح/الخسارة: ${totalPnl}% (نسبة مئوية)\n`;
+
+        ctx.replyWithHTML(msg);
+    } catch (error) {
+        ctx.reply('حدث خطأ أثناء جلب التقرير اليومي.');
+    }
+});
+
+bot.hears('📈 تقرير شامل', async (ctx) => {
+    if (!ctx.from) return;
+    try {
+        const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+        if (!user) return;
+
+        const allTrades = await Trade.find({
+            userId: user._id,
+            currentStatus: { $in: ['CLOSED_PROFIT', 'CLOSED_LOSS'] }
+        });
+
+        if (allTrades.length === 0) {
+            ctx.reply('لا يوجد بيانات كافية لإصدار تقرير حالياً.');
+            return;
+        }
+
+        const total = allTrades.length;
+        const wins = allTrades.filter(t => t.currentStatus === 'CLOSED_PROFIT').length;
+        const losses = allTrades.filter(t => t.currentStatus === 'CLOSED_LOSS').length;
+        const totalPnl = allTrades.reduce((sum, t) => sum + (t.pnl || 0), 0);
+        const winRate = ((wins / total) * 100).toFixed(2);
+
+        const msg = `📊 <b>تقرير الأداء الشامل</b>\n\n` +
+            `✅ إجمالي الصفقات: ${total}\n` +
+            `🏆 ربح: ${wins}\n` +
+            `💀 خسارة: ${losses}\n` +
+            `📈 معدل النجاح: ${winRate}%\n` +
+            `💰 صافي الربح/الخسارة: ${totalPnl.toFixed(2)}%\n`;
+
+        ctx.replyWithHTML(msg);
+    } catch (e) {
+        ctx.reply('خطأ في استخراج التقرير');
+    }
+});
+
+bot.hears('🛑 إلغاء كل الصفقات المفتوحة', async (ctx) => {
+    try {
+        if (!ctx.from) return;
+        const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+        if (!user) return;
+
+        ctx.reply('⏳ جاري حساب الأرباح والخسائر الحالية لمعرفة وضع الحساب...');
+
+        const balance = await bingXService.getBalance();
+        const positions = await bingXService.getPositions();
+
+        if (!positions || positions.length === 0) {
+            ctx.reply('لا يوجد صفقات مفتوحة حالياً لإلغائها.', { reply_markup: getMainMenuKeyboard(user) });
+            return;
+        }
+
+        let totalPnl = 0;
+        let activePosCount = 0;
+
+        for (const pos of positions) {
+            if (parseFloat(pos.contracts) === 0) continue;
+            activePosCount++;
+            const pnl = pos.unrealizedPnl !== undefined ? pos.unrealizedPnl :
+                (pos.info && pos.info.unrealizedProfit ? parseFloat(pos.info.unrealizedProfit) : 0);
+            totalPnl += pnl;
+        }
+
+        if (activePosCount === 0) {
+            ctx.reply('لا يوجد صفقات مفتوحة فعلية لإلغائها.', { reply_markup: getMainMenuKeyboard(user) });
+            return;
+        }
+
+        // Set Bot State to AWAITING_CANCEL_ALL_CONFIRM
+        user.botState = 'AWAITING_CANCEL_ALL_CONFIRM';
+        await user.save();
+
+        const pnlEmoji = totalPnl >= 0 ? '🟢 إجمالي أرباح' : '🔴 إجمالي خسارة';
+        let confirmMsg = `⚠️ <b>تأكيد إغلاق جميع الصفقات (${activePosCount} صفقات)</b>\n\n` +
+            `💰 <b>رأس المال المتاح (الرصيد):</b> ${balance.toFixed(2)} USDT\n` +
+            `${pnlEmoji} عائمة لهذه الصفقات: <b>${totalPnl.toFixed(2)} USDT</b>\n\n` +
+            `الرصيد المتوقع بعد الإغلاق: <b>${(balance + totalPnl).toFixed(2)} USDT</b>\n\n` +
+            `هل أنت متأكد من رغبتك في إغلاق جميع الصفقات بسعر السوق الحالي (Market) المتوفر؟`;
+
+        ctx.replyWithHTML(confirmMsg, {
+            reply_markup: {
+                keyboard: [
+                    [{ text: "نعم، متأكد ✅" }, { text: "إلغاء ❌" }]
+                ],
+                resize_keyboard: true,
+                one_time_keyboard: true
+            }
+        });
+
+    } catch (error) {
+        logger.error(error);
+        ctx.reply('حدث خطأ أثناء محاولة جلب الصفقات المفتوحة.');
+    }
+});
+
+// --- HELPER TO GET ACTIVE SYMBOLS KEYBOARD ---
+const getDynamicSymbolsKeyboard = async () => {
+    const positions = await bingXService.getPositions();
+    let keys = [];
+    if (positions && positions.length > 0) {
+        for (const pos of positions) {
+            if (parseFloat(pos.contracts) > 0) {
+                const parts = pos.symbol.split('/');
+                const shortSym = parts[0] || pos.symbol; // Usually BTC
+                keys.push([{ text: shortSym }]);
+            }
+        }
+    }
+    keys.push([{ text: 'رجوع 🔙' }]);
+    return keys;
+};
+
+bot.hears('🔍 الاستعلام عن صفقة محددة', async (ctx) => {
+    try {
+        if (!ctx.from) return;
+        const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+        if (!user) return;
+        user.botState = 'AWAITING_QUERY_SYMBOL';
+        await user.save();
+
+        const activeKeys = await getDynamicSymbolsKeyboard();
+
+        ctx.reply('🔍 اختر العملة من القائمة أدناه، أو قم بكتابة الرمز (مثال: BTC):', {
+            reply_markup: { keyboard: activeKeys, resize_keyboard: true, one_time_keyboard: true }
+        });
+    } catch (e) {
+        ctx.reply('حدث خطأ.');
+    }
+});
+
+bot.hears('❌ إلغاء صفقة محددة', async (ctx) => {
+    try {
+        if (!ctx.from) return;
+        const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+        if (!user) return;
+        user.botState = 'AWAITING_CANCEL_SYMBOL';
+        await user.save();
+
+        const activeKeys = await getDynamicSymbolsKeyboard();
+
+        ctx.reply('❌ اختر العملة التي تريد إلغاء صفقتها، أو قم بكتابتها (مثال: ETH):', {
+            reply_markup: { keyboard: activeKeys, resize_keyboard: true, one_time_keyboard: true }
+        });
+    } catch (e) {
+        ctx.reply('حدث خطأ.');
+    }
+});
+
+bot.hears(/🛡 حماية رأس المال/, async (ctx) => {
+    try {
+        if (!ctx.from) return;
+        const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+        if (!user) return;
+
+        const currentStatus = (user.enforceMaxSlLoss !== null && user.enforceMaxSlLoss !== undefined)
+            ? user.enforceMaxSlLoss
+            : process.env.ENFORCE_MAX_SL_LOSS === 'true';
+
+        const newStatus = !currentStatus;
+        user.enforceMaxSlLoss = newStatus;
+        await user.save();
+
+        const statusMsg = newStatus ? 'مفعل 🟢' : 'معطل 🔴';
+        const riskIcon = newStatus ? '🟢 مفعل' : '🔴 معطل';
+
+        await ctx.reply(`✅ تم تحديث ميزة حماية رأس المال الصارمة. الحالة الآن: ${statusMsg}`, {
+            reply_markup: getMainMenuKeyboard(user)
+        });
+    } catch (e) {
+        ctx.reply('حدث خطأ أثناء تعديل الإعدادات.');
+    }
+});
+
+bot.hears('ℹ️ تعليمات الاستخدام (Help)', async (ctx) => {
+    try {
+        const helpMsg = `ℹ️ <b>دليل الاستخدام السريع:</b>\n\n` +
+            `• <b>رصيدي:</b> يعرض كمية الـ USDT والأرباح العائمة حالياً.\n` +
+            `• <b>صفقاتي المفتوحة:</b> يعرض الصفقات المفتوحة وحالة الربح/الخسارة لكل واحدة.\n` +
+            `• <b>التقارير:</b> يعرض ملخص نتائج الصفقات المغلقة (يومياً أو بصفة عامة).\n` +
+            `• <b>إلغاء الصفقات:</b> يمكنك اختيارياً إلغاء كل الصفقات أو تحديد عملة معينة ليتم إغلاقها بسعر السوق (Market).\n` +
+            `• <b>حماية رأس المال:</b> إذا كانت مفعلة، سيقوم البوت بتقليل حجم الصفقة إجبارياً بحيث لا تتجاوز خسارة الـ Stop Loss حاجز الـ 6% من حسابك.`;
+
+        ctx.replyWithHTML(helpMsg);
+    } catch (e) { }
 });
 
 bot.command('balance', async (ctx) => {
@@ -176,16 +533,114 @@ bot.command('status', async (ctx) => {
 bot.on('text', async (ctx) => {
     const message = ctx.message.text;
 
+    const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+    if (!user) {
+        ctx.reply('User not found in DB. Please start a chat with the bot first.');
+        return;
+    }
+
+    // --- Special Nav Handling For Active States ---
+    if (message === 'رجوع 🔙' || message === 'إلغاء ❌') {
+        user.botState = undefined;
+        await user.save();
+        ctx.reply('تم الإلغاء والعودة للقائمة الرئيسية.', { reply_markup: getMainMenuKeyboard(user) });
+        return;
+    }
+
+    if (user.botState === 'AWAITING_CANCEL_ALL_CONFIRM') {
+        if (message === 'نعم، متأكد ✅') {
+            user.botState = undefined;
+            await user.save();
+            ctx.reply('⏳ جاري إغلاق جميع الصفقات المفتوحة... الرجاء الانتظار.', { reply_markup: getMainMenuKeyboard(user) });
+            try {
+                const count = await tradeManager.closeAllPositions(user._id.toString());
+                if (count > 0) {
+                    ctx.reply(`✅ تم بنجاح الإغلاق لـ ${count} صفقة/صفقات بالشكل الفوري بسعر السوق.`);
+                } else {
+                    ctx.reply('لم يتم العثور على صفقات لإلغائها حالياً.');
+                }
+            } catch (err) {
+                logger.error(err);
+                ctx.reply('حدث خطأ أثناء محاولة إغلاق الصفقات.');
+            }
+        } else {
+            // Unrecognized answer during confirm
+            ctx.reply('الرجاء الاختيار من الأزرار المتاحة (نعم متأكد ، او إلغاء).');
+        }
+        return;
+    }
+
+    // --- Check Bot State for specific prompts first ---
+    if (user.botState === 'AWAITING_QUERY_SYMBOL') {
+        const symbolInput = message.trim().toUpperCase();
+        user.botState = undefined;
+        await user.save();
+
+        ctx.reply(`⏳ جاري الاستعلام...`, { reply_markup: getMainMenuKeyboard(user) });
+
+        // Execute logic identical to /status
+        try {
+            const searchQuery = symbolInput.includes('USDT') ? symbolInput : `${symbolInput}/USDT:USDT`;
+            const positions = await bingXService.getPositions(searchQuery);
+            const pos = positions.find((p: any) => p.symbol === searchQuery || p.symbol.includes(symbolInput));
+
+            if (!pos || parseFloat(pos.contracts) === 0) {
+                ctx.reply(`لا يوجد صفقة مفتوحة للعملة ${symbolInput} على المنصة.`);
+                return;
+            }
+
+            const pnl = pos.unrealizedPnl !== undefined ? pos.unrealizedPnl :
+                (pos.info && pos.info.unrealizedProfit ? parseFloat(pos.info.unrealizedProfit) : 0);
+
+            let roe = pos.percentage;
+            if (roe === undefined || roe === null) {
+                if (pos.initialMargin && pos.initialMargin > 0) {
+                    roe = (pnl / pos.initialMargin) * 100;
+                } else {
+                    roe = pos.info && pos.info.profitRate ? parseFloat(pos.info.profitRate) * 100 : 0;
+                }
+            }
+
+            const emoji = pnl >= 0 ? '🟢' : '🔴';
+            const msg = `📊 <b>تفاصيل صفقة ${pos.symbol}</b>\n` +
+                `النوع: ${pos.side.toUpperCase()}\n` +
+                `سعرد الدخول: ${parseFloat(pos.entryPrice).toFixed(4)}\n` +
+                `السعر الحالي: ${parseFloat(pos.markPrice).toFixed(4)}\n` +
+                `الربح/الخسارة: ${emoji} ${pnl.toFixed(2)} USDT (${roe.toFixed(2)}%)\n`;
+
+            ctx.replyWithHTML(msg);
+        } catch (error) {
+            logger.error(error);
+            ctx.reply('حدث خطأ أثناء جلب حالة الصفقة.');
+        }
+        return;
+    }
+
+    if (user.botState === 'AWAITING_CANCEL_SYMBOL') {
+        const symbolInput = message.trim().toUpperCase();
+        user.botState = undefined;
+        await user.save();
+
+        ctx.reply(`⏳ جاري البحث وإلغاء صفقة ${symbolInput}...`, { reply_markup: getMainMenuKeyboard(user) });
+        try {
+            const success = await tradeManager.closeSpecificPosition(user._id.toString(), symbolInput);
+            if (success) {
+                ctx.reply(`✅ تم إغلاق الصفقة المفتوحة لعملة ${symbolInput} بنجاح.`);
+            } else {
+                ctx.reply(`لا يوجد صفقة مفتوحة حالياً لـ ${symbolInput}.`);
+            }
+        } catch (error) {
+            logger.error(error);
+            ctx.reply(`❌ فشل في إلغاء صفقة ${symbolInput}.`);
+        }
+        return;
+    }
+
+
     // 1. Try to parse signal
     const signal = SignalParser.parse(message);
 
     if (signal) {
-        const user = await User.findOne({ telegramId: ctx.from.id.toString() });
-        if (!user) {
-            ctx.reply('User not found in DB. Please start a chat with the bot first.');
-            return;
-        }
-
         try {
             if (signal.type === 'TRADE') {
                 logger.info(`Signal detected from ${ctx.from.username}: ${signal.symbol} ${signal.direction}`);
@@ -210,17 +665,25 @@ bot.on('text', async (ctx) => {
                         `${result.stopLoss.price} (${result.stopLoss.pnlPercent}%)\n\n` +
                         `Order ID: ${result.tradeId}`;
 
-                    ctx.replyWithHTML(msg);
+                    ctx.replyWithHTML(msg, { reply_markup: getMainMenuKeyboard(user) });
                 }
             } else if (signal.type === 'CLOSE') {
                 logger.info(`Close Signal detected: ${signal.symbol}`);
                 ctx.reply(`🛑 Close Signal Parsed: ${signal.symbol}. Closing...`);
                 await tradeManager.executeSignal(signal, user._id.toString());
-                ctx.reply(`✅ Close order sent for ${signal.symbol}`);
+                ctx.reply(`✅ Close order sent for ${signal.symbol}`, { reply_markup: getMainMenuKeyboard(user) });
             }
         } catch (error: any) {
             logger.error(`Error processing signal: ${error.message}`);
-            ctx.reply(`❌ Error: ${error.message}`);
+            ctx.reply(`❌ Error: ${error.message}`, { reply_markup: getMainMenuKeyboard(user) });
+        }
+    } else {
+        // Not a signal, not a botState input, and not a button click.
+        // It's just generic text. We'll ensure the keyboard is still visible.
+        // Only reply if it doesn't match an existing command so we don't spam.
+        const isCommand = message.startsWith('/');
+        if (!isCommand) {
+            ctx.reply('الرجاء استخدام الأزرار في القائمة للتحكم، أو إرسال إشارة تداول صحيحة.', { reply_markup: getMainMenuKeyboard(user) });
         }
     }
 });
