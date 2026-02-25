@@ -122,7 +122,7 @@ export class TradeManager {
                     marginUsed = availableMarginForNewTrade;
                 }
 
-                const positionSizeUSDT = marginUsed * leverage;
+                let positionSizeUSDT = marginUsed * leverage;
 
                 // 3. Set Leverage & Margin Mode
                 await this.bingX.setMarginMode(signal.symbol, signal.marginMode || 'CROSS');
@@ -130,10 +130,37 @@ export class TradeManager {
 
                 // 4. Calculate Contracts
                 const rawAmount = positionSizeUSDT / entryPrice;
-                const amountContracts = await this.bingX.amountToPrecision(signal.symbol, rawAmount);
+                let amountContracts = await this.bingX.amountToPrecision(signal.symbol, rawAmount);
 
                 if (amountContracts <= 0) {
                     throw new Error(`Trade size is too small for ${signal.symbol}. Check your balance or risk settings.`);
+                }
+
+                // 4.5 Maximum Stop Loss Capital Risk Limit Check (Max 6% Loss)
+                if (process.env.ENFORCE_MAX_SL_LOSS === 'true') {
+                    // Maximum amount of money we are willing to lose completely if SL is hit
+                    const maxAllowedSLLoss = balance * 0.06;
+
+                    // Calculate the literal price difference per coin
+                    const lossPerCoin = Math.abs(entryPrice - stopLossPrice);
+
+                    // If direction is long and SL is above entry (or short and SL below entry), it's not a loss, it's weird data, but we use Math.abs to be safe.
+                    // The total USDT lost equals the number of coins * price delta per coin
+                    const projectedLoss = amountContracts * lossPerCoin;
+
+                    if (projectedLoss > maxAllowedSLLoss) {
+                        // How many max coins can we afford to lose?
+                        const maxSafeContracts = maxAllowedSLLoss / lossPerCoin;
+                        const precisionSafeContracts = await this.bingX.amountToPrecision(signal.symbol, maxSafeContracts);
+
+                        logger.warn(`Projected SL loss (${projectedLoss.toFixed(2)} USDT) exceeds 6% of capital (${maxAllowedSLLoss.toFixed(2)} USDT). Scaling down position to ${precisionSafeContracts} contracts.`);
+
+                        amountContracts = precisionSafeContracts;
+
+                        // We must also scale down the officially reserved margin needed to open this smaller trade, so the DB and API stays perfectly synced.
+                        positionSizeUSDT = amountContracts * entryPrice;
+                        marginUsed = positionSizeUSDT / leverage;
+                    }
                 }
 
                 // 5. Place Market Order (With Retry Logic)
