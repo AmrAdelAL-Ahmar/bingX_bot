@@ -56,7 +56,22 @@ export class BingXService {
 
     async amountToPrecision(symbol: string, amount: number) {
         await this.exchange.loadMarkets();
-        return parseFloat(this.exchange.amountToPrecision(symbol, amount));
+        try {
+            return parseFloat(this.exchange.amountToPrecision(symbol, amount));
+        } catch (error: any) {
+            logger.error(`❌ (amountToPrecision) Failed to set margin mode for ${symbol}: ${error.message}`);
+            // If the amount is too small, CCXT throws an error instead of returning 0
+            if (error.message && error.message.includes('minimum amount precision')) {
+                return 0;
+            }
+            throw error;
+        }
+    }
+
+    async getMarketMinAmount(symbol: string) {
+        await this.exchange.loadMarkets();
+        const market = this.exchange.market(symbol);
+        return market?.limits?.amount?.min || 0;
     }
 
     async getBalance() {
@@ -68,6 +83,16 @@ export class BingXService {
         } catch (error) {
             logger.error('Error fetching balance:', error);
             throw error;
+        }
+    }
+
+    async getTotalEquity() {
+        try {
+            const balance = await this.exchange.fetchBalance({ type: 'swap' });
+            return balance.total['USDT'] !== undefined ? balance.total['USDT'] : (balance.free['USDT'] || 0);
+        } catch (error) {
+            logger.error('Error fetching total equity:', error);
+            return 0;
         }
     }
 

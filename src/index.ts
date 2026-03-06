@@ -62,7 +62,14 @@ const getMainMenuKeyboard = (user: any) => {
             ],
             [
                 { text: '📊 تقرير يومي' },
+                { text: '📅 تقرير شهري' }
+            ],
+            [
+                { text: '📆 تقرير سنوي' },
                 { text: '📈 تقرير شامل' }
+            ],
+            [
+                { text: '🗓 تقرير مخصص (تاريخ)' }
             ],
             [
                 { text: '🔍 الاستعلام عن صفقة محددة' },
@@ -105,6 +112,56 @@ bot.command('menu', async (ctx) => {
     }
 });
 
+// --- HELPER: GENERATE COMPREHENSIVE REPORT ---
+const generateReportStr = (trades: any[], title: string, currentBalance: number) => {
+    if (trades.length === 0) return `لا يوجد صفقات مغلقة لـ ${title} 📭`;
+
+    let totalWins = 0;
+    let totalLosses = 0;
+    let netPnlUsdt = 0;
+    let tradesDetails = '';
+
+    trades.forEach((t, index) => {
+        const margin = t.amount / (t.leverage || 10);
+        const pnlPercent = t.pnl || 0;
+        const pnlUsdt = margin * (pnlPercent / 100);
+
+        netPnlUsdt += pnlUsdt;
+        if (pnlUsdt > 0) totalWins++;
+        else totalLosses++;
+
+        // Derive approximate exit price based on realized PnL%
+        const priceDiff = Math.abs((pnlPercent / 100 / (t.leverage || 10)) * t.entryPrice);
+        const exitPrice = pnlPercent >= 0
+            ? (t.direction === 'LONG' ? t.entryPrice + priceDiff : t.entryPrice - priceDiff)
+            : (t.direction === 'LONG' ? t.entryPrice - priceDiff : t.entryPrice + priceDiff);
+
+        tradesDetails += `\n${index + 1}. <b>${t.symbol}</b> (${t.direction})\n` +
+            `الدخول: ${t.entryPrice.toFixed(4)} ➡️ الإغلاق: ${exitPrice.toFixed(4)}\n` +
+            `المبلغ (Margin): ${margin.toFixed(2)} USDT\n` +
+            `النتيجة: ${pnlUsdt >= 0 ? '🟢' : '🔴'} ${pnlUsdt.toFixed(2)} USDT (${pnlPercent.toFixed(2)}%)\n`;
+    });
+
+    const winRate = ((totalWins / trades.length) * 100).toFixed(2);
+    // Approximate starting balance (assuming no deposits/withdrawals since then)
+    const balanceStart = currentBalance - netPnlUsdt;
+    const growthPercent = balanceStart > 0 ? (netPnlUsdt / balanceStart) * 100 : 0;
+
+    let msg = `📊 <b>${title}</b>\n\n` +
+        `✅ إجمالي الصفقات: ${trades.length}\n` +
+        `🏆 ربح: ${totalWins} | 💀 خسارة: ${totalLosses}\n` +
+        `📈 معدل النجاح: ${winRate}%\n\n`;
+
+    msg += `<b>💵 تفاصيل الأرباح والمحفظة:</b>\n` +
+        `💰 إجمالي مبلغ الربح/الخسارة: ${netPnlUsdt >= 0 ? '🟢' : '🔴'} <b>${netPnlUsdt.toFixed(2)} USDT</b>\n` +
+        (balanceStart > 0 ? `💵 رأس المال قبل: ~${balanceStart.toFixed(2)} USDT\n` : '') +
+        `🏦 إجمالي المحفظة الحالي: ${currentBalance.toFixed(2)} USDT\n` +
+        `🚀 نسبة ${netPnlUsdt >= 0 ? 'الارتفاع' : 'الهبوط'}: ${netPnlUsdt >= 0 ? '🟢' : '🔴'} ${growthPercent.toFixed(2)}%\n\n`;
+
+    msg += `<b>📋 تفاصيل الصفقات:</b>` + tradesDetails;
+    return msg;
+};
+
 // --- ACTION HANDLERS ---
 bot.hears('💰 رصيدي وملخص الأرباح', async (ctx) => {
     try {
@@ -137,6 +194,11 @@ bot.hears('💰 رصيدي وملخص الأرباح', async (ctx) => {
 
 bot.hears('💼 صفقاتي المفتوحة', async (ctx) => {
     try {
+        if (!ctx.from) return;
+        const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+        if (!user) return;
+
+        const balance = await bingXService.getBalance();
         const positions = await bingXService.getPositions();
 
         if (!positions || positions.length === 0) {
@@ -144,8 +206,14 @@ bot.hears('💼 صفقاتي المفتوحة', async (ctx) => {
             return;
         }
 
+        const openTrades = await Trade.find({
+            userId: user._id,
+            currentStatus: { $in: ['OPEN', 'TP1_HIT', 'TP2_HIT'] }
+        });
+
         let msg = '<b>💼 صفقاتي المفتوحة (Live) 🟢:</b>\n\n';
         let totalPnl = 0;
+        let totalMarginUsed = 0;
 
         for (const pos of positions) {
             if (parseFloat(pos.contracts) === 0) continue;
@@ -155,28 +223,65 @@ bot.hears('💼 صفقاتي المفتوحة', async (ctx) => {
 
             totalPnl += pnl;
 
+            let margin = pos.initialMargin !== undefined ? pos.initialMargin :
+                (pos.info && pos.info.isolatedMargin ? parseFloat(pos.info.isolatedMargin) : 0);
+
+            // Fallback for margin if not found directly
+            if (!margin && pos.notional) {
+                margin = Math.abs(pos.notional) / (pos.leverage || 10);
+            }
+            totalMarginUsed += margin;
+
             let roe = pos.percentage;
             if (roe === undefined || roe === null) {
-                if (pos.initialMargin && pos.initialMargin > 0) {
-                    roe = (pnl / pos.initialMargin) * 100;
+                if (margin && margin > 0) {
+                    roe = (pnl / margin) * 100;
                 } else {
                     roe = pos.info && pos.info.profitRate ? parseFloat(pos.info.profitRate) * 100 : 0;
                 }
             }
 
             const emoji = pnl >= 0 ? '🟢' : '🔴';
-            const entryPrice = parseFloat(pos.entryPrice).toFixed(4);
-            const markPrice = parseFloat(pos.markPrice).toFixed(4);
+            const entryPrice = parseFloat(pos.entryPrice);
+            const markPrice = parseFloat(pos.markPrice);
+            const amountCoins = parseFloat(pos.contracts);
+            const posSide = pos.side.toUpperCase();
 
-            msg += `<b>${pos.symbol}</b> (${pos.side.toUpperCase()})\n` +
-                `الدخول: ${entryPrice} ➡️ الحالي: ${markPrice}\n` +
-                `الكمية: ${parseFloat(pos.contracts)} (${pos.leverage}x)\n` +
-                `الأرباح/الخسائر: ${emoji} ${pnl.toFixed(2)} USDT (${roe.toFixed(2)}%)\n` +
-                `-------------------\n`;
+            // Match trade in DB for TP/SL details
+            const trade = openTrades.find(t => t.symbol === pos.symbol || pos.symbol.includes(t.symbol.split('/')[0]));
+
+            msg += `<b>${pos.symbol}</b> (${posSide})\n` +
+                `الدخول: ${entryPrice.toFixed(4)} ➡️ الحالي: ${markPrice.toFixed(4)}\n` +
+                `المبلغ المستثمر (Margin): ${margin.toFixed(4)} USDT (النسبة من الرصيد: ${balance > 0 ? ((margin / balance) * 100).toFixed(2) : 0}%)\n` +
+                `الأرباح/الخسائر الحالية: ${emoji} ${pnl.toFixed(4)} USDT (${roe.toFixed(2)}%)\n`;
+
+            if (trade) {
+                // Potential TP Profit (Using first target or average if needed, here we use TARGET 1 as reference)
+                if (trade.targets && trade.targets.length > 0) {
+                    const tpPrice = trade.targets[0].price;
+                    const tpPnl = posSide === 'LONG' ? (tpPrice - entryPrice) * amountCoins : (entryPrice - tpPrice) * amountCoins;
+                    const tpPercent = margin > 0 ? (tpPnl / margin) * 100 : 0;
+                    msg += `الهدف القادم: ${tpPrice} 🎯 (الربح المتوقع: ${tpPnl.toFixed(4)} USDT | ${tpPercent.toFixed(2)}%)\n`;
+                }
+
+                // Potential SL Loss
+                if (trade.stopLoss) {
+                    const slPrice = trade.stopLoss;
+                    const slPnl = posSide === 'LONG' ? (slPrice - entryPrice) * amountCoins : (entryPrice - slPrice) * amountCoins;
+                    // slPnl will generally be negative
+                    const slPercent = margin > 0 ? (slPnl / margin) * 100 : 0;
+                    msg += `وقف الخسارة: ${slPrice} 🛑 (الخسارة المتوقعة: ${slPnl.toFixed(4)} USDT | ${slPercent.toFixed(2)}%)\n`;
+                }
+            }
+
+            msg += `-------------------\n`;
         }
 
+        const totalMarginPercent = balance > 0 ? ((totalMarginUsed / balance) * 100).toFixed(2) : '0.00';
+        msg += `\n<b>إجمالي المبالغ المستثمرة:</b> ${totalMarginUsed.toFixed(4)} USDT (${totalMarginPercent}% من الرصيد)\n`;
+
         const totalEmoji = totalPnl >= 0 ? '🟢' : '🔴';
-        msg += `\n<b>إجمالي الربح/الخسارة العائم: ${totalEmoji} ${totalPnl.toFixed(2)} USDT</b>`;
+        msg += `<b>إجمالي الربح/الخسارة العائم: ${totalEmoji} ${totalPnl.toFixed(4)} USDT</b>`;
 
         ctx.replyWithHTML(msg);
     } catch (error) {
@@ -185,78 +290,74 @@ bot.hears('💼 صفقاتي المفتوحة', async (ctx) => {
     }
 });
 
-bot.hears('📊 تقرير يومي', async (ctx) => {
+const handleReport = async (ctx: any, title: string, getQuery: () => any) => {
     try {
         if (!ctx.from) return;
         const user = await User.findOne({ telegramId: ctx.from.id.toString() });
         if (!user) return;
 
-        // Get start of today
-        const startOfDay = new Date();
-        startOfDay.setHours(0, 0, 0, 0);
+        ctx.reply(`⏳ جاري جلب البيانات وحساب ${title}...`, { reply_markup: getMainMenuKeyboard(user) });
 
+        const query = getQuery();
         const trades = await Trade.find({
             userId: user._id,
-            currentStatus: { $in: ['CLOSED_PROFIT', 'CLOSED_LOSS'] },
-            closeTime: { $gte: startOfDay }
-        });
+            currentStatus: { $in: ['CLOSED_PROFIT', 'CLOSED_LOSS', 'CLOSED_MANUAL'] },
+            ...query
+        }).sort({ closeTime: 1 });
 
-        if (trades.length === 0) {
-            ctx.reply('لم يتم إغلاق أي صفقات هذا اليوم.');
-            return;
+        const currentEquity = await bingXService.getTotalEquity();
+
+        // Telegram max message length is 4096. If it gets too long, we might need to truncate
+        // But for now, standard user reports will fit or can be chunked later.
+        const msg = generateReportStr(trades, title, currentEquity);
+        if (msg.length > 4000) {
+            ctx.replyWithHTML(msg.substring(0, 4000) + `\n\n<i>... [تم اقتطاع باقي التقرير لطوله]</i>`);
+        } else {
+            ctx.replyWithHTML(msg);
         }
-
-        const total = trades.length;
-        const wins = trades.filter(t => t.currentStatus === 'CLOSED_PROFIT').length;
-        const losses = trades.filter(t => t.currentStatus === 'CLOSED_LOSS').length;
-        const totalPnl = trades.reduce((sum, t) => sum + (t.pnl || 0), 0);
-        const winRate = ((wins / total) * 100).toFixed(2);
-
-        const msg = `📊 <b>تقرير الأداء اليومي</b>\n\n` +
-            `✅ إجمالي الصفقات: ${total}\n` +
-            `🏆 ربح: ${wins}\n` +
-            `💀 خسارة: ${losses}\n` +
-            `📈 معدل النجاح: ${winRate}%\n` +
-            `💰 صافي الربح/الخسارة: ${totalPnl}% (نسبة مئوية)\n`;
-
-        ctx.replyWithHTML(msg);
     } catch (error) {
-        ctx.reply('حدث خطأ أثناء جلب التقرير اليومي.');
+        logger.error(`Error generating report ${title}:`, error);
+        ctx.reply('حدث خطأ أثناء جلب التقرير.');
     }
+};
+
+bot.hears('📊 تقرير يومي', async (ctx) => {
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    await handleReport(ctx, 'تقرير الأداء اليومي', () => ({ closeTime: { $gte: startOfDay } }));
+});
+
+bot.hears('📅 تقرير شهري', async (ctx) => {
+    const startOfMonth = new Date();
+    startOfMonth.setDate(1);
+    startOfMonth.setHours(0, 0, 0, 0);
+    await handleReport(ctx, 'تقرير الأداء الشهري', () => ({ closeTime: { $gte: startOfMonth } }));
+});
+
+bot.hears('📆 تقرير سنوي', async (ctx) => {
+    const startOfYear = new Date();
+    startOfYear.setMonth(0, 1);
+    startOfYear.setHours(0, 0, 0, 0);
+    await handleReport(ctx, 'تقرير الأداء السنوي', () => ({ closeTime: { $gte: startOfYear } }));
 });
 
 bot.hears('📈 تقرير شامل', async (ctx) => {
+    await handleReport(ctx, 'تقرير الأداء الشامل (All-Time)', () => ({}));
+});
+
+bot.hears('🗓 تقرير مخصص (تاريخ)', async (ctx) => {
     if (!ctx.from) return;
-    try {
-        const user = await User.findOne({ telegramId: ctx.from.id.toString() });
-        if (!user) return;
-
-        const allTrades = await Trade.find({
-            userId: user._id,
-            currentStatus: { $in: ['CLOSED_PROFIT', 'CLOSED_LOSS'] }
+    const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+    if (user) {
+        user.botState = 'AWAITING_REPORT_DATE';
+        await user.save();
+        ctx.reply('يرجى إدخال تاريخ التقرير بالصيغة YYYY-MM-DD (مثال: 2026-03-01):', {
+            reply_markup: {
+                keyboard: [[{ text: 'إلغاء ❌' }]],
+                resize_keyboard: true,
+                is_persistent: true
+            }
         });
-
-        if (allTrades.length === 0) {
-            ctx.reply('لا يوجد بيانات كافية لإصدار تقرير حالياً.');
-            return;
-        }
-
-        const total = allTrades.length;
-        const wins = allTrades.filter(t => t.currentStatus === 'CLOSED_PROFIT').length;
-        const losses = allTrades.filter(t => t.currentStatus === 'CLOSED_LOSS').length;
-        const totalPnl = allTrades.reduce((sum, t) => sum + (t.pnl || 0), 0);
-        const winRate = ((wins / total) * 100).toFixed(2);
-
-        const msg = `📊 <b>تقرير الأداء الشامل</b>\n\n` +
-            `✅ إجمالي الصفقات: ${total}\n` +
-            `🏆 ربح: ${wins}\n` +
-            `💀 خسارة: ${losses}\n` +
-            `📈 معدل النجاح: ${winRate}%\n` +
-            `💰 صافي الربح/الخسارة: ${totalPnl.toFixed(2)}%\n`;
-
-        ctx.replyWithHTML(msg);
-    } catch (e) {
-        ctx.reply('خطأ في استخراج التقرير');
     }
 });
 
@@ -421,7 +522,11 @@ bot.command('balance', async (ctx) => {
 
 bot.command('positions', async (ctx) => {
     try {
-        // 1. Get all open positions from BingX directly (Source of Truth)
+        if (!ctx.from) return;
+        const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+        if (!user) return;
+
+        const balance = await bingXService.getBalance();
         const positions = await bingXService.getPositions();
 
         if (!positions || positions.length === 0) {
@@ -429,37 +534,79 @@ bot.command('positions', async (ctx) => {
             return;
         }
 
+        const openTrades = await Trade.find({
+            userId: user._id,
+            currentStatus: { $in: ['OPEN', 'TP1_HIT', 'TP2_HIT'] }
+        });
+
         let msg = '<b>Live Positions (BingX) 🟢:</b>\n\n';
+        let totalPnl = 0;
+        let totalMarginUsed = 0;
 
         for (const pos of positions) {
-            // Filter out closed/empty positions just in case
             if (parseFloat(pos.contracts) === 0) continue;
 
-            // CCXT unified field is usually unrealizedPnl. Raw info might be in pos.info
             const pnl = pos.unrealizedPnl !== undefined ? pos.unrealizedPnl :
                 (pos.info && pos.info.unrealizedProfit ? parseFloat(pos.info.unrealizedProfit) : 0);
 
-            // Percentage might be missing, calculate if needed: PnL / InitialMargin
+            totalPnl += pnl;
+
+            let margin = pos.initialMargin !== undefined ? pos.initialMargin :
+                (pos.info && pos.info.isolatedMargin ? parseFloat(pos.info.isolatedMargin) : 0);
+
+            if (!margin && pos.notional) {
+                margin = Math.abs(pos.notional) / (pos.leverage || 10);
+            }
+            totalMarginUsed += margin;
+
             let roe = pos.percentage;
             if (roe === undefined || roe === null) {
-                if (pos.initialMargin && pos.initialMargin > 0) {
-                    roe = (pnl / pos.initialMargin) * 100;
+                if (margin && margin > 0) {
+                    roe = (pnl / margin) * 100;
                 } else {
-                    // Try raw info
                     roe = pos.info && pos.info.profitRate ? parseFloat(pos.info.profitRate) * 100 : 0;
                 }
             }
 
             const emoji = pnl >= 0 ? '🟢' : '🔴';
-            const entryPrice = parseFloat(pos.entryPrice).toFixed(4); // precision varies
-            const markPrice = parseFloat(pos.markPrice).toFixed(4);
+            const entryPrice = parseFloat(pos.entryPrice);
+            const markPrice = parseFloat(pos.markPrice);
+            const amountCoins = parseFloat(pos.contracts);
+            const posSide = pos.side.toUpperCase();
 
-            msg += `<b>${pos.symbol}</b> (${pos.side.toUpperCase()})\n` +
-                `Entry: ${entryPrice} ➡️ ${markPrice}\n` +
-                `Size: ${parseFloat(pos.contracts)} (${pos.leverage}x)\n` +
-                `PnL: ${emoji} ${pnl.toFixed(2)} USDT (${roe.toFixed(2)}%)\n` +
-                `-------------------\n`;
+            // Match trade in DB for TP/SL details
+            const trade = openTrades.find(t => t.symbol === pos.symbol || pos.symbol.includes(t.symbol.split('/')[0]));
+
+            msg += `<b>${pos.symbol}</b> (${posSide})\n` +
+                `Entry: ${entryPrice.toFixed(4)} ➡️ Mark: ${markPrice.toFixed(4)}\n` +
+                `Margin: ${margin.toFixed(4)} USDT (Bal %: ${balance > 0 ? ((margin / balance) * 100).toFixed(2) : 0}%)\n` +
+                `PnL: ${emoji} ${pnl.toFixed(4)} USDT (${roe.toFixed(2)}%)\n`;
+
+            if (trade) {
+                if (trade.targets && trade.targets.length > 0) {
+                    const tpPrice = trade.targets[0].price;
+                    const tpPnl = posSide === 'LONG' ? (tpPrice - entryPrice) * amountCoins : (entryPrice - tpPrice) * amountCoins;
+                    const tpPercent = margin > 0 ? (tpPnl / margin) * 100 : 0;
+                    msg += `Target: ${tpPrice} 🎯 (Est. Profit: ${tpPnl.toFixed(4)} USDT | ${tpPercent.toFixed(4)}%)\n`;
+                }
+
+                if (trade.stopLoss) {
+                    const slPrice = trade.stopLoss;
+                    const slPnl = posSide === 'LONG' ? (slPrice - entryPrice) * amountCoins : (entryPrice - slPrice) * amountCoins;
+                    const slPercent = margin > 0 ? (slPnl / margin) * 100 : 0;
+                    msg += `Stop Loss: ${slPrice} 🛑 (Est. Loss: ${slPnl.toFixed(4)} USDT | ${slPercent.toFixed(4)}%)\n`;
+                }
+            }
+
+            msg += `-------------------\n`;
         }
+
+        const totalMarginPercent = balance > 0 ? ((totalMarginUsed / balance) * 100).toFixed(4) : '0.00';
+        msg += `\n<b>Total Margin Used:</b> ${totalMarginUsed.toFixed(4)} USDT (${totalMarginPercent}% of Balance)\n`;
+
+        const totalEmoji = totalPnl >= 0 ? '🟢' : '🔴';
+        msg += `<b>Total Floating PnL: ${totalEmoji} ${totalPnl.toFixed(4)} USDT</b>`;
+
         ctx.replyWithHTML(msg);
     } catch (error) {
         logger.error('Error in /positions:', error);
@@ -475,18 +622,14 @@ bot.command('status', async (ctx) => {
             return;
         }
 
-        // Normalize symbol (handle just BTC)
-        const searchQuery = input.toUpperCase().includes('USDT') ? input.toUpperCase() : `${input.toUpperCase()}/USDT:USDT`;
-
         // Find trade
         const user = await User.findOne({ telegramId: ctx.from.id.toString() });
         if (!user) return;
 
         // Look for exact match or partial match in DB
-        // Since we store standardized symbols like 'BTC/USDT:USDT', simple regex might be safer
         const trade = await Trade.findOne({
             userId: user._id,
-            currentStatus: 'OPEN',
+            currentStatus: { $in: ['OPEN', 'TP1_HIT', 'TP2_HIT'] },
             symbol: { $regex: input.toUpperCase() }
         }).sort({ entryTime: -1 });
 
@@ -498,29 +641,62 @@ bot.command('status', async (ctx) => {
         // Fetch live PnL from BingX
         const positions = await bingXService.getPositions(trade.symbol);
         const pos = positions.find((p: any) => p.symbol === trade.symbol);
+        const balance = await bingXService.getBalance();
 
-        let pnlMsg = 'N/A';
+        let msg = `📊 <b>Status: ${trade.symbol}</b>\n` +
+            `النوع: ${trade.direction === 'LONG' ? 'شراء (LONG) 🟢' : 'بيع (SHORT) 🔴'}\n`;
+
         if (pos) {
+            const posEntryPrice = parseFloat(pos.entryPrice);
+            msg += `سعر الدخول: ${posEntryPrice.toFixed(4)}\n`;
+
             const pnl = pos.unrealizedPnl !== undefined ? pos.unrealizedPnl :
                 (pos.info && pos.info.unrealizedProfit ? parseFloat(pos.info.unrealizedProfit) : 0);
 
+            let margin = pos.initialMargin !== undefined ? pos.initialMargin :
+                (pos.info && pos.info.isolatedMargin ? parseFloat(pos.info.isolatedMargin) : 0);
+
+            if (!margin && pos.notional) {
+                margin = Math.abs(pos.notional) / (pos.leverage || 10);
+            }
+
             let roe = pos.percentage;
             if (roe === undefined || roe === null) {
-                if (pos.initialMargin && pos.initialMargin > 0) {
-                    roe = (pnl / pos.initialMargin) * 100;
+                if (margin && margin > 0) {
+                    roe = (pnl / margin) * 100;
                 } else {
                     roe = pos.info && pos.info.profitRate ? parseFloat(pos.info.profitRate) * 100 : 0;
                 }
             }
-            pnlMsg = `${pnl.toFixed(2)} USDT (${roe.toFixed(2)}%)`;
-        }
 
-        const msg = `📊 <b>Status: ${trade.symbol}</b>\n` +
-            `Type: ${trade.direction}\n` +
-            `Entry: ${trade.entryPrice}\n` +
-            `Current PnL: ${pnlMsg}\n` +
-            `Targets: \n` +
-            trade.targets.map((t, i) => `TP${i + 1}: ${t.price}`).join('\n');
+            const emoji = pnl >= 0 ? '🟢' : '🔴';
+            const markPrice = parseFloat(pos.markPrice).toFixed(4);
+            const amountCoins = parseFloat(pos.contracts);
+
+            msg += `السعر الحالي: ${markPrice}\n` +
+                `المبلغ المستثمر (Margin): ${margin.toFixed(4)} USDT (النسبة من الرصيد: ${balance > 0 ? ((margin / balance) * 100).toFixed(2) : 0}%)\n` +
+                `الربح/الخسارة الحالية: ${emoji} ${pnl.toFixed(4)} USDT (${roe.toFixed(2)}%)\n`;
+
+            if (trade.targets && trade.targets.length > 0) {
+                const tpPrice = trade.targets[0].price;
+                const tpPnl = trade.direction === 'LONG' ? (tpPrice - posEntryPrice) * amountCoins : (posEntryPrice - tpPrice) * amountCoins;
+                const tpPercent = margin > 0 ? (tpPnl / margin) * 100 : 0;
+                msg += `\nالهدف القادم: ${tpPrice} 🎯\n` +
+                    `الربح المتوقع عند ضرب الهدف: ${tpPnl.toFixed(2)} USDT (${tpPercent.toFixed(2)}%)\n`;
+            }
+
+            if (trade.stopLoss) {
+                const slPrice = trade.stopLoss;
+                const slPnl = trade.direction === 'LONG' ? (slPrice - posEntryPrice) * amountCoins : (posEntryPrice - slPrice) * amountCoins;
+                const slPercent = margin > 0 ? (slPnl / margin) * 100 : 0;
+                msg += `وقف الخسارة: ${slPrice} 🛑\n` +
+                    `الخسارة المتوقعة عند ضرب الاستوب: ${slPnl.toFixed(2)} USDT (${slPercent.toFixed(2)}%)\n`;
+            }
+
+        } else {
+            msg += `سعر الدخول: ${trade.entryPrice}\n`;
+            msg += `<i>لا يوجد بيانات حية من المنصة لهذه الصفقة حالياً.</i>\n`;
+        }
 
         ctx.replyWithHTML(msg);
 
@@ -580,33 +756,82 @@ bot.on('text', async (ctx) => {
 
         // Execute logic identical to /status
         try {
+            const trade = await Trade.findOne({
+                userId: user._id,
+                currentStatus: { $in: ['OPEN', 'TP1_HIT', 'TP2_HIT'] },
+                symbol: { $regex: symbolInput }
+            }).sort({ entryTime: -1 });
+
             const searchQuery = symbolInput.includes('USDT') ? symbolInput : `${symbolInput}/USDT:USDT`;
             const positions = await bingXService.getPositions(searchQuery);
             const pos = positions.find((p: any) => p.symbol === searchQuery || p.symbol.includes(symbolInput));
 
-            if (!pos || parseFloat(pos.contracts) === 0) {
+            if (!pos && !trade) {
                 ctx.reply(`لا يوجد صفقة مفتوحة للعملة ${symbolInput} على المنصة.`);
                 return;
             }
 
-            const pnl = pos.unrealizedPnl !== undefined ? pos.unrealizedPnl :
-                (pos.info && pos.info.unrealizedProfit ? parseFloat(pos.info.unrealizedProfit) : 0);
+            const balance = await bingXService.getBalance();
+            let msg = `📊 <b>تفاصيل صفقة ${pos ? pos.symbol : (trade ? trade.symbol : symbolInput)}</b>\n`;
 
-            let roe = pos.percentage;
-            if (roe === undefined || roe === null) {
-                if (pos.initialMargin && pos.initialMargin > 0) {
-                    roe = (pnl / pos.initialMargin) * 100;
-                } else {
-                    roe = pos.info && pos.info.profitRate ? parseFloat(pos.info.profitRate) * 100 : 0;
-                }
+            if (trade) {
+                msg += `النوع: ${trade.direction === 'LONG' ? 'شراء (LONG) 🟢' : 'بيع (SHORT) 🔴'}\n`;
+            } else if (pos) {
+                msg += `النوع: ${pos.side.toUpperCase() === 'LONG' ? 'شراء (LONG) 🟢' : 'بيع (SHORT) 🔴'}\n`;
             }
 
-            const emoji = pnl >= 0 ? '🟢' : '🔴';
-            const msg = `📊 <b>تفاصيل صفقة ${pos.symbol}</b>\n` +
-                `النوع: ${pos.side.toUpperCase()}\n` +
-                `سعرد الدخول: ${parseFloat(pos.entryPrice).toFixed(4)}\n` +
-                `السعر الحالي: ${parseFloat(pos.markPrice).toFixed(4)}\n` +
-                `الربح/الخسارة: ${emoji} ${pnl.toFixed(2)} USDT (${roe.toFixed(2)}%)\n`;
+            if (pos) {
+                const posEntryPrice = parseFloat(pos.entryPrice);
+                msg += `سعر الدخول: ${posEntryPrice.toFixed(4)}\n`;
+
+                const pnl = pos.unrealizedPnl !== undefined ? pos.unrealizedPnl :
+                    (pos.info && pos.info.unrealizedProfit ? parseFloat(pos.info.unrealizedProfit) : 0);
+
+                let margin = pos.initialMargin !== undefined ? pos.initialMargin :
+                    (pos.info && pos.info.isolatedMargin ? parseFloat(pos.info.isolatedMargin) : 0);
+
+                if (!margin && pos.notional) {
+                    margin = Math.abs(pos.notional) / (pos.leverage || 10);
+                }
+
+                let roe = pos.percentage;
+                if (roe === undefined || roe === null) {
+                    if (margin && margin > 0) {
+                        roe = (pnl / margin) * 100;
+                    } else {
+                        roe = pos.info && pos.info.profitRate ? parseFloat(pos.info.profitRate) * 100 : 0;
+                    }
+                }
+
+                const emoji = pnl >= 0 ? '🟢' : '🔴';
+                const markPrice = parseFloat(pos.markPrice).toFixed(4);
+                const amountCoins = parseFloat(pos.contracts);
+
+                msg += `السعر الحالي: ${markPrice}\n` +
+                    `المبلغ المستثمر (Margin): ${margin.toFixed(4)} USDT (النسبة من الرصيد: ${balance > 0 ? ((margin / balance) * 100).toFixed(2) : 0}%)\n` +
+                    `الربح/الخسارة الحالية: ${emoji} ${pnl.toFixed(4)} USDT (${roe.toFixed(2)}%)\n`;
+
+                if (trade) {
+                    if (trade.targets && trade.targets.length > 0) {
+                        const tpPrice = trade.targets[0].price;
+                        const tpPnl = trade.direction === 'LONG' ? (tpPrice - posEntryPrice) * amountCoins : (posEntryPrice - tpPrice) * amountCoins;
+                        const tpPercent = margin > 0 ? (tpPnl / margin) * 100 : 0;
+                        msg += `\nالهدف القادم: ${tpPrice} 🎯\n` +
+                            `الربح المتوقع عند ضرب الهدف: ${tpPnl.toFixed(2)} USDT (${tpPercent.toFixed(2)}%)\n`;
+                    }
+
+                    if (trade.stopLoss) {
+                        const slPrice = trade.stopLoss;
+                        const slPnl = trade.direction === 'LONG' ? (slPrice - posEntryPrice) * amountCoins : (posEntryPrice - slPrice) * amountCoins;
+                        const slPercent = margin > 0 ? (slPnl / margin) * 100 : 0;
+                        msg += `وقف الخسارة: ${slPrice} 🛑\n` +
+                            `الخسارة المتوقعة عند ضرب الاستوب: ${slPnl.toFixed(2)} USDT (${slPercent.toFixed(2)}%)\n`;
+                    }
+                }
+            } else {
+                if (trade) msg += `سعر الدخول: ${trade.entryPrice}\n`;
+                msg += `<i>لا يوجد بيانات حية من المنصة لهذه الصفقة حالياً.</i>\n`;
+            }
 
             ctx.replyWithHTML(msg);
         } catch (error) {
@@ -636,7 +861,26 @@ bot.on('text', async (ctx) => {
         return;
     }
 
+    if (user.botState === 'AWAITING_REPORT_DATE') {
+        const dateInput = message.trim();
+        user.botState = undefined;
+        await user.save();
 
+        const parsedDate = new Date(dateInput);
+        if (isNaN(parsedDate.getTime())) {
+            ctx.reply('❌ صيغة التاريخ غير صحيحة. يرجى المحاولة لاحقاً بصيغة صحيحة (مثال: 2026-03-01).', { reply_markup: getMainMenuKeyboard(user) });
+            return;
+        }
+
+        // Search for that specific day (from 00:00:00 to 23:59:59)
+        const nextDay = new Date(parsedDate);
+        nextDay.setDate(parsedDate.getDate() + 1);
+
+        await handleReport(ctx, `تقرير أداء يوم ${dateInput}`, () => ({
+            closeTime: { $gte: parsedDate, $lt: nextDay }
+        }));
+        return;
+    }
     // 1. Try to parse signal
     const signal = SignalParser.parse(message);
 

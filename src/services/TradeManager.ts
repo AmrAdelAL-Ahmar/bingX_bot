@@ -93,25 +93,33 @@ export class TradeManager {
                     throw new Error(msg);
                 }
 
+                let scaledByExposure = false;
                 if (marginUsed > availableMarginForNewTrade) {
                     logger.warn(`Requested margin (${marginUsed.toFixed(2)} USDT) exceeds the available remaining global limit. Scaling down to the remaining margin: ${availableMarginForNewTrade.toFixed(2)} USDT.`);
                     marginUsed = availableMarginForNewTrade;
+                    scaledByExposure = true;
                 }
 
                 let positionSizeUSDT = marginUsed * leverage;
 
-                // 3. Set Leverage & Margin Mode
-                await this.bingX.setMarginMode(signal.symbol, signal.marginMode || 'CROSS');
-                await this.bingX.setLeverage(signal.symbol, leverage, signal.direction);
+                // Calculate Contracts first to check sizes
 
-                // 4. Calculate Contracts
                 const rawAmount = positionSizeUSDT / entryPrice;
                 let amountContracts = await this.bingX.amountToPrecision(signal.symbol, rawAmount);
+                const minAmount = await this.bingX.getMarketMinAmount(signal.symbol);
 
-                if (amountContracts <= 0) {
-                    throw new Error(`Trade size is too small for ${signal.symbol}. Check your balance or risk settings.`);
+                // Check min constraints immediately before SL check
+                if (amountContracts === 0 || amountContracts < minAmount) {
+                    let reason = `حجم الصفقة المطلوبة أصغر من الحد الأدنى المسموح به في المنصة (${minAmount}).`;
+                    if (scaledByExposure) {
+                        reason += `\n⚠️ تم تقليل الحجم إجبارياً بسبب وصولك للحد الأقصى للمخاطرة الكلية المفتوحة (10% من الحساب). لديك صفقات أخرى تستهلك الرصيد المسموح.`;
+                    } else {
+                        reason += `\nيرجى زيادة رأس المال أو رفع نسبة المخاطرة قليلاً لتتمكن من فتح صفقات بهذه العملة.`;
+                    }
+                    throw new Error(reason);
                 }
 
+                let scaledBySL = false;
                 // 4.5 Maximum Stop Loss Capital Risk Limit Check (Max 6% Loss)
                 const shouldEnforceMaxSlLoss = user.enforceMaxSlLoss !== null && user.enforceMaxSlLoss !== undefined
                     ? user.enforceMaxSlLoss
@@ -140,10 +148,22 @@ export class TradeManager {
                         // We must also scale down the officially reserved margin needed to open this smaller trade, so the DB and API stays perfectly synced.
                         positionSizeUSDT = amountContracts * entryPrice;
                         marginUsed = positionSizeUSDT / leverage;
+                        scaledBySL = true;
                     }
                 }
 
-                // 5. Place Market Order (With Retry Logic)
+                if (amountContracts === 0 || amountContracts < minAmount) {
+                    let reason = `حجم الصفقة المطلوبة أصغر من الحد الأدنى المسموح به في المنصة (${minAmount}).`;
+                    if (scaledBySL) {
+                        reason += `\n⚠️ تم تقليل الحجم إجبارياً لأن الخسارة المتوقعة من الاستوب لوز كانت ستتجاوز الحد الأقصى المسموح (6% من رصيد الحساب).`;
+                    }
+                    throw new Error(reason);
+                }
+
+                // 5. Set Leverage, Margin Mode, and Place Market Order
+                await this.bingX.setMarginMode(signal.symbol, signal.marginMode || 'CROSS');
+                await this.bingX.setLeverage(signal.symbol, leverage, signal.direction);
+
                 let order: any;
                 try {
                     order = await this.bingX.placeOrder(
