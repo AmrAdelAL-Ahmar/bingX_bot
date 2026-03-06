@@ -61,15 +61,8 @@ const getMainMenuKeyboard = (user: any) => {
                 { text: '💼 صفقاتي المفتوحة' }
             ],
             [
-                { text: '📊 تقرير يومي' },
-                { text: '📅 تقرير شهري' }
-            ],
-            [
-                { text: '📆 تقرير سنوي' },
-                { text: '📈 تقرير شامل' }
-            ],
-            [
-                { text: '🗓 تقرير مخصص (تاريخ)' }
+                { text: '📊 التقارير' },
+                { text: '⚙️ إعدادات التنبيهات' }
             ],
             [
                 { text: '🔍 الاستعلام عن صفقة محددة' },
@@ -250,7 +243,8 @@ bot.hears('💼 صفقاتي المفتوحة', async (ctx) => {
             // Match trade in DB for TP/SL details
             const trade = openTrades.find(t => t.symbol === pos.symbol || pos.symbol.includes(t.symbol.split('/')[0]));
 
-            msg += `<b>${pos.symbol}</b> (${posSide})\n` +
+            const leverage = pos.leverage || (trade ? trade.leverage : null) || 'N/A';
+            msg += `<b>${pos.symbol}</b> (${posSide}) | الرافعة: <b>${leverage}x</b>\n` +
                 `الدخول: ${entryPrice.toFixed(4)} ➡️ الحالي: ${markPrice.toFixed(4)}\n` +
                 `المبلغ المستثمر (Margin): ${margin.toFixed(4)} USDT (النسبة من الرصيد: ${balance > 0 ? ((margin / balance) * 100).toFixed(2) : 0}%)\n` +
                 `الأرباح/الخسائر الحالية: ${emoji} ${pnl.toFixed(4)} USDT (${roe.toFixed(2)}%)\n`;
@@ -321,6 +315,22 @@ const handleReport = async (ctx: any, title: string, getQuery: () => any) => {
     }
 };
 
+// --- REPORTS SUBMENU ---
+const getReportsKeyboard = () => ({
+    keyboard: [
+        [{ text: '📊 تقرير يومي' }, { text: '📅 تقرير شهري' }],
+        [{ text: '📆 تقرير سنوي' }, { text: '📈 تقرير شامل' }],
+        [{ text: '🗓 تقرير مخصص (تاريخ)' }],
+        [{ text: 'رجوع 🔙' }]
+    ],
+    resize_keyboard: true,
+    is_persistent: true
+});
+
+bot.hears('📊 التقارير', async (ctx) => {
+    ctx.reply('📊 اختر نوع التقرير:', { reply_markup: getReportsKeyboard() });
+});
+
 bot.hears('📊 تقرير يومي', async (ctx) => {
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
@@ -358,6 +368,114 @@ bot.hears('🗓 تقرير مخصص (تاريخ)', async (ctx) => {
                 is_persistent: true
             }
         });
+    }
+});
+
+// --- ALERT SETTINGS ---
+const ALL_TP_THRESHOLDS = [30, 40, 50, 60, 70, 80, 90, 95];
+
+const buildAlertSettingsKeyboard = (user: any) => {
+    const slOn: boolean = user.slWarningEnabled !== false;
+    const tpOn: boolean = user.tpWarningEnabled !== false;
+    const thresholds: number[] = user.tpWarningThresholds || [70, 90];
+
+    // Row 1: Toggle SL & TP Warnings
+    const row1 = [
+        { text: `${slOn ? '✅' : '❌'} تنبيه SL`, callback_data: 'alert_toggle_sl' },
+        { text: `${tpOn ? '✅' : '❌'} تنبيه TP`, callback_data: 'alert_toggle_tp' }
+    ];
+
+    // TP Threshold rows (2 per row)
+    const thresholdRows = [];
+    for (let i = 0; i < ALL_TP_THRESHOLDS.length; i += 4) {
+        const row = ALL_TP_THRESHOLDS.slice(i, i + 4).map(t => ({
+            text: `${thresholds.includes(t) ? '✅' : '⬜'} ${t}%`,
+            callback_data: `alert_tp_${t}`
+        }));
+        thresholdRows.push(row);
+    }
+
+    return {
+        inline_keyboard: [
+            row1,
+            ...thresholdRows,
+            [{ text: '✅ تحديد الكل', callback_data: 'alert_tp_all' }, { text: '❌ إلغاء الكل', callback_data: 'alert_tp_none' }]
+        ]
+    };
+};
+
+bot.hears('⚙️ إعدادات التنبيهات', async (ctx) => {
+    if (!ctx.from) return;
+    const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+    if (!user) return;
+
+    const slOn: boolean = user.slWarningEnabled !== false;
+    const tpOn: boolean = user.tpWarningEnabled !== false;
+    const thresholds: number[] = user.tpWarningThresholds || [70, 90];
+
+    const msg = `⚙️ <b>إعدادات التنبيهات</b>\n\n` +
+        `🔔 تنبيه وقف الخسارة (SL): <b>${slOn ? 'مفعل ✅' : 'معطل ❌'}</b>\n` +
+        `   يُرسل تحذير عندما تصل الخسارة إلى 5% من رأس المال.\n\n` +
+        `🎯 تنبيه الهدف (TP): <b>${tpOn ? 'مفعل ✅' : 'معطل ❌'}</b>\n` +
+        `   النسب المفعّلة: <b>${thresholds.sort((a, b) => a - b).join('%, ')}%</b>\n\n` +
+        `اضغط على الأزرار أدناه لتعديل الإعدادات:`;
+
+    await ctx.replyWithHTML(msg, { reply_markup: buildAlertSettingsKeyboard(user) });
+});
+
+// Handle alert settings inline keyboard
+bot.on('callback_query', async (ctx) => {
+    const data = (ctx.callbackQuery as any).data as string;
+    if (!data || !data.startsWith('alert_')) return;
+
+    if (!ctx.from) return;
+    const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+    if (!user) return;
+
+    if (data === 'alert_toggle_sl') {
+        user.slWarningEnabled = !(user.slWarningEnabled !== false);
+    } else if (data === 'alert_toggle_tp') {
+        user.tpWarningEnabled = !(user.tpWarningEnabled !== false);
+    } else if (data === 'alert_tp_all') {
+        user.tpWarningThresholds = [...ALL_TP_THRESHOLDS];
+    } else if (data === 'alert_tp_none') {
+        user.tpWarningThresholds = [];
+    } else if (data.startsWith('alert_tp_')) {
+        const val = parseInt(data.replace('alert_tp_', ''));
+        if (!isNaN(val)) {
+            const current: number[] = user.tpWarningThresholds || [];
+            if (current.includes(val)) {
+                user.tpWarningThresholds = current.filter(t => t !== val);
+            } else {
+                user.tpWarningThresholds = [...current, val];
+            }
+        }
+    } else {
+        return;
+    }
+
+    await user.save();
+
+    // Update the inline keyboard message
+    const slOn: boolean = user.slWarningEnabled !== false;
+    const tpOn: boolean = user.tpWarningEnabled !== false;
+    const thresholds: number[] = user.tpWarningThresholds || [];
+
+    const newMsg = `⚙️ <b>إعدادات التنبيهات</b>\n\n` +
+        `🔔 تنبيه وقف الخسارة (SL): <b>${slOn ? 'مفعل ✅' : 'معطل ❌'}</b>\n` +
+        `   يُرسل تحذير عندما تصل الخسارة إلى 5% من رأس المال.\n\n` +
+        `🎯 تنبيه الهدف (TP): <b>${tpOn ? 'مفعل ✅' : 'معطل ❌'}</b>\n` +
+        `   النسب المفعّلة: <b>${thresholds.length > 0 ? thresholds.sort((a, b) => a - b).join('%, ') + '%' : 'لا يوجد'}</b>\n\n` +
+        `اضغط على الأزرار أدناه لتعديل الإعدادات:`;
+
+    try {
+        await ctx.editMessageText(newMsg, {
+            parse_mode: 'HTML',
+            reply_markup: buildAlertSettingsKeyboard(user)
+        });
+        await ctx.answerCbQuery('✅ تم الحفظ');
+    } catch (e) {
+        await ctx.answerCbQuery('✅ تم الحفظ');
     }
 });
 
@@ -644,7 +762,8 @@ bot.command('status', async (ctx) => {
         const balance = await bingXService.getBalance();
 
         let msg = `📊 <b>Status: ${trade.symbol}</b>\n` +
-            `النوع: ${trade.direction === 'LONG' ? 'شراء (LONG) 🟢' : 'بيع (SHORT) 🔴'}\n`;
+            `النوع: ${trade.direction === 'LONG' ? 'شراء (LONG) 🟢' : 'بيع (SHORT) 🔴'}\n` +
+            `الرافعة: <b>${trade.leverage || 'N/A'}x</b>\n`;
 
         if (pos) {
             const posEntryPrice = parseFloat(pos.entryPrice);
@@ -776,8 +895,11 @@ bot.on('text', async (ctx) => {
 
             if (trade) {
                 msg += `النوع: ${trade.direction === 'LONG' ? 'شراء (LONG) 🟢' : 'بيع (SHORT) 🔴'}\n`;
+                msg += `الرافعة: <b>${trade.leverage || 'N/A'}x</b>\n`;
             } else if (pos) {
                 msg += `النوع: ${pos.side.toUpperCase() === 'LONG' ? 'شراء (LONG) 🟢' : 'بيع (SHORT) 🔴'}\n`;
+                const posLev = pos.leverage;
+                if (posLev) msg += `الرافعة: <b>${posLev}x</b>\n`;
             }
 
             if (pos) {

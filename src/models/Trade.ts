@@ -19,6 +19,9 @@ export interface ITrade extends Document {
     entryTime: Date;
     closeTime?: Date;
     logs: string[];
+    // Warning tracking
+    slWarningSent?: boolean;
+    triggeredTpWarnings?: number[]; // e.g. [70, 90] means those thresholds were already notified
 }
 
 const TradeSchema: Schema = new Schema({
@@ -43,7 +46,10 @@ const TradeSchema: Schema = new Schema({
     bingxOrderId: { type: String },
     entryTime: { type: Date, default: Date.now },
     closeTime: { type: Date },
-    logs: [{ type: String }]
+    logs: [{ type: String }],
+    // Warning tracking
+    slWarningSent: { type: Boolean, default: false },
+    triggeredTpWarnings: { type: [Number], default: [] },
 });
 
 export default mongoose.model<ITrade>('Trade', TradeSchema);

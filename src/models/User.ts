@@ -10,6 +10,10 @@ export interface IUser extends Document {
     botState?: string;
     isActive: boolean;
     createdAt: Date;
+    // Warning settings
+    slWarningEnabled: boolean;
+    tpWarningEnabled: boolean;
+    tpWarningThresholds: number[]; // e.g., [70, 90]
 }
 
 const UserSchema: Schema = new Schema({
@@ -22,6 +26,10 @@ const UserSchema: Schema = new Schema({
     botState: { type: String, default: null },
     isActive: { type: Boolean, default: true },
     createdAt: { type: Date, default: Date.now },
+    // Warning settings
+    slWarningEnabled: { type: Boolean, default: true },
+    tpWarningEnabled: { type: Boolean, default: true },
+    tpWarningThresholds: { type: [Number], default: [70, 90] },
 });
 
 export default mongoose.model<IUser>('User', UserSchema);

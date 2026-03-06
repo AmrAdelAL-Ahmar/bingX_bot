@@ -1,6 +1,6 @@
 import { BingXService } from './BingXService';
 import Trade from '../models/Trade';
-import '../models/User'; // Ensure User model is registered for populate
+import User from '../models/User';
 import logger from '../utils/logger';
 
 export class PositionMonitor {
@@ -29,39 +29,52 @@ export class PositionMonitor {
 
     async checkPositions() {
         try {
-            // We don't populate here to avoid MissingSchemaError if models register out of order.
-            // We use manual lookup in the loop instead.
-            const openTrades = await Trade.find({ currentStatus: 'OPEN' });
+            const openTrades = await Trade.find({ currentStatus: { $in: ['OPEN', 'TP1_HIT', 'TP2_HIT'] } });
             if (openTrades.length === 0) return;
 
-            // Group by symbol to optimize API calls
-            // Group by symbol to optimize API calls
+            // Group by symbol
             const symbols = [...new Set(openTrades.map(t => t.symbol))];
             logger.info(`Monitor checking ${openTrades.length} open trades across ${symbols.length} symbols.`);
 
-            for (const symbol of symbols) {
-                // Fetch active positions for this symbol
-                const positions = await this.bingX.getPositions(symbol);
-                // logger.info(`Fetched ${positions.length} positions for ${symbol}`);
+            // Fetch balance for SL warning calculation (5% threshold)
+            let totalBalance = 0;
+            try {
+                totalBalance = await this.bingX.getTotalEquity();
+            } catch (e) {
+                logger.warn('Could not fetch balance for SL warning calculation.');
+            }
 
+            for (const symbol of symbols) {
+                const positions = await this.bingX.getPositions(symbol);
                 const tradesForSymbol = openTrades.filter(t => t.symbol === symbol);
 
                 for (const trade of tradesForSymbol) {
                     const matchingPos = positions.find((p: any) =>
-                        // Check direction match AND ensuring it's not a leftover empty position
                         ((trade.direction === 'LONG' && p.side.toLowerCase() === 'long') ||
                             (trade.direction === 'SHORT' && p.side.toLowerCase() === 'short')) &&
                         parseFloat(p.contracts || '0') > 0
                     );
 
-                    if (matchingPos) {
-                        // Position is still active - check if we should move SL to BE
-                        if (!trade.isBreakEvenSet && trade.targets.length > 0) {
-                            const currentPrice = await this.bingX.getMarketPrice(symbol);
-                            const tp1 = trade.targets[0].price;
-                            const entry = trade.entryPrice;
+                    // Lookup user settings
+                    let user: any = null;
+                    try {
+                        const UserModel = (trade.constructor as any).db.model('User');
+                        user = await UserModel.findById(trade.userId);
+                    } catch (e) {
+                        logger.warn(`Could not find user for trade ${trade._id}`);
+                    }
 
-                            // Check if TP1 has been hit
+                    const telegramId: string | null = user?.telegramId || null;
+
+                    if (matchingPos) {
+                        // --- Position is still ACTIVE: check warnings ---
+
+                        const currentPrice: number = parseFloat(matchingPos.markPrice) || await this.bingX.getMarketPrice(symbol);
+                        const entry = trade.entryPrice;
+
+                        // --- TP1 BreakEven Logic ---
+                        if (!trade.isBreakEvenSet && trade.targets.length > 0) {
+                            const tp1 = trade.targets[0].price;
                             const tp1Hit = trade.direction === 'LONG'
                                 ? currentPrice >= tp1
                                 : currentPrice <= tp1;
@@ -74,30 +87,85 @@ export class PositionMonitor {
                                     trade.logs.push(`Auto-adjusted SL to BE at ${entry} after TP1 hit`);
                                     await trade.save();
 
-                                    // Notify user
-                                    let user = trade.userId as any;
-                                    if (!user || !user.telegramId) {
-                                        const User = (trade.constructor as any).db.model('User');
-                                        user = await User.findById(trade.userId);
-                                    }
-
-                                    if (user && user.telegramId) {
-                                        const msg = `🔒 <b>Break-Even Set</b>\n` +
-                                            `Symbol: ${trade.symbol}\n` +
-                                            `TP1 hit! Stop-loss moved to entry (${entry}) to protect profits.`;
-                                        await this.notifier(user.telegramId, msg);
+                                    if (telegramId) {
+                                        const msg = `🔒 <b>تم نقل وقف الخسارة لنقطة الدخول (Break-Even)</b>\n` +
+                                            `الرمز: ${trade.symbol}\n` +
+                                            `تم ضرب الهدف الأول! تم نقل وقف الخسارة لسعر الدخول (${entry}) لحماية الأرباح.`;
+                                        await this.notifier(telegramId, msg);
                                     }
                                 } catch (error) {
                                     logger.error(`Failed to set BE for ${trade.symbol}:`, error);
                                 }
                             }
                         }
-                        continue;
-                    } else {
-                        // Position is GONE
-                        logger.info(`Trade ${trade._id} (${trade.symbol}) is NO LONGER active on BingX. Triggering notification...`);
 
-                        // It closed. Assume TP/SL hit or manual close.
+                        // --- SL WARNING (5% capital loss threshold) ---
+                        if (telegramId && user?.slWarningEnabled && !trade.slWarningSent) {
+                            const pnl = matchingPos.unrealizedPnl !== undefined
+                                ? matchingPos.unrealizedPnl
+                                : (matchingPos.info?.unrealizedProfit ? parseFloat(matchingPos.info.unrealizedProfit) : 0);
+
+                            if (totalBalance > 0 && pnl < 0) {
+                                const lossPercent = Math.abs(pnl / totalBalance) * 100;
+                                if (lossPercent >= 5) {
+                                    logger.info(`SL warning triggered for ${trade.symbol}: ${lossPercent.toFixed(2)}% capital loss`);
+                                    const msg = `⚠️🔔 <b>تحذير: اقتراب من وقف الخسارة!</b>\n\n` +
+                                        `📉 الرمز: <b>${trade.symbol}</b> (${trade.direction})\n` +
+                                        `💸 الخسارة الحالية: <b>${pnl.toFixed(2)} USDT</b>\n` +
+                                        `⚡ نسبة الخسارة من رأس المال: <b>${lossPercent.toFixed(2)}%</b>\n\n` +
+                                        `🚨 تنبيه: الخسارة وصلت إلى 5% من رأس المال، وقف الخسارة قريب جداً!`;
+                                    await this.notifier(telegramId, msg);
+                                    trade.slWarningSent = true;
+                                    await trade.save();
+                                }
+                            }
+                        }
+
+                        // --- TP WARNINGS (user-defined thresholds) ---
+                        if (telegramId && user?.tpWarningEnabled && trade.targets && trade.targets.length > 0) {
+                            const tp1 = trade.targets[0].price;
+                            const totalDist = Math.abs(tp1 - entry);
+
+                            if (totalDist > 0) {
+                                const progressToTp = trade.direction === 'LONG'
+                                    ? (currentPrice - entry) / totalDist * 100
+                                    : (entry - currentPrice) / totalDist * 100;
+
+                                const thresholds: number[] = (user.tpWarningThresholds && user.tpWarningThresholds.length > 0)
+                                    ? [...user.tpWarningThresholds].sort((a, b) => a - b)
+                                    : [70, 90];
+
+                                const triggered: number[] = trade.triggeredTpWarnings || [];
+                                let changed = false;
+
+                                for (const threshold of thresholds) {
+                                    if (progressToTp >= threshold && !triggered.includes(threshold)) {
+                                        logger.info(`TP warning ${threshold}% triggered for ${trade.symbol}`);
+                                        const msg = `🎯🔔 <b>تنبيه: اقتراب من الهدف!</b>\n\n` +
+                                            `📈 الرمز: <b>${trade.symbol}</b> (${trade.direction})\n` +
+                                            `🏁 الهدف الأول: <b>${tp1}</b>\n` +
+                                            `📊 السعر الحالي: <b>${currentPrice.toFixed(4)}</b>\n` +
+                                            `✅ التقدم نحو الهدف: <b>${progressToTp.toFixed(1)}%</b>\n\n` +
+                                            `🔔 لقد وصلت إلى <b>${threshold}%</b> من المسافة نحو الهدف!`;
+                                        await this.notifier(telegramId, msg);
+                                        triggered.push(threshold);
+                                        changed = true;
+                                    }
+                                }
+
+                                if (changed) {
+                                    trade.triggeredTpWarnings = triggered;
+                                    await trade.save();
+                                }
+                            }
+                        }
+
+                        continue;
+
+                    } else {
+                        // --- Position is GONE (closed by SL/TP/manual) ---
+                        logger.info(`Trade ${trade._id} (${trade.symbol}) is NO LONGER active on BingX. Closing in DB...`);
+
                         const currentPrice = await this.bingX.getMarketPrice(symbol);
                         const entry = trade.entryPrice;
                         const lev = trade.leverage || 10;
@@ -109,35 +177,15 @@ export class PositionMonitor {
                             pnlPercent = (priceDiff / entry) * 100 * lev;
                         }
 
-                        // Determine if Win or Loss based on PnL sign
-                        const isWin = pnlPercent > 0;
-                        const emoji = isWin ? '✅ 🎯 Goal Hit' : '❌ Stop Loss Hit';
-
-                        const msg = `<b>${emoji}</b>\n` +
-                            `Symbol: ${trade.symbol}\n` +
-                            `Type: ${trade.direction}\n` +
-                            `Result: ${isWin ? 'Win' : 'Loss'}\n` +
-                            `PnL: ${pnlPercent.toFixed(2)}%`;
-
-                        // Populate fallback
-                        let user = trade.userId as any;
-                        if (user && !user.telegramId) {
-                            const User = (trade.constructor as any).db.model('User');
-                            user = await User.findById(trade.userId);
-                        }
-
-                        if (user && user.telegramId) {
-                            logger.info(`Sending ${isWin ? 'Win' : 'Loss'} notification for ${trade.symbol} to ${user.telegramId}`);
-                            await this.notifier(user.telegramId, msg);
-                        } else {
-                            logger.warn(`Could not find User or Telegram ID for trade ${trade._id}. User value: ${JSON.stringify(user)}`);
-                        }
-
-                        trade.currentStatus = isWin ? 'CLOSED_PROFIT' : 'CLOSED_LOSS';
+                        trade.currentStatus = pnlPercent > 0 ? 'CLOSED_PROFIT' : 'CLOSED_LOSS';
                         trade.closeTime = new Date();
                         trade.pnl = pnlPercent;
                         trade.logs.push(`Position monitor detected close. PnL: ${pnlPercent.toFixed(2)}%`);
                         await trade.save();
+
+                        // NOTE: Notifications to group are intentionally DISABLED when SL/TP is hit.
+                        // Only warnings (sent before the close) are used to alert the user.
+                        logger.info(`Trade ${trade._id} (${trade.symbol}) closed. PnL: ${pnlPercent.toFixed(2)}%. No group notification sent.`);
                     }
                 }
             }
