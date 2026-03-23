@@ -28,14 +28,29 @@ const positionMonitor = new PositionMonitor(bingXService, async (telegramId, msg
     }
 });
 
-// Middleware to ensure user exists
+// Middleware to ensure user exists & check whitelist
 const ensureUser = async (ctx: Context, next: () => Promise<void>) => {
     if (!ctx.from) return;
+    
+    const telegramId = ctx.from.id.toString();
+    const allowedIds = process.env.ALLOWED_TELEGRAM_IDS 
+        ? process.env.ALLOWED_TELEGRAM_IDS.split(',').map(id => id.trim()) 
+        : [];
+
+    // If whitelist is set and user not in it, block access
+    if (allowedIds.length > 0 && !allowedIds.includes(telegramId)) {
+        logger.warn(`Unauthorized access attempt by: ${ctx.from.username || 'unknown'} (${telegramId})`);
+        try {
+            await ctx.reply('⚠️ عذراً، أنت غير مصرح لك باستخدام هذا البوت. يرجى التواصل مع المسؤول لإضافة معرفك للقائمة البيضاء.');
+        } catch (e) { }
+        return;
+    }
+
     try {
-        let user = await User.findOne({ telegramId: ctx.from.id.toString() });
+        let user = await User.findOne({ telegramId });
         if (!user) {
             user = await User.create({
-                telegramId: ctx.from.id.toString(),
+                telegramId,
                 username: ctx.from.username,
                 riskPercentage: parseInt(process.env.RISK_PERCENTAGE || '2'),
             });
