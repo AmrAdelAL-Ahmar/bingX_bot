@@ -114,7 +114,7 @@ bot.command('menu', async (ctx) => {
 
         await ctx.reply('مرحباً بك في قائمة التحكم الخاصة بالبوت 🤖\nاختر أحد الإجراءات التالية:', {
             reply_markup: getMainMenuKeyboard(user)
-        });
+        }).catch(e => logger.error(`Failed to send menu: ${e.message}`));
     } catch (error) {
         logger.error('Error in /menu:', error);
     }
@@ -194,9 +194,9 @@ bot.hears('💰 رصيدي وملخص الأرباح', async (ctx) => {
             msg += `لا يوجد صفقات مفتوحة حالياً.\n`;
         }
 
-        ctx.replyWithHTML(msg);
+        ctx.replyWithHTML(msg).catch(e => logger.error(`Failed to send balance info: ${e.message}`));
     } catch (error) {
-        ctx.reply('حدث خطأ أثناء جلب الرصيد.');
+        ctx.reply('حدث خطأ أثناء جلب الرصيد.').catch(e => logger.error(`Failed to send balance error: ${e.message}`));
     }
 });
 
@@ -210,7 +210,7 @@ bot.hears('💼 صفقاتي المفتوحة', async (ctx) => {
         const positions = await bingXService.getPositions();
 
         if (!positions || positions.length === 0) {
-            ctx.reply('لا يوجد صفقات مفتوحة حالياً.');
+            ctx.reply('لا يوجد صفقات مفتوحة حالياً.').catch(e => logger.error(`Failed to send no positions notice: ${e.message}`));
             return;
         }
 
@@ -292,10 +292,10 @@ bot.hears('💼 صفقاتي المفتوحة', async (ctx) => {
         const totalEmoji = totalPnl >= 0 ? '🟢' : '🔴';
         msg += `<b>إجمالي الربح/الخسارة العائم: ${totalEmoji} ${totalPnl.toFixed(4)} USDT</b>`;
 
-        ctx.replyWithHTML(msg);
+        ctx.replyWithHTML(msg).catch(e => logger.error(`Failed to send positions list: ${e.message}`));
     } catch (error) {
         logger.error('Error in btn_positions_all:', error);
-        ctx.reply('Error fetching positions from BingX.');
+        ctx.reply('Error fetching positions from BingX.').catch(e => logger.error(`Failed to send positions error: ${e.message}`));
     }
 });
 
@@ -320,9 +320,9 @@ const handleReport = async (ctx: any, title: string, getQuery: () => any) => {
         // But for now, standard user reports will fit or can be chunked later.
         const msg = generateReportStr(trades, title, currentEquity);
         if (msg.length > 4000) {
-            ctx.replyWithHTML(msg.substring(0, 4000) + `\n\n<i>... [تم اقتطاع باقي التقرير لطوله]</i>`);
+            ctx.replyWithHTML(msg.substring(0, 4000) + `\n\n<i>... [تم اقتطاع باقي التقرير لطوله]</i>`).catch((e: any) => logger.error(`Failed to send truncated report: ${e.message}`));
         } else {
-            ctx.replyWithHTML(msg);
+            ctx.replyWithHTML(msg).catch((e: any) => logger.error(`Failed to send report: ${e.message}`));
         }
     } catch (error) {
         logger.error(`Error generating report ${title}:`, error);
@@ -343,7 +343,7 @@ const getReportsKeyboard = () => ({
 });
 
 bot.hears('📊 التقارير', async (ctx) => {
-    ctx.reply('📊 اختر نوع التقرير:', { reply_markup: getReportsKeyboard() });
+    ctx.reply('📊 اختر نوع التقرير:', { reply_markup: getReportsKeyboard() }).catch(e => logger.error(`Failed to send reports menu: ${e.message}`));
 });
 
 bot.hears('📊 تقرير يومي', async (ctx) => {
@@ -488,9 +488,9 @@ bot.on('callback_query', async (ctx) => {
             parse_mode: 'HTML',
             reply_markup: buildAlertSettingsKeyboard(user)
         });
-        await ctx.answerCbQuery('✅ تم الحفظ');
+        await ctx.answerCbQuery('✅ تم الحفظ').catch(e => logger.error(`Failed to answer alerts cb: ${e.message}`));
     } catch (e) {
-        await ctx.answerCbQuery('✅ تم الحفظ');
+        await ctx.answerCbQuery('✅ تم الحفظ').catch(e => logger.error(`Failed to answer alerts cb error: ${e.message}`));
     }
 });
 
@@ -944,8 +944,7 @@ bot.on('text', async (ctx) => {
                 const markPrice = parseFloat(pos.markPrice).toFixed(4);
                 const amountCoins = parseFloat(pos.contracts);
 
-                msg += `السعر الحالي: ${markPrice}\n` +
-                    `المبلغ المستثمر (Margin): ${margin.toFixed(4)} USDT (النسبة من الرصيد: ${balance > 0 ? ((margin / balance) * 100).toFixed(2) : 0}%)\n` +
+                msg += `المبلغ المستثمر (Margin): ${margin.toFixed(4)} USDT (النسبة من الرصيد: ${balance > 0 ? ((margin / balance) * 100).toFixed(2) : 0}%)\n` +
                     `الربح/الخسارة الحالية: ${emoji} ${pnl.toFixed(4)} USDT (${roe.toFixed(2)}%)\n`;
 
                 if (trade) {
@@ -970,10 +969,10 @@ bot.on('text', async (ctx) => {
                 msg += `<i>لا يوجد بيانات حية من المنصة لهذه الصفقة حالياً.</i>\n`;
             }
 
-            ctx.replyWithHTML(msg);
+            await ctx.replyWithHTML(msg).catch(e => logger.error(`Failed to send status info: ${e.message}`));
         } catch (error) {
             logger.error(error);
-            ctx.reply('حدث خطأ أثناء جلب حالة الصفقة.');
+            await ctx.reply('حدث خطأ أثناء جلب حالة الصفقة.').catch(e => logger.error(`Failed to send error notice: ${e.message}`));
         }
         return;
     }
@@ -983,17 +982,17 @@ bot.on('text', async (ctx) => {
         user.botState = undefined;
         await user.save();
 
-        ctx.reply(`⏳ جاري البحث وإلغاء صفقة ${symbolInput}...`, { reply_markup: getMainMenuKeyboard(user) });
+        await ctx.reply(`⏳ جاري البحث وإلغاء صفقة ${symbolInput}...`, { reply_markup: getMainMenuKeyboard(user) }).catch((e: any) => logger.error(`Failed to send cancel search notice: ${e.message}`));
         try {
             const success = await tradeManager.closeSpecificPosition(user._id.toString(), symbolInput);
             if (success) {
-                ctx.reply(`✅ تم إغلاق الصفقة المفتوحة لعملة ${symbolInput} بنجاح.`);
+                await ctx.reply(`✅ تم إغلاق الصفقة المفتوحة لعملة ${symbolInput} بنجاح.`).catch((e: any) => logger.error(`Failed to send cancel success message: ${e.message}`));
             } else {
-                ctx.reply(`لا يوجد صفقة مفتوحة حالياً لـ ${symbolInput}.`);
+                await ctx.reply(`لا يوجد صفقة مفتوحة حالياً لـ ${symbolInput}.`).catch((e: any) => logger.error(`Failed to send no-position-to-cancel notice: ${e.message}`));
             }
         } catch (error) {
             logger.error(error);
-            ctx.reply(`❌ فشل في إلغاء صفقة ${symbolInput}.`);
+            await ctx.reply(`❌ فشل في إلغاء صفقة ${symbolInput}.`).catch((e: any) => logger.error(`Failed to send cancel failure message: ${e.message}`));
         }
         return;
     }
@@ -1005,7 +1004,7 @@ bot.on('text', async (ctx) => {
 
         const parsedDate = new Date(dateInput);
         if (isNaN(parsedDate.getTime())) {
-            ctx.reply('❌ صيغة التاريخ غير صحيحة. يرجى المحاولة لاحقاً بصيغة صحيحة (مثال: 2026-03-01).', { reply_markup: getMainMenuKeyboard(user) });
+            await ctx.reply('❌ صيغة التاريخ غير صحيحة. يرجى المحاولة لاحقاً بصيغة صحيحة (مثال: 2026-03-01).', { reply_markup: getMainMenuKeyboard(user) }).catch((e: any) => logger.error(`Failed to send date format error: ${e.message}`));
             return;
         }
 
@@ -1023,11 +1022,15 @@ bot.on('text', async (ctx) => {
 
     if (signal) {
         try {
+            // Determine the target chat ID for notifications
+            // If NOTIFICATION_CHAT_ID is set, use it. Otherwise, default to the user's private chat ID
+            const targetChatId = process.env.NOTIFICATION_CHAT_ID || ctx.from.id.toString();
+
             if (signal.type === 'TRADE') {
                 logger.info(`Signal detected from ${ctx.from.username}: ${signal.symbol} ${signal.direction}`);
-                ctx.reply(`✅ Signal Parsed: ${signal.symbol} ${signal.direction}. Processing...`);
+                await ctx.telegram.sendMessage(targetChatId, `✅ Signal Parsed: ${signal.symbol} ${signal.direction}. Processing...`).catch((e: any) => logger.error(`Failed to send parse notice: ${e.message}`));
 
-                const result = await tradeManager.executeSignal(signal, user._id.toString());
+                const result = await tradeManager.executeSignal(signal as any, user._id.toString());
 
                 if (result) {
                     let msg = `✅ <b>Trade Executed Successfully</b>\n\n` +
@@ -1046,17 +1049,20 @@ bot.on('text', async (ctx) => {
                         `${result.stopLoss.price} (${result.stopLoss.pnlPercent}%)\n\n` +
                         `Order ID: ${result.tradeId}`;
 
-                    ctx.replyWithHTML(msg, { reply_markup: getMainMenuKeyboard(user) });
+                    await ctx.telegram.sendMessage(targetChatId, msg, { parse_mode: 'HTML', reply_markup: getMainMenuKeyboard(user) }).catch((e: any) => logger.error(`Failed to send execute success: ${e.message}`));
                 }
             } else if (signal.type === 'CLOSE') {
                 logger.info(`Close Signal detected: ${signal.symbol}`);
-                ctx.reply(`🛑 Close Signal Parsed: ${signal.symbol}. Closing...`);
+                await ctx.telegram.sendMessage(targetChatId, `🛑 Close Signal Parsed: ${signal.symbol}. Closing...`).catch((e: any) => logger.error(`Failed to send close notice: ${e.message}`));
                 await tradeManager.executeSignal(signal, user._id.toString());
-                ctx.reply(`✅ Close order sent for ${signal.symbol}`, { reply_markup: getMainMenuKeyboard(user) });
+                await ctx.telegram.sendMessage(targetChatId, `✅ Close order sent for ${signal.symbol}`, { reply_markup: getMainMenuKeyboard(user) }).catch((e: any) => logger.error(`Failed to send close success: ${e.message}`));
             }
         } catch (error: any) {
             logger.error(`Error processing signal: ${error.message}`);
-            ctx.reply(`❌ Error: ${error.message}`, { reply_markup: getMainMenuKeyboard(user) });
+            
+            // Fallback: try to notify the designated chat about the error
+            const targetChatId = process.env.NOTIFICATION_CHAT_ID || ctx.from.id.toString();
+            await ctx.telegram.sendMessage(targetChatId, `❌ Error: ${error.message}`, { reply_markup: getMainMenuKeyboard(user) }).catch((e: any) => logger.error(`Failed to send error notification: ${e.message}`));
         }
     } else {
         // Not a signal, not a botState input, and not a button click.
@@ -1064,7 +1070,7 @@ bot.on('text', async (ctx) => {
         // Only reply if it doesn't match an existing command so we don't spam.
         const isCommand = message.startsWith('/');
         if (!isCommand) {
-            ctx.reply('الرجاء استخدام الأزرار في القائمة للتحكم، أو إرسال إشارة تداول صحيحة.', { reply_markup: getMainMenuKeyboard(user) });
+            ctx.reply('الرجاء استخدام الأزرار في القائمة للتحكم، أو إرسال إشارة تداول صحيحة.', { reply_markup: getMainMenuKeyboard(user) }).catch((e: any) => logger.error(`Failed to send generic help: ${e.message}`));
         }
     }
 });
@@ -1083,7 +1089,7 @@ bot.command('history', async (ctx) => {
             .limit(5);
 
         if (trades.length === 0) {
-            ctx.reply('No history found.');
+            ctx.reply('No history found.').catch((e: any) => logger.error(`Failed to send no history notice: ${e.message}`));
             return;
         }
 
@@ -1097,11 +1103,11 @@ bot.command('history', async (ctx) => {
                 `Date: ${date}\n` +
                 `-------------------\n`;
         }
-        ctx.replyWithHTML(msg);
+        ctx.replyWithHTML(msg).catch((e: any) => logger.error(`Failed to send history: ${e.message}`));
 
     } catch (error) {
         logger.error('Error in /history:', error);
-        ctx.reply('Error fetching history.');
+        ctx.reply('Error fetching history.').catch((e: any) => logger.error(`Failed to send history error: ${e.message}`));
     }
 });
 
@@ -1116,7 +1122,7 @@ bot.command('report', async (ctx) => {
         });
 
         if (allTrades.length === 0) {
-            ctx.reply('لا يوجد بيانات كافية لإصدار تقرير حالياً.');
+            ctx.reply('لا يوجد بيانات كافية لإصدار تقرير حالياً.').catch((e: any) => logger.error(`Failed to send no report notice: ${e.message}`));
             return;
         }
 
@@ -1134,10 +1140,10 @@ bot.command('report', async (ctx) => {
             `💰 Total PnL: ${totalPnl.toFixed(2)}%\n\n` +
             `<i>Keep up the good work! 🚀</i>`;
 
-        ctx.replyWithHTML(msg);
+        ctx.replyWithHTML(msg).catch((e: any) => logger.error(`Failed to send performance report: ${e.message}`));
     } catch (error) {
         logger.error('Error in /report:', error);
-        ctx.reply('Error generating report.');
+        ctx.reply('Error generating report.').catch((e: any) => logger.error(`Failed to send report error: ${e.message}`));
     }
 });
 
