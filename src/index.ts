@@ -33,15 +33,21 @@ const ensureUser = async (ctx: Context, next: () => Promise<void>) => {
     if (!ctx.from) return;
     
     const telegramId = ctx.from.id.toString();
+    const chatId = ctx.chat?.id.toString();
     const allowedIds = process.env.ALLOWED_TELEGRAM_IDS 
         ? process.env.ALLOWED_TELEGRAM_IDS.split(',').map(id => id.trim()) 
         : [];
 
-    // If whitelist is set and user not in it, block access
-    if (allowedIds.length > 0 && !allowedIds.includes(telegramId)) {
-        logger.warn(`Unauthorized access attempt by: ${ctx.from.username || 'unknown'} (${telegramId})`);
+    // Check if either the user or the chat (group) is whitelisted
+    const isWhitelisted = allowedIds.length === 0 || 
+                         allowedIds.includes(telegramId) || 
+                         (chatId && allowedIds.includes(chatId));
+
+    // If whitelist is set and neither user nor chat is in it, block access
+    if (!isWhitelisted) {
+        logger.warn(`Unauthorized access attempt by: ${ctx.from.username || 'unknown'} (${telegramId})${chatId ? ` in chat ${chatId}` : ''}`);
         try {
-            await ctx.reply('⚠️ عذراً، أنت غير مصرح لك باستخدام هذا البوت. يرجى التواصل مع المسؤول لإضافة معرفك للقائمة البيضاء.');
+            await ctx.reply('⚠️ عذراً، أنت غير مصرح لك باستخدام هذا البوت. يرجى التواصل مع المسؤول لإضافة معرفك أو معرف المجموعة للقائمة البيضاء.');
         } catch (e) { }
         return;
     }
