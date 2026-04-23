@@ -281,10 +281,33 @@ export class TradeManager {
                     logger.info(`✅ Successfully closed ${pos.side} position for ${pos.symbol} via 'Close All'`);
                     closedCount++;
 
-                    // Optimistically update the database
+                    // Calculate actual PnL using current mark price
+                    let closePnlPercent = 0;
+                    let closePnlUsdt = 0;
+                    try {
+                        const markPrice = parseFloat(pos.markPrice) || await this.bingX.getMarketPrice(pos.symbol);
+                        const dbTrade = await Trade.findOne({ userId: user._id, symbol: pos.symbol, currentStatus: 'OPEN' });
+                        if (dbTrade && markPrice > 0) {
+                            const lev = dbTrade.leverage || 10;
+                            const margin = dbTrade.amount / lev;
+                            const priceDiff = dbTrade.direction === 'LONG'
+                                ? (markPrice - dbTrade.entryPrice)
+                                : (dbTrade.entryPrice - markPrice);
+                            closePnlPercent = (priceDiff / dbTrade.entryPrice) * 100 * lev;
+                            closePnlUsdt = margin * (closePnlPercent / 100);
+                        }
+                    } catch (e) { /* ignore price fetch errors */ }
+
+                    // Update DB with PnL and closeType=MANUAL
                     await Trade.updateMany(
                         { userId: user._id, symbol: pos.symbol, currentStatus: 'OPEN' },
-                        { currentStatus: 'CLOSED_MANUAL', closeTime: new Date() } // We'll use CLOSED_MANUAL
+                        {
+                            currentStatus: 'CLOSED_MANUAL',
+                            closeTime: new Date(),
+                            closeType: 'MANUAL',
+                            pnl: closePnlPercent,
+                            $push: { logs: `Manually closed via bot 'Close All'. PnL: ${closePnlPercent.toFixed(2)}% (${closePnlUsdt.toFixed(2)} USDT)` }
+                        }
                     );
 
                 } catch (err: any) {
@@ -327,10 +350,33 @@ export class TradeManager {
                 );
                 logger.info(`✅ Successfully closed ${pos.side} position for ${pos.symbol} via 'Close Specific'`);
 
-                // Optimistically update DB
+                // Calculate actual PnL using current mark price
+                let closePnlPercent = 0;
+                let closePnlUsdt = 0;
+                try {
+                    const markPrice = parseFloat(pos.markPrice) || await this.bingX.getMarketPrice(pos.symbol);
+                    const dbTrade = await Trade.findOne({ userId: user._id, symbol: pos.symbol, currentStatus: 'OPEN' });
+                    if (dbTrade && markPrice > 0) {
+                        const lev = dbTrade.leverage || 10;
+                        const margin = dbTrade.amount / lev;
+                        const priceDiff = dbTrade.direction === 'LONG'
+                            ? (markPrice - dbTrade.entryPrice)
+                            : (dbTrade.entryPrice - markPrice);
+                        closePnlPercent = (priceDiff / dbTrade.entryPrice) * 100 * lev;
+                        closePnlUsdt = margin * (closePnlPercent / 100);
+                    }
+                } catch (e) { /* ignore price fetch errors */ }
+
+                // Update DB with PnL and closeType=MANUAL
                 await Trade.updateMany(
                     { userId: user._id, symbol: pos.symbol, currentStatus: 'OPEN' },
-                    { currentStatus: 'CLOSED_MANUAL', closeTime: new Date() }
+                    {
+                        currentStatus: 'CLOSED_MANUAL',
+                        closeTime: new Date(),
+                        closeType: 'MANUAL',
+                        pnl: closePnlPercent,
+                        $push: { logs: `Manually closed via bot 'Close Specific'. PnL: ${closePnlPercent.toFixed(2)}% (${closePnlUsdt.toFixed(2)} USDT)` }
+                    }
                 );
             }
             return true;

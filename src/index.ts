@@ -16,17 +16,31 @@ dotenv.config();
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN || '');
 const bingXService = new BingXService(process.env.BINGX_API_KEY, process.env.BINGX_SECRET_KEY);
 const tradeManager = new TradeManager(bingXService);
-const reportingService = new ReportingService(bot);
+const reportingService = new ReportingService(bot, bingXService);
 
 // Initialize Monitor
-const positionMonitor = new PositionMonitor(bingXService, async (telegramId, msg) => {
-    try {
-        await bot.telegram.sendMessage(telegramId, msg, { parse_mode: 'HTML' });
-        logger.info(`Notification sent successfully to ${telegramId}`);
-    } catch (error) {
-        logger.error(`Error sending notification to ${telegramId}:`, error);
+const positionMonitor = new PositionMonitor(
+    bingXService,
+    async (telegramId, msg) => {
+        try {
+            await bot.telegram.sendMessage(telegramId, msg, { parse_mode: 'HTML' });
+            logger.info(`Notification sent successfully to ${telegramId}`);
+        } catch (error) {
+            logger.error(`Error sending notification to ${telegramId}:`, error);
+        }
+    },
+    async (msg) => {
+        // Group notifier: send to NOTIFICATION_CHAT_ID
+        const groupChat = process.env.NOTIFICATION_CHAT_ID;
+        if (!groupChat) return;
+        try {
+            await bot.telegram.sendMessage(groupChat, msg, { parse_mode: 'HTML' });
+            logger.info(`Group notification sent to ${groupChat}`);
+        } catch (error) {
+            logger.error(`Error sending group notification to ${groupChat}:`, error);
+        }
     }
-});
+);
 
 // Middleware to ensure user exists & check whitelist
 const ensureUser = async (ctx: Context, next: () => Promise<void>) => {
@@ -313,22 +327,37 @@ const handleReport = async (ctx: any, title: string, getQuery: () => any) => {
 
         ctx.reply(`⏳ جاري جلب البيانات وحساب ${title}...`, { reply_markup: getMainMenuKeyboard(user) });
 
-        const query = getQuery();
-        const trades = await Trade.find({
-            userId: user._id,
-            currentStatus: { $in: ['CLOSED_PROFIT', 'CLOSED_LOSS', 'CLOSED_MANUAL'] },
-            ...query
-        }).sort({ closeTime: 1 });
+        // Check if we should use BingX account mode
+        const reportByBingX = process.env.REPORT_BY_TRADING_ACCOUNT === 'true';
 
-        const currentEquity = await bingXService.getTotalEquity();
+        if (reportByBingX) {
+            // --- BingX Mode: fetch trades directly from exchange ---
+            const query = getQuery();
+            const startTime = query.closeTime?.$gte || query.entryTime?.$gte || new Date(0);
+            const endTime = query.closeTime?.$lte || query.closeTime?.$lt || query.entryTime?.$lte || query.entryTime?.$lt || new Date();
 
-        // Telegram max message length is 4096. If it gets too long, we might need to truncate
-        // But for now, standard user reports will fit or can be chunked later.
-        const msg = generateReportStr(trades, title, currentEquity);
-        if (msg.length > 4000) {
-            ctx.replyWithHTML(msg.substring(0, 4000) + `\n\n<i>... [تم اقتطاع باقي التقرير لطوله]</i>`).catch((e: any) => logger.error(`Failed to send truncated report: ${e.message}`));
+            const reports = await reportingService.generateBingXReportForPeriod(startTime, endTime, title);
+            for (let i = 0; i < reports.length; i++) {
+                const partTitle = reports.length > 1 ? `<i>[جزء ${i + 1}/${reports.length}]</i>\n` : '';
+                await ctx.replyWithHTML(partTitle + reports[i]).catch((e: any) => logger.error(`Failed to send BingX report chunk ${i+1}: ${e.message}`));
+            }
         } else {
-            ctx.replyWithHTML(msg).catch((e: any) => logger.error(`Failed to send report: ${e.message}`));
+            // --- Normal Mode: fetch from MongoDB per user ---
+            const query = getQuery();
+            const trades = await Trade.find({
+                userId: user._id,
+                currentStatus: { $in: ['CLOSED_PROFIT', 'CLOSED_LOSS', 'CLOSED_MANUAL'] },
+                ...query
+            }).sort({ closeTime: 1 });
+
+            const currentEquity = await bingXService.getTotalEquity();
+
+            const msg = generateReportStr(trades, title, currentEquity);
+            if (msg.length > 4000) {
+                ctx.replyWithHTML(msg.substring(0, 4000) + `\n\n<i>... [تم اقتطاع باقي التقرير لطوله]</i>`).catch((e: any) => logger.error(`Failed to send truncated report: ${e.message}`));
+            } else {
+                ctx.replyWithHTML(msg).catch((e: any) => logger.error(`Failed to send report: ${e.message}`));
+            }
         }
     } catch (error) {
         logger.error(`Error generating report ${title}:`, error);

@@ -15,8 +15,9 @@ export class BingXService {
                 adjustForTimeDifference: true,
             },
             enableRateLimit: true,
+            timeout: 30000, // Increased to 30s to prevent RequestTimeout errors on slow networks
         });
-        this.exchange.loadMarkets().catch((err: any) => logger.error('Failed to load markets:', err));
+        this.exchange.loadMarkets().catch((err: any) => logger.error(`Failed to load markets on init: ${err.message}`));
     }
 
     async setLeverage(symbol: string, leverage: number, side: 'LONG' | 'SHORT' = 'LONG') {
@@ -162,6 +163,56 @@ export class BingXService {
         } catch (error) {
             logger.error(`Error setting stop loss for ${symbol}: `, error);
             throw error;
+        }
+    }
+
+    /**
+     * Fetch closed/filled trades from BingX exchange directly.
+     * Uses fetchMyTrades (per-symbol) or fetchClosedOrders (global).
+     * @param since - optional timestamp (ms) to filter from
+     * @param limit - max number of records (default 200)
+     * @param symbol - optional symbol
+     */
+    async getClosedTrades(since?: number, limit: number = 200, symbol?: string): Promise<any[]> {
+        try {
+            await this.exchange.loadMarkets();
+            if (symbol) {
+                // If symbol is provided, fetchMyTrades works
+                const trades = await this.exchange.fetchMyTrades(symbol, since, limit, {
+                    type: 'swap'
+                });
+                return trades || [];
+            } else {
+                // BingX CCXT requires symbol for fetchMyTrades. Use fetchClosedOrders for global fetch.
+                const orders = await this.exchange.fetchClosedOrders(undefined, since, limit, {
+                    type: 'swap'
+                });
+                return orders || [];
+            }
+        } catch (error: any) {
+            logger.error('Error fetching closed trades from BingX:', { 
+                message: error.message,
+                symbol: symbol 
+            });
+            return [];
+        }
+    }
+
+    /**
+     * Fetch closed orders (filled) for a specific symbol to determine actual close price.
+     * @param symbol - e.g. 'BTC/USDT:USDT'
+     * @param since - optional timestamp (ms) to filter from
+     */
+    async getClosedOrders(symbol: string, since?: number): Promise<any[]> {
+        try {
+            await this.exchange.loadMarkets();
+            const orders = await this.exchange.fetchClosedOrders(symbol, since, 10, {
+                type: 'swap'
+            });
+            return orders || [];
+        } catch (error: any) {
+            logger.error(`Error fetching closed orders for ${symbol}:`, error.message);
+            return [];
         }
     }
 }

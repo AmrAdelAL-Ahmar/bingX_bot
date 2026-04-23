@@ -6,12 +6,18 @@ import logger from '../utils/logger';
 export class PositionMonitor {
     private bingX: BingXService;
     private notifier: (telegramId: string, msg: string) => Promise<void>;
+    private groupNotifier: (msg: string) => Promise<void>;
     private isRunning: boolean = false;
     private intervalId?: NodeJS.Timeout;
 
-    constructor(bingX: BingXService, notifier: (telegramId: string, msg: string) => Promise<void>) {
+    constructor(
+        bingX: BingXService,
+        notifier: (telegramId: string, msg: string) => Promise<void>,
+        groupNotifier: (msg: string) => Promise<void>
+    ) {
         this.bingX = bingX;
         this.notifier = notifier;
+        this.groupNotifier = groupNotifier;
     }
 
     start(intervalMs: number = 30000) { // Check every 30s
@@ -166,26 +172,135 @@ export class PositionMonitor {
                         // --- Position is GONE (closed by SL/TP/manual) ---
                         logger.info(`Trade ${trade._id} (${trade.symbol}) is NO LONGER active on BingX. Closing in DB...`);
 
-                        const currentPrice = await this.bingX.getMarketPrice(symbol);
                         const entry = trade.entryPrice;
                         const lev = trade.leverage || 10;
-                        let pnlPercent = 0;
+                        const margin = (trade.amount || 0) / lev;
 
-                        if (currentPrice) {
-                            const isLong = trade.direction === 'LONG';
-                            const priceDiff = isLong ? (currentPrice - entry) : (entry - currentPrice);
-                            pnlPercent = (priceDiff / entry) * 100 * lev;
+                        // Try to fetch the actual close price from BingX closed orders
+                        let actualClosePrice: number | null = null;
+                        let actualPnlUsdt: number | null = null;
+                        let closeType: 'AUTO' | 'MANUAL' = 'AUTO';
+
+                        try {
+                            const since = trade.entryTime ? trade.entryTime.getTime() : undefined;
+                            const closedOrders = await this.bingX.getClosedOrders(symbol, since);
+
+                            // Find the most recent closing order (opposite side to position direction)
+                            const closingSide = trade.direction === 'LONG' ? 'sell' : 'buy';
+                            const recentClose = closedOrders
+                                .filter((o: any) =>
+                                    o.side === closingSide &&
+                                    o.status === 'closed' &&
+                                    parseFloat(o.filled || '0') > 0
+                                )
+                                .sort((a: any, b: any) => (b.timestamp || 0) - (a.timestamp || 0))[0];
+
+                            if (recentClose) {
+                                actualClosePrice = parseFloat(recentClose.average || recentClose.price || '0');
+
+                                // Detect if it was a manual close (reduce-only market order without TPSL trigger)
+                                const orderType = (recentClose.type || '').toLowerCase();
+                                const reduceOnly = recentClose.reduceOnly === true || recentClose.info?.reduceOnly === true;
+                                const isTpSlOrder = orderType.includes('stop') || orderType.includes('take_profit') ||
+                                    (recentClose.info?.type || '').toLowerCase().includes('stop') ||
+                                    (recentClose.info?.type || '').toLowerCase().includes('profit');
+
+                                if (reduceOnly && !isTpSlOrder) {
+                                    closeType = 'MANUAL';
+                                } else if (isTpSlOrder) {
+                                    closeType = 'AUTO';
+                                }
+
+                                // Calculate actual PnL from realised
+                                if (recentClose.info?.realisedProfit !== undefined) {
+                                    actualPnlUsdt = parseFloat(recentClose.info.realisedProfit);
+                                } else if (actualClosePrice && entry) {
+                                    const priceDiff = trade.direction === 'LONG'
+                                        ? (actualClosePrice - entry)
+                                        : (entry - actualClosePrice);
+                                    const contracts = trade.amount / entry;
+                                    actualPnlUsdt = priceDiff * contracts;
+                                }
+                            }
+                        } catch (e) {
+                            logger.warn(`Could not fetch closed orders for ${symbol}:`, e);
                         }
 
-                        trade.currentStatus = pnlPercent > 0 ? 'CLOSED_PROFIT' : 'CLOSED_LOSS';
+                        // Fallback: use market price estimate if no actual close price
+                        let pnlPercent = 0;
+                        let pnlUsdt = 0;
+
+                        if (actualClosePrice && actualClosePrice > 0) {
+                            const priceDiff = trade.direction === 'LONG'
+                                ? (actualClosePrice - entry)
+                                : (entry - actualClosePrice);
+                            pnlPercent = (priceDiff / entry) * 100 * lev;
+                            pnlUsdt = actualPnlUsdt !== null ? actualPnlUsdt : (margin * (pnlPercent / 100));
+                        } else {
+                            // Fallback to market price
+                            const currentPrice = await this.bingX.getMarketPrice(symbol);
+                            if (currentPrice) {
+                                const priceDiff = trade.direction === 'LONG'
+                                    ? (currentPrice - entry)
+                                    : (entry - currentPrice);
+                                pnlPercent = (priceDiff / entry) * 100 * lev;
+                                pnlUsdt = margin * (pnlPercent / 100);
+                            }
+                        }
+
+                        // Determine final status
+                        const finalStatus = closeType === 'MANUAL' ? 'CLOSED_MANUAL'
+                            : (pnlPercent > 0 ? 'CLOSED_PROFIT' : 'CLOSED_LOSS');
+
+                        trade.currentStatus = finalStatus as any;
                         trade.closeTime = new Date();
                         trade.pnl = pnlPercent;
-                        trade.logs.push(`Position monitor detected close. PnL: ${pnlPercent.toFixed(2)}%`);
+                        (trade as any).closeType = closeType;
+                        trade.logs.push(
+                            `Position monitor detected close. Type: ${closeType}. PnL: ${pnlPercent.toFixed(2)}% (${pnlUsdt.toFixed(2)} USDT)`
+                        );
                         await trade.save();
 
-                        // NOTE: Notifications to group are intentionally DISABLED when SL/TP is hit.
-                        // Only warnings (sent before the close) are used to alert the user.
-                        logger.info(`Trade ${trade._id} (${trade.symbol}) closed. PnL: ${pnlPercent.toFixed(2)}%. No group notification sent.`);
+                        logger.info(`Trade ${trade._id} (${trade.symbol}) closed. Type: ${closeType}. PnL: ${pnlPercent.toFixed(2)}% / ${pnlUsdt.toFixed(2)} USDT`);
+
+                        // --- SEND CLOSE NOTIFICATION to group/user ---
+                        const isProfit = pnlPercent >= 0;
+                        const emoji = isProfit ? '🟢' : '🔴';
+                        const pnlSign = isProfit ? '+' : '';
+
+                        let closeTypeLabel = '';
+                        if (closeType === 'MANUAL') {
+                            closeTypeLabel = '🤚 إغلاق يدوي';
+                        } else if (isProfit) {
+                            closeTypeLabel = '🎯 ضرب الهدف (TP)';
+                        } else {
+                            closeTypeLabel = '🛑 ضرب وقف الخسارة (SL)';
+                        }
+
+                        // Show trader info in notification if available
+                        const traderInfo = user
+                            ? (user.username ? `@${user.username}` : `ID: ${user.telegramId}`)
+                            : '';
+
+                        const closeMsg =
+                            `${emoji} <b>صفقة مغلقة - ${trade.symbol}</b> (${trade.direction})\n` +
+                            `📍 نوع الإغلاق: <b>${closeTypeLabel}</b>\n` +
+                            `💰 النتيجة: <b>${pnlSign}${pnlUsdt.toFixed(2)} USDT</b> (${pnlSign}${pnlPercent.toFixed(2)}%)\n` +
+                            `📊 الرافعة: ${lev}x | المارجن: ${margin.toFixed(2)} USDT\n` +
+                            (traderInfo ? `👤 المتداول: ${traderInfo}\n` : '') +
+                            `⏱ ${new Date().toLocaleString('ar-SA')}`;
+
+                        // Send to group notifier (NOTIFICATION_CHAT_ID) if available
+                        await this.groupNotifier(closeMsg).catch(e =>
+                            logger.error(`Failed to send close notification to group: ${e.message}`)
+                        );
+
+                        // Also notify the individual user if different from group
+                        if (telegramId) {
+                            await this.notifier(telegramId, closeMsg).catch(e =>
+                                logger.error(`Failed to send close notification to user ${telegramId}: ${e.message}`)
+                            );
+                        }
                     }
                 }
             }

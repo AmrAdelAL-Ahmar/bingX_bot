@@ -10,7 +10,8 @@ export interface ITrade extends Document {
         price: number;
         hit: boolean;
     }[];
-    currentStatus: 'PENDING' | 'OPEN' | 'TP1_HIT' | 'TP2_HIT' | 'TP3_HIT' | 'CLOSED_PROFIT' | 'CLOSED_LOSS' | 'CANCELLED';
+    currentStatus: 'PENDING' | 'OPEN' | 'TP1_HIT' | 'TP2_HIT' | 'TP3_HIT' | 'CLOSED_PROFIT' | 'CLOSED_LOSS' | 'CLOSED_MANUAL' | 'CANCELLED';
+    closeType?: 'AUTO' | 'MANUAL'; // AUTO = SL/TP triggered, MANUAL = closed by user
     amount: number; // Position size in USDT
     leverage: number;
     pnl: number;
@@ -36,9 +37,10 @@ const TradeSchema: Schema = new Schema({
     }],
     currentStatus: {
         type: String,
-        enum: ['PENDING', 'OPEN', 'TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'CLOSED_PROFIT', 'CLOSED_LOSS', 'CANCELLED'],
+        enum: ['PENDING', 'OPEN', 'TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'CLOSED_PROFIT', 'CLOSED_LOSS', 'CLOSED_MANUAL', 'CANCELLED'],
         default: 'PENDING'
     },
+    closeType: { type: String, enum: ['AUTO', 'MANUAL'] },
     amount: { type: Number, required: true },
     leverage: { type: Number, default: 10 },
     pnl: { type: Number, default: 0 },
