@@ -38,11 +38,11 @@ const positionMonitor = new PositionMonitor(bingXService, async (telegramId, msg
 bot.use(ensureUser);
 
 // Register Command Handlers
-registerMessageHandlers(bot, tradeManager);
 registerPortfolioHandlers(bot, bingXService);
 registerReportHandlers(bot, bingXService);
 registerTradingHandlers(bot, bingXService);
 registerSettingsHandlers(bot);
+registerMessageHandlers(bot, tradeManager);
 
 const start = async () => {
     await connectDB();
