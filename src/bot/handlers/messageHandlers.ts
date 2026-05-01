@@ -40,6 +40,26 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
             if (!user) return;
 
             // 1. Check AWAITING States
+            if (user.botState === 'AWAITING_RISK_PERCENTAGE') {
+                if (message === 'رجوع 🔙') {
+                    user.botState = 'NONE';
+                    await user.save();
+                    return ctx.reply('تم الإلغاء.', { reply_markup: getMainMenuKeyboard(user) });
+                }
+
+                const riskValue = parseInt(message.replace('%', ''));
+                if (!isNaN(riskValue) && riskValue >= 1 && riskValue <= 5) {
+                    user.riskPercentage = riskValue;
+                    user.botState = 'NONE';
+                    await user.save();
+                    return ctx.reply(`✅ تم تحديث نسبة المخاطرة إلى ${riskValue}%.`, {
+                        reply_markup: getMainMenuKeyboard(user)
+                    });
+                } else {
+                    return ctx.reply('يرجى إدخال رقم صحيح بين 1 و 5:');
+                }
+            }
+
             if (user.botState === 'AWAITING_CANCEL_ALL_CONFIRM') {
                 if (message === 'نعم، متأكد ✅') {
                     ctx.reply('⏳ جاري إغلاق جميع الصفقات بسعر السوق...');

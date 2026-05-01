@@ -21,7 +21,7 @@ const UserSchema: Schema = new Schema({
     username: { type: String },
     bingxApiKey: { type: String },
     bingxSecretKey: { type: String },
-    riskPercentage: { type: Number, default: 2 }, // Default 2% risk
+    riskPercentage: { type: Number, default: 3 }, // Default 3% risk
     enforceMaxSlLoss: { type: Boolean, default: null },
     botState: { type: String, default: null },
     isActive: { type: Boolean, default: true },

@@ -32,9 +32,17 @@ export const ensureUser = async (ctx: Context, next: () => Promise<void>) => {
             user = await User.create({
                 telegramId,
                 username: ctx.from.username,
-                riskPercentage: parseInt(process.env.RISK_PERCENTAGE || '2'),
+                riskPercentage: parseInt(process.env.RISK_PERCENTAGE || '3'),
             });
             logger.info(`New user created: ${user.username}`);
+        } else {
+            // Optional: Sync riskPercentage if env value was changed and user is still at old default
+            const envRisk = parseInt(process.env.RISK_PERCENTAGE || '3');
+            // If user is at 2 (old default) but env is different, update them once
+            if (user.riskPercentage === 2 && envRisk !== 2) {
+                user.riskPercentage = envRisk;
+                await user.save();
+            }
         }
         return next();
     } catch (err) {

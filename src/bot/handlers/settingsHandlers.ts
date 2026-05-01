@@ -18,6 +18,30 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
         } catch (e) { }
     });
     
+    bot.hears(/⚡ نسبة المخاطرة/, async (ctx) => {
+        try {
+            if (!ctx.from) return;
+            const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+            if (!user) return;
+
+            user.botState = 'AWAITING_RISK_PERCENTAGE';
+            await user.save();
+
+            ctx.reply('قم بإدخال نسبة المخاطرة الجديدة (رقم بين 1 و 5):', {
+                reply_markup: {
+                    keyboard: [
+                        [{ text: '1%' }, { text: '2%' }, { text: '3%' }, { text: '4%' }, { text: '5%' }],
+                        [{ text: 'رجوع 🔙' }]
+                    ],
+                    resize_keyboard: true,
+                    one_time_keyboard: true
+                }
+            });
+        } catch (e) {
+            ctx.reply('حدث خطأ أثناء تعديل الإعدادات.');
+        }
+    });
+
     bot.hears(/🛡 حماية رأس المال/, async (ctx) => {
         try {
             if (!ctx.from) return;

@@ -25,7 +25,8 @@ export const getMainMenuKeyboard = (user: any) => {
                 { text: '🛑 إلغاء كل الصفقات المفتوحة' }
             ],
             [
-                { text: `🛡 حماية رأس المال (6% SL): ${riskIcon}` }
+                { text: `🛡 حماية رأس المال (6% SL): ${riskIcon}` },
+                { text: `⚡ نسبة المخاطرة: ${user.riskPercentage || 3}%` }
             ],
             [
                 { text: 'ℹ️ تعليمات الاستخدام (Help)' }
