@@ -2,7 +2,7 @@ import { Telegraf } from 'telegraf';
 import dotenv from 'dotenv';
 import connectDB from './config/db';
 import logger from './utils/logger';
-import { BingXService } from './services/BingXService';
+import { BinanceService } from './services/BinanceService';
 import { TradeManager } from './services/TradeManager';
 import { SignalParser } from './services/SignalParser';
 import { ReportingService } from './services/ReportingService';
@@ -19,13 +19,13 @@ import { registerSettingsHandlers } from './bot/handlers/settingsHandlers';
 
 dotenv.config();
 
-const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN || '');
-const bingXService = new BingXService(process.env.BINGX_API_KEY, process.env.BINGX_SECRET_KEY);
-const tradeManager = new TradeManager(bingXService);
+const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN_Binance || process.env.TELEGRAM_BOT_TOKEN || '');
+const binanceService = new BinanceService(process.env.Binance_API_KEY, process.env.Binance_SECRET_KEY);
+const tradeManager = new TradeManager(binanceService);
 const reportingService = new ReportingService(bot);
 
 // Initialize Monitor
-const positionMonitor = new PositionMonitor(bingXService, async (telegramId, msg) => {
+const positionMonitor = new PositionMonitor(binanceService, async (telegramId, msg) => {
     try {
         await bot.telegram.sendMessage(telegramId, msg, { parse_mode: 'HTML' });
         logger.info(`Notification sent successfully to ${telegramId}`);
@@ -38,9 +38,9 @@ const positionMonitor = new PositionMonitor(bingXService, async (telegramId, msg
 bot.use(ensureUser);
 
 // Register Command Handlers
-registerPortfolioHandlers(bot, bingXService);
-registerReportHandlers(bot, bingXService);
-registerTradingHandlers(bot, bingXService);
+registerPortfolioHandlers(bot, binanceService);
+registerReportHandlers(bot, binanceService);
+registerTradingHandlers(bot, binanceService);
 registerSettingsHandlers(bot);
 registerMessageHandlers(bot, tradeManager);
 

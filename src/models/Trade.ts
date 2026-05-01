@@ -15,6 +15,7 @@ export interface ITrade extends Document {
     leverage: number;
     pnl: number;
     isBreakEvenSet?: boolean;
+    binanceOrderId?: string;
     bingxOrderId?: string;
     entryTime: Date;
     closeTime?: Date;
@@ -43,6 +44,7 @@ const TradeSchema: Schema = new Schema({
     leverage: { type: Number, default: 10 },
     pnl: { type: Number, default: 0 },
     isBreakEvenSet: { type: Boolean, default: false },
+    binanceOrderId: { type: String },
     bingxOrderId: { type: String },
     entryTime: { type: Date, default: Date.now },
     closeTime: { type: Date },

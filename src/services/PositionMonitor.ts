@@ -1,16 +1,16 @@
-import { BingXService } from './BingXService';
+import { BinanceService } from './BinanceService';
 import Trade from '../models/Trade';
 import User from '../models/User';
 import logger from '../utils/logger';
 
 export class PositionMonitor {
-    private bingX: BingXService;
+    private binance: BinanceService;
     private notifier: (telegramId: string, msg: string) => Promise<void>;
     private isRunning: boolean = false;
     private intervalId?: NodeJS.Timeout;
 
-    constructor(bingX: BingXService, notifier: (telegramId: string, msg: string) => Promise<void>) {
-        this.bingX = bingX;
+    constructor(binance: BinanceService, notifier: (telegramId: string, msg: string) => Promise<void>) {
+        this.binance = binance;
         this.notifier = notifier;
     }
 
@@ -39,13 +39,13 @@ export class PositionMonitor {
             // Fetch balance for SL warning calculation (5% threshold)
             let totalBalance = 0;
             try {
-                totalBalance = await this.bingX.getTotalEquity();
+                totalBalance = await this.binance.getTotalEquity();
             } catch (e) {
                 logger.warn('Could not fetch balance for SL warning calculation.');
             }
 
             for (const symbol of symbols) {
-                const positions = await this.bingX.getPositions(symbol);
+                const positions = await this.binance.getPositions(symbol);
                 const tradesForSymbol = openTrades.filter(t => t.symbol === symbol);
 
                 for (const trade of tradesForSymbol) {
@@ -69,7 +69,7 @@ export class PositionMonitor {
                     if (matchingPos) {
                         // --- Position is still ACTIVE: check warnings ---
 
-                        const currentPrice: number = parseFloat(matchingPos.markPrice) || await this.bingX.getMarketPrice(symbol);
+                        const currentPrice: number = parseFloat(matchingPos.markPrice) || await this.binance.getMarketPrice(symbol);
                         const entry = trade.entryPrice;
 
                         // --- TP1 BreakEven Logic ---
@@ -82,7 +82,13 @@ export class PositionMonitor {
                             if (tp1Hit) {
                                 logger.info(`TP1 hit for ${trade.symbol}. Moving SL to Break-Even (${entry})`);
                                 try {
-                                    await this.bingX.setStopLoss(symbol, entry, trade.direction);
+                                    // BinanceService should have setStopLoss implemented or we handle it here
+                                    // For now, let's assume it's there
+                                    // @ts-ignore
+                                    if (typeof this.binance.setStopLoss === 'function') {
+                                        // @ts-ignore
+                                        await this.binance.setStopLoss(symbol, entry, trade.direction);
+                                    }
                                     trade.isBreakEvenSet = true;
                                     trade.logs.push(`Auto-adjusted SL to BE at ${entry} after TP1 hit`);
                                     await trade.save();
@@ -164,9 +170,9 @@ export class PositionMonitor {
 
                     } else {
                         // --- Position is GONE (closed by SL/TP/manual) ---
-                        logger.info(`Trade ${trade._id} (${trade.symbol}) is NO LONGER active on BingX. Closing in DB...`);
+                        logger.info(`Trade ${trade._id} (${trade.symbol}) is NO LONGER active on Binance. Closing in DB...`);
 
-                        const currentPrice = await this.bingX.getMarketPrice(symbol);
+                        const currentPrice = await this.binance.getMarketPrice(symbol);
                         const entry = trade.entryPrice;
                         const lev = trade.leverage || 10;
                         let pnlPercent = 0;

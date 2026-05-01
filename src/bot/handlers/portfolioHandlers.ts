@@ -1,19 +1,19 @@
 import { Telegraf } from 'telegraf';
 import logger from '../../utils/logger';
-import { BingXService } from '../../services/BingXService';
+import { BinanceService } from '../../services/BinanceService';
 import User from '../../models/User';
 import Trade from '../../models/Trade';
 
-export const registerPortfolioHandlers = (bot: Telegraf, bingXService: BingXService) => {
+export const registerPortfolioHandlers = (bot: Telegraf, binanceService: BinanceService) => {
     
     bot.hears('💰 رصيدي وملخص الأرباح', async (ctx) => {
         try {
-            const balance = await bingXService.getBalance();
+            const balance = await binanceService.getBalance();
 
-            let msg = `<b>💰 تفاصيل الحساب:</b>\n\n`;
+            let msg = `<b>💰 تفاصيل الحساب (Binance):</b>\n\n`;
             msg += `الرصيد المتاح (USDT): <b>${balance.toFixed(2)}</b>\n`;
 
-            const positions = await bingXService.getPositions();
+            const positions = await binanceService.getPositions();
             let totalPnl = 0;
 
             if (positions && positions.length > 0) {
@@ -31,7 +31,7 @@ export const registerPortfolioHandlers = (bot: Telegraf, bingXService: BingXServ
 
             ctx.replyWithHTML(msg).catch(e => logger.error(`Failed to send balance info: ${e.message}`));
         } catch (error) {
-            ctx.reply('حدث خطأ أثناء جلب الرصيد.').catch(e => logger.error(`Failed to send balance error: ${e.message}`));
+            ctx.reply('حدث خطأ أثناء جلب الرصيد من Binance.').catch(e => logger.error(`Failed to send balance error: ${e.message}`));
         }
     });
 
@@ -41,8 +41,8 @@ export const registerPortfolioHandlers = (bot: Telegraf, bingXService: BingXServ
             const user = await User.findOne({ telegramId: ctx.from.id.toString() });
             if (!user) return;
 
-            const balance = await bingXService.getBalance();
-            const positions = await bingXService.getPositions();
+            const balance = await binanceService.getBalance();
+            const positions = await binanceService.getPositions();
 
             if (!positions || positions.length === 0) {
                 ctx.reply('لا يوجد صفقات مفتوحة حالياً.').catch(e => logger.error(`Failed to send no positions notice: ${e.message}`));
@@ -54,7 +54,7 @@ export const registerPortfolioHandlers = (bot: Telegraf, bingXService: BingXServ
                 currentStatus: { $in: ['OPEN', 'TP1_HIT', 'TP2_HIT'] }
             });
 
-            let msg = '<b>💼 صفقاتي المفتوحة (Live) 🟢:</b>\n\n';
+            let msg = '<b>💼 صفقاتي المفتوحة (Binance Live) 🟢:</b>\n\n';
             let totalPnl = 0;
             let totalMarginUsed = 0;
 
@@ -129,16 +129,16 @@ export const registerPortfolioHandlers = (bot: Telegraf, bingXService: BingXServ
             ctx.replyWithHTML(msg).catch(e => logger.error(`Failed to send positions list: ${e.message}`));
         } catch (error) {
             logger.error('Error in btn_positions_all:', error);
-            ctx.reply('Error fetching positions from BingX.').catch(e => logger.error(`Failed to send positions error: ${e.message}`));
+            ctx.reply('Error fetching positions from Binance.').catch(e => logger.error(`Failed to send positions error: ${e.message}`));
         }
     });
 
     bot.command('balance', async (ctx) => {
         try {
-            const balance = await bingXService.getBalance();
-            ctx.reply(`Current Futures Balance: ${balance} USDT`);
+            const balance = await binanceService.getBalance();
+            ctx.reply(`Current Binance Futures Balance: ${balance} USDT`);
         } catch (error) {
-            ctx.reply('Error fetching balance.');
+            ctx.reply('Error fetching balance from Binance.');
         }
     });
 

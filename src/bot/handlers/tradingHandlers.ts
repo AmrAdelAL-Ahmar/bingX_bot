@@ -1,11 +1,11 @@
 import { Telegraf } from 'telegraf';
 import logger from '../../utils/logger';
-import { BingXService } from '../../services/BingXService';
+import { BinanceService } from '../../services/BinanceService';
 import User from '../../models/User';
 import Trade from '../../models/Trade';
 import { getDynamicSymbolsKeyboard, getMainMenuKeyboard } from '../keyboards/baseKeyboards';
 
-export const registerTradingHandlers = (bot: Telegraf, bingXService: BingXService) => {
+export const registerTradingHandlers = (bot: Telegraf, binanceService: BinanceService) => {
 
     bot.hears('🛑 إلغاء كل الصفقات المفتوحة', async (ctx) => {
         try {
@@ -13,10 +13,10 @@ export const registerTradingHandlers = (bot: Telegraf, bingXService: BingXServic
             const user = await User.findOne({ telegramId: ctx.from.id.toString() });
             if (!user) return;
 
-            ctx.reply('⏳ جاري حساب الأرباح والخسائر الحالية لمعرفة وضع الحساب...');
+            ctx.reply('⏳ جاري حساب الأرباح والخسائر الحالية لمعرفة وضع الحساب على Binance...');
 
-            const balance = await bingXService.getBalance();
-            const positions = await bingXService.getPositions();
+            const balance = await binanceService.getBalance();
+            const positions = await binanceService.getPositions();
 
             if (!positions || positions.length === 0) {
                 ctx.reply('لا يوجد صفقات مفتوحة حالياً لإلغائها.', { reply_markup: getMainMenuKeyboard(user) });
@@ -44,7 +44,7 @@ export const registerTradingHandlers = (bot: Telegraf, bingXService: BingXServic
             await user.save();
 
             const pnlEmoji = totalPnl >= 0 ? '🟢 إجمالي أرباح' : '🔴 إجمالي خسارة';
-            let confirmMsg = `⚠️ <b>تأكيد إغلاق جميع الصفقات (${activePosCount} صفقات)</b>\n\n` +
+            let confirmMsg = `⚠️ <b>تأكيد إغلاق جميع الصفقات (${activePosCount} صفقات) على Binance</b>\n\n` +
                 `💰 <b>رأس المال المتاح (الرصيد):</b> ${balance.toFixed(2)} USDT\n` +
                 `${pnlEmoji} عائمة لهذه الصفقات: <b>${totalPnl.toFixed(2)} USDT</b>\n\n` +
                 `الرصيد المتوقع بعد الإغلاق: <b>${(balance + totalPnl).toFixed(2)} USDT</b>\n\n` +
@@ -62,7 +62,7 @@ export const registerTradingHandlers = (bot: Telegraf, bingXService: BingXServic
 
         } catch (error) {
             logger.error(error);
-            ctx.reply('حدث خطأ أثناء محاولة جلب الصفقات المفتوحة.');
+            ctx.reply('حدث خطأ أثناء محاولة جلب الصفقات المفتوحة من Binance.');
         }
     });
 
@@ -74,7 +74,7 @@ export const registerTradingHandlers = (bot: Telegraf, bingXService: BingXServic
             user.botState = 'AWAITING_QUERY_SYMBOL';
             await user.save();
 
-            const activeKeys = await getDynamicSymbolsKeyboard(bingXService);
+            const activeKeys = await getDynamicSymbolsKeyboard(binanceService);
 
             ctx.reply('🔍 اختر العملة من القائمة أدناه، أو قم بكتابة الرمز (مثال: BTC):', {
                 reply_markup: { keyboard: activeKeys, resize_keyboard: true, one_time_keyboard: true }
@@ -92,7 +92,7 @@ export const registerTradingHandlers = (bot: Telegraf, bingXService: BingXServic
             user.botState = 'AWAITING_CANCEL_SYMBOL';
             await user.save();
 
-            const activeKeys = await getDynamicSymbolsKeyboard(bingXService);
+            const activeKeys = await getDynamicSymbolsKeyboard(binanceService);
 
             ctx.reply('❌ اختر العملة التي تريد إلغاء صفقتها، أو قم بكتابتها (مثال: ETH):', {
                 reply_markup: { keyboard: activeKeys, resize_keyboard: true, one_time_keyboard: true }
@@ -126,12 +126,12 @@ export const registerTradingHandlers = (bot: Telegraf, bingXService: BingXServic
                 return;
             }
     
-            // Fetch live PnL from BingX
-            const positions = await bingXService.getPositions(trade.symbol);
+            // Fetch live PnL from Binance
+            const positions = await binanceService.getPositions(trade.symbol);
             const pos = positions.find((p: any) => p.symbol === trade.symbol);
-            const balance = await bingXService.getBalance();
+            const balance = await binanceService.getBalance();
     
-            let msg = `📊 <b>Status: ${trade.symbol}</b>\n` +
+            let msg = `📊 <b>Binance Status: ${trade.symbol}</b>\n` +
                 `النوع: ${trade.direction === 'LONG' ? 'شراء (LONG) 🟢' : 'بيع (SHORT) 🔴'}\n` +
                 `الرافعة: <b>${trade.leverage || 'N/A'}x</b>\n`;
     
@@ -159,7 +159,7 @@ export const registerTradingHandlers = (bot: Telegraf, bingXService: BingXServic
     
             ctx.replyWithHTML(msg);
         } catch (error) {
-            ctx.reply('Error fetching status.');
+            ctx.reply('Error fetching status from Binance.');
         }
     });
 

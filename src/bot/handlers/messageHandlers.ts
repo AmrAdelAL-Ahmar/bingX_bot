@@ -175,22 +175,22 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                     if (signal.type === 'CLOSE') {
                         ctx.reply(`✅ تم إغلاق الصفقة (أو الصفقات) للعملة ${signal.symbol} بنجاح.`);
                     } else if (result) {
-                        let successMsg = `✅ <b>تم تنفيذ الصفقة بنجاح!</b>\n\n` +
+                        let successMsg = `✅ <b>تم تنفيذ الصفقة بنجاح على Binance!</b>\n\n` +
                             `الرمز: <b>${result.symbol}</b>\n` +
                             `الاتجاه: <b>${result.direction}</b>\n` +
                             `الرافعة المالية: <b>${result.leverage}x</b>\n` +
-                            `المبلغ المستثمر (Margin): <b>${result.margin} USDT</b>\n` +
-                            `نقطة الدخول: <b>${result.entryPrice}</b>\n\n`;
+                            `المبلغ المستثمر (Margin): <b>${result.margin.toFixed(6)} USDT</b>\n` +
+                            `نقطة الدخول: <b>${result.entryPrice.toFixed(6)}</b>\n\n`;
 
                         if (result.targets.length > 0) {
                             successMsg += `🎯 <b>الأهداف:</b>\n`;
                             result.targets.forEach((t, i) => {
-                                successMsg += `الهدف ${i + 1}: ${t.price} (+${t.pnlPercent}%)\n`;
+                                successMsg += `الهدف ${i + 1}: ${t.price.toFixed(6)} (+${t.pnlPercent.toFixed(6)}%)\n`;
                             });
                             successMsg += '\n';
                         }
                         
-                        successMsg += `🛑 <b>وقف الخسارة:</b> ${result.stopLoss.price} (${result.stopLoss.pnlPercent}%)`;
+                        successMsg += `🛑 <b>وقف الخسارة:</b> ${result.stopLoss.price.toFixed(6)} (${result.stopLoss.pnlPercent.toFixed(6)}%)`;
 
                         ctx.replyWithHTML(successMsg);
                         
