@@ -29,8 +29,68 @@ export class PositionMonitor {
 
     async checkPositions() {
         try {
-            const openTrades = await Trade.find({ currentStatus: { $in: ['OPEN', 'TP1_HIT', 'TP2_HIT'] } });
-            if (openTrades.length === 0) return;
+            // Include PENDING trades to check for limit fills
+            const allTrackedTrades = await Trade.find({ currentStatus: { $in: ['PENDING', 'OPEN', 'TP1_HIT', 'TP2_HIT'] } });
+            if (allTrackedTrades.length === 0) return;
+
+            // Separate pending from open
+            const pendingTrades = allTrackedTrades.filter(t => t.currentStatus === 'PENDING');
+            const activeTrades = allTrackedTrades.filter(t => t.currentStatus !== 'PENDING');
+
+            // --- 1. Handle Pending (Limit) Orders ---
+            for (const trade of pendingTrades) {
+                if (!trade.binanceOrderId) continue;
+
+                try {
+                    const order = await this.binance.getOrder(trade.symbol, trade.binanceOrderId);
+                    if (!order) continue;
+
+                    if (order.status === 'closed' || order.status === 'filled') {
+                        logger.info(`Limit order filled for ${trade.symbol}. Placing SL/TP now...`);
+                        
+                        // Detect mode for SL/TP placement
+                        const hedgeMode = await this.binance.isHedgeMode();
+                        
+                        // Prepare SL/TP prices with precision
+                        const stopLossPrice = await this.binance.priceToPrecision(trade.symbol, trade.stopLoss);
+                        const takeProfitPrices = await Promise.all(trade.targets.map(t => this.binance.priceToPrecision(trade.symbol, t.price)));
+                        
+                        // Calculate amount Contracts (using the amount field which is positionSizeUSDT)
+                        const amountContracts = await this.binance.amountToPrecision(trade.symbol, trade.amount / trade.entryPrice);
+
+                        // Place orders
+                        await this.binance.placeSLTPOrders(
+                            trade.symbol,
+                            trade.direction,
+                            amountContracts,
+                            stopLossPrice,
+                            takeProfitPrices,
+                            hedgeMode
+                        );
+
+                        // Update trade status to OPEN
+                        trade.currentStatus = 'OPEN';
+                        trade.logs.push(`Limit order filled and SL/TP placed at ${new Date().toISOString()}`);
+                        await trade.save();
+
+                        // Notify user
+                        const user = await User.findById(trade.userId);
+                        if (user?.telegramId) {
+                            await this.notifier(user.telegramId, `✅ <b>تم تنفيذ الأمر الحدي للعملة ${trade.symbol}!</b>\nتم وضع أوامر وقف الخسارة والأهداف بنجاح.`);
+                        }
+                    } else if (order.status === 'canceled' || order.status === 'expired') {
+                        logger.info(`Limit order for ${trade.symbol} was canceled or expired.`);
+                        trade.currentStatus = 'CANCELLED';
+                        trade.logs.push(`Order was ${order.status} on exchange.`);
+                        await trade.save();
+                    }
+                } catch (err: any) {
+                    logger.error(`Error checking pending order ${trade.binanceOrderId}:`, err);
+                }
+            }
+
+            if (activeTrades.length === 0) return;
+            const openTrades = activeTrades;
 
             // Group by symbol
             const symbols = [...new Set(openTrades.map(t => t.symbol))];
