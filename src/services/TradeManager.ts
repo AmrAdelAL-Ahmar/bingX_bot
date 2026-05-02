@@ -57,7 +57,7 @@ export class TradeManager {
 
                 let entryPrice: number;
                 if (signal.entry && signal.entry.length > 0) {
-                    entryPrice = signal.entry[0];
+                    entryPrice = await this.binance.priceToPrecision(signal.symbol, signal.entry[0]);
                 } else {
                     logger.info(`No entry price provided for ${signal.symbol}. Fetching current market price...`);
                     entryPrice = await this.binance.getMarketPrice(signal.symbol);
@@ -175,12 +175,15 @@ export class TradeManager {
                         orderParams.positionSide = signal.direction;
                     }
                     // Note: stopPrice here is just for logging context; SL is placed as a separate order
+                    const orderType = signal.entry && signal.entry.length > 0 ? 'limit' : 'market';
+                    const executionPrice = orderType === 'limit' ? entryPrice : undefined;
+
                     order = await this.binance.placeOrder(
                         signal.symbol,
-                        'limit',
+                        orderType,
                         signal.direction === 'LONG' ? 'buy' : 'sell',
                         amountContracts,
-                        undefined,
+                        executionPrice,
                         orderParams
                     );
 
@@ -194,12 +197,15 @@ export class TradeManager {
                         if (hedgeModeRetry) {
                             retryParams.positionSide = signal.direction;
                         }
+                        const orderTypeRetry = signal.entry && signal.entry.length > 0 ? 'limit' : 'market';
+                        const executionPriceRetry = orderTypeRetry === 'limit' ? entryPrice : undefined;
+
                         order = await this.binance.placeOrder(
                             signal.symbol,
-                            'limit',
+                            orderTypeRetry,
                             signal.direction === 'LONG' ? 'buy' : 'sell',
                             reducedAmount,
-                            undefined,
+                            executionPriceRetry,
                             retryParams
                         );
                     } else {
@@ -300,7 +306,7 @@ export class TradeManager {
                     }
                     await this.binance.placeOrder(
                         pos.symbol,
-                        'limit',
+                        'market',
                         side,
                         parseFloat(pos.contracts),
                         undefined,
@@ -354,7 +360,7 @@ export class TradeManager {
                 }
                 await this.binance.placeOrder(
                     pos.symbol,
-                    'limit',
+                    'market',
                     side,
                     amount,
                     undefined,
