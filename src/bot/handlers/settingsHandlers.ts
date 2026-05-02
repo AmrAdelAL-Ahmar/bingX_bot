@@ -1,7 +1,7 @@
 import { Telegraf } from 'telegraf';
 import logger from '../../utils/logger';
 import User from '../../models/User';
-import { ALL_TP_THRESHOLDS, buildAlertSettingsKeyboard, getMainMenuKeyboard } from '../keyboards/baseKeyboards';
+import { ALL_TP_THRESHOLDS, buildAlertSettingsKeyboard, buildCapitalProtectionKeyboard, getMainMenuKeyboard } from '../keyboards/baseKeyboards';
 
 export const registerSettingsHandlers = (bot: Telegraf) => {
 
@@ -43,27 +43,29 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
         }
     });
 
-    bot.hears(/🛡 حماية رأس المال/, async (ctx) => {
+    bot.hears('🛡 حماية رأس المال الصارمة', async (ctx) => {
         try {
             if (!ctx.from) return;
             const user = await User.findOne({ telegramId: ctx.from.id.toString() });
             if (!user) return;
     
-            const currentStatus = (user.enforceMaxSlLoss !== null && user.enforceMaxSlLoss !== undefined)
+            const isEnabled = (user.enforceMaxSlLoss !== null && user.enforceMaxSlLoss !== undefined)
                 ? user.enforceMaxSlLoss
                 : process.env.ENFORCE_MAX_SL_LOSS === 'true';
+            
+            const currentPercent = user.maxSlRiskPercentage || 6;
     
-            const newStatus = !currentStatus;
-            user.enforceMaxSlLoss = newStatus;
-            await user.save();
+            const msg = `🛡 <b>ميزة حماية رأس المال الصارمة</b>\n\n` +
+                `هذه الميزة تقوم بتقليل حجم الصفقة إجبارياً بحيث لا تتجاوز خسارة الـ Stop Loss النسبة المحددة من إجمالي رأس مالك.\n\n` +
+                `الحالة الآن: <b>${isEnabled ? 'مفعلة 🟢' : 'معطلة 🔴'}</b>\n` +
+                `النسبة المحددة: <b>${currentPercent}%</b>\n\n` +
+                `اختر الحالة أو النسبة المطلوبة:`;
     
-            const statusMsg = newStatus ? 'مفعل 🟢' : 'معطل 🔴';
-    
-            await ctx.reply(`✅ تم تحديث ميزة حماية رأس المال الصارمة. الحالة الآن: ${statusMsg}`, {
-                reply_markup: getMainMenuKeyboard(user)
+            await ctx.replyWithHTML(msg, {
+                reply_markup: buildCapitalProtectionKeyboard(user)
             });
         } catch (e) {
-            ctx.reply('حدث خطأ أثناء تعديل الإعدادات.');
+            ctx.reply('حدث خطأ أثناء فتح إعدادات حماية رأس المال.');
         }
     });
 
@@ -174,6 +176,45 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             await ctx.reply(`✅ تم تحديث نوع التنفيذ إلى: ${modeLabel}`, {
                 reply_markup: getMainMenuKeyboard(user)
             });
+            return;
+        }
+
+        // --- Capital Protection Callbacks ---
+        if (data.startsWith('cap_')) {
+            const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+            if (!user) return;
+
+            if (data === 'cap_toggle') {
+                const currentStatus = (user.enforceMaxSlLoss !== null && user.enforceMaxSlLoss !== undefined)
+                    ? user.enforceMaxSlLoss
+                    : process.env.ENFORCE_MAX_SL_LOSS === 'true';
+                user.enforceMaxSlLoss = !currentStatus;
+            } else if (data.startsWith('cap_perc_')) {
+                const perc = parseInt(data.replace('cap_perc_', ''));
+                if (!isNaN(perc)) {
+                    user.maxSlRiskPercentage = perc;
+                }
+            }
+
+            await user.save();
+
+            const isEnabled = user.enforceMaxSlLoss;
+            const currentPercent = user.maxSlRiskPercentage || 6;
+
+            const newMsg = `🛡 <b>ميزة حماية رأس المال الصارمة</b>\n\n` +
+                `هذه الميزة تقوم بتقليل حجم الصفقة إجبارياً بحيث لا تتجاوز خسارة الـ Stop Loss النسبة المحددة من إجمالي رأس مالك.\n\n` +
+                `الحالة الآن: <b>${isEnabled ? 'مفعلة 🟢' : 'معطلة 🔴'}</b>\n` +
+                `النسبة المحددة: <b>${currentPercent}%</b>\n\n` +
+                `اختر الحالة أو النسبة المطلوبة:`;
+
+            try {
+                await ctx.editMessageText(newMsg, {
+                    parse_mode: 'HTML',
+                    reply_markup: buildCapitalProtectionKeyboard(user)
+                });
+            } catch (e) { /* unchanged */ }
+
+            await ctx.answerCbQuery('✅ تم التحديث').catch(() => {});
             return;
         }
 

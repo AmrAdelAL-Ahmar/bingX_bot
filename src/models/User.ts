@@ -16,6 +16,8 @@ export interface IUser extends Document {
     tpWarningThresholds: number[]; // e.g., [70, 90]
     // Order execution mode: 'market' (default) or 'limit'
     orderMode?: 'market' | 'limit';
+    // Strict Capital Protection Risk (Max SL Loss as % of balance)
+    maxSlRiskPercentage?: number; 
 }
 
 const UserSchema: Schema = new Schema({
@@ -34,6 +36,8 @@ const UserSchema: Schema = new Schema({
     tpWarningThresholds: { type: [Number], default: [70, 90] },
     // Order execution mode
     orderMode: { type: String, enum: ['market', 'limit'], default: 'market' },
+    // Strict Capital Protection Risk
+    maxSlRiskPercentage: { type: Number, default: 6 },
 });
 
 export default mongoose.model<IUser>('User', UserSchema);

@@ -159,7 +159,8 @@ export class TradeManager {
 
                 if (shouldEnforceMaxSlLoss) {
                     // Maximum amount of money we are willing to lose completely if SL is hit
-                    const maxAllowedSLLoss = balance * 0.06;
+                    const maxSlRisk = (user.maxSlRiskPercentage || 6) / 100;
+                    const maxAllowedSLLoss = balance * maxSlRisk;
 
                     // Calculate the literal price difference per coin
                     const lossPerCoin = Math.abs(entryPrice - stopLossPrice);
@@ -173,7 +174,7 @@ export class TradeManager {
                         const maxSafeContracts = maxAllowedSLLoss / lossPerCoin;
                         const precisionSafeContracts = await this.binance.amountToPrecision(signal.symbol, maxSafeContracts);
 
-                        logger.warn(`Projected SL loss (${projectedLoss.toFixed(2)} USDT) exceeds 6% of capital (${maxAllowedSLLoss.toFixed(2)} USDT). Scaling down position to ${precisionSafeContracts} contracts.`);
+                        logger.warn(`Projected SL loss (${projectedLoss.toFixed(2)} USDT) exceeds ${(maxSlRisk * 100).toFixed(1)}% of capital (${maxAllowedSLLoss.toFixed(2)} USDT). Scaling down position to ${precisionSafeContracts} contracts.`);
 
                         amountContracts = precisionSafeContracts;
 
@@ -187,7 +188,9 @@ export class TradeManager {
                 if (amountContracts === 0 || amountContracts < minAmount) {
                     let reason = `حجم الصفقة المطلوبة أصغر من الحد الأدنى المسموح به في المنصة (${minAmount}).`;
                     if (scaledBySL) {
-                        reason += `\n⚠️ تم تقليل الحجم إجبارياً لأن الخسارة المتوقعة من الاستوب لوز كانت ستتجاوز الحد الأقصى المسموح (6% من رصيد الحساب).`;
+                        const maxSlRisk = (user.maxSlRiskPercentage || 6) / 100;
+                        const maxSlRiskPercentage = (maxSlRisk * 100).toFixed(1);
+                        reason += `\n⚠️ تم تقليل الحجم إجبارياً لأن الخسارة المتوقعة من الاستوب لوز كانت ستتجاوز الحد الأقصى المسموح (${maxSlRiskPercentage}% من رصيد الحساب).`;
                     }
                     throw new Error(reason);
                 }

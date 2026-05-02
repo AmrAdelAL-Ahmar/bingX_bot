@@ -28,7 +28,7 @@ export const getMainMenuKeyboard = (user: any) => {
                 { text: '🛑 إلغاء كل الصفقات المفتوحة' }
             ],
             [
-                { text: `🛡 حماية رأس المال (6% SL): ${riskIcon}` },
+                { text: '🛡 حماية رأس المال الصارمة' },
                 { text: `⚡ نسبة المخاطرة: ${user.riskPercentage || 3}%` }
             ],
             [
@@ -101,4 +101,34 @@ export const getDynamicSymbolsKeyboard = async (binanceService: BinanceService) 
     }
     keys.push([{ text: 'رجوع 🔙' }]);
     return keys;
+};
+
+// --- CAPITAL PROTECTION KEYBOARD ---
+export const buildCapitalProtectionKeyboard = (user: any) => {
+    const isEnabled = (user.enforceMaxSlLoss !== null && user.enforceMaxSlLoss !== undefined)
+        ? user.enforceMaxSlLoss
+        : process.env.ENFORCE_MAX_SL_LOSS === 'true';
+    
+    const currentPercent = user.maxSlRiskPercentage || 6;
+
+    return {
+        inline_keyboard: [
+            [
+                { 
+                    text: isEnabled ? '🟢 مفعل' : '🔴 معطل', 
+                    callback_data: 'cap_toggle' 
+                }
+            ],
+            [
+                { text: currentPercent === 1 ? '✅ 1%' : '1%', callback_data: 'cap_perc_1' },
+                { text: currentPercent === 2 ? '✅ 2%' : '2%', callback_data: 'cap_perc_2' },
+                { text: currentPercent === 3 ? '✅ 3%' : '3%', callback_data: 'cap_perc_3' }
+            ],
+            [
+                { text: currentPercent === 4 ? '✅ 4%' : '4%', callback_data: 'cap_perc_4' },
+                { text: currentPercent === 5 ? '✅ 5%' : '5%', callback_data: 'cap_perc_5' },
+                { text: currentPercent === 6 ? '✅ 6%' : '6%', callback_data: 'cap_perc_6' }
+            ]
+        ]
+    };
 };
