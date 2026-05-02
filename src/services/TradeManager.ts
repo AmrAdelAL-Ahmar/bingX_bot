@@ -177,13 +177,13 @@ export class TradeManager {
                     // Note: stopPrice here is just for logging context; SL is placed as a separate order
                     order = await this.binance.placeOrder(
                         signal.symbol,
-                        'market',
+                        'limit',
                         signal.direction === 'LONG' ? 'buy' : 'sell',
                         amountContracts,
                         undefined,
                         orderParams
                     );
-                    
+
                 } catch (err: any) {
                     // Retry with 50% size if Insufficient Margin
                     if (err.message && err.message.includes('Insufficient margin')) {
@@ -196,7 +196,7 @@ export class TradeManager {
                         }
                         order = await this.binance.placeOrder(
                             signal.symbol,
-                            'market',
+                            'limit',
                             signal.direction === 'LONG' ? 'buy' : 'sell',
                             reducedAmount,
                             undefined,
@@ -300,7 +300,7 @@ export class TradeManager {
                     }
                     await this.binance.placeOrder(
                         pos.symbol,
-                        'market',
+                        'limit',
                         side,
                         parseFloat(pos.contracts),
                         undefined,
@@ -354,7 +354,7 @@ export class TradeManager {
                 }
                 await this.binance.placeOrder(
                     pos.symbol,
-                    'market',
+                    'limit',
                     side,
                     amount,
                     undefined,
