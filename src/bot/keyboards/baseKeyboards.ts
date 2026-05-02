@@ -38,6 +38,9 @@ export const getMainMenuKeyboard = (user: any) => {
                 { text: `⚖️ إعدادات الرافعة: ${user.leverageMode === 'fixed' ? `x${user.fixedLeverageValue}` : 'تلقائي'}` }
             ],
             [
+                { text: '📊 إعدادات الاستوب (التذبذب)' }
+            ],
+            [
                 { text: 'ℹ️ تعليمات الاستخدام (Help)' }
             ]
         ],
@@ -162,6 +165,32 @@ export const buildLeverageKeyboard = (user: any) => {
                 { text: (mode === 'fixed' && val === 25) ? '✅ x25' : 'x25', callback_data: 'lev_val_25' },
                 { text: (mode === 'fixed' && val === 50) ? '✅ x50' : 'x50', callback_data: 'lev_val_50' },
                 { text: (mode === 'fixed' && val === 100) ? '✅ x100' : 'x100', callback_data: 'lev_val_100' }
+            ]
+        ]
+    };
+};
+// --- VOLATILITY STOP LOSS KEYBOARD ---
+export const buildVolatilitySlKeyboard = (user: any) => {
+    const isEnabled = user.volatilitySlEnabled || false;
+    const currentPercent = user.volatilitySlPercentage || 5;
+
+    return {
+        inline_keyboard: [
+            [
+                { 
+                    text: isEnabled ? '🟢 مفعل' : '🔴 معطل', 
+                    callback_data: 'vol_toggle' 
+                }
+            ],
+            [
+                { text: currentPercent === 1 ? '✅ 1%' : '1%', callback_data: 'vol_perc_1' },
+                { text: currentPercent === 2 ? '✅ 2%' : '2%', callback_data: 'vol_perc_2' },
+                { text: currentPercent === 3 ? '✅ 3%' : '3%', callback_data: 'vol_perc_3' }
+            ],
+            [
+                { text: currentPercent === 5 ? '✅ 5%' : '5%', callback_data: 'vol_perc_5' },
+                { text: currentPercent === 10 ? '✅ 10%' : '10%', callback_data: 'vol_perc_10' },
+                { text: currentPercent === 15 ? '✅ 15%' : '15%', callback_data: 'vol_perc_15' }
             ]
         ]
     };

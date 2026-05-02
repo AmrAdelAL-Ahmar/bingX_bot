@@ -1,7 +1,7 @@
 import { Telegraf } from 'telegraf';
 import logger from '../../utils/logger';
 import User from '../../models/User';
-import { ALL_TP_THRESHOLDS, buildAlertSettingsKeyboard, buildCapitalProtectionKeyboard, buildLeverageKeyboard, getMainMenuKeyboard } from '../keyboards/baseKeyboards';
+import { ALL_TP_THRESHOLDS, buildAlertSettingsKeyboard, buildCapitalProtectionKeyboard, buildLeverageKeyboard, getMainMenuKeyboard, buildVolatilitySlKeyboard } from '../keyboards/baseKeyboards';
 
 export const registerSettingsHandlers = (bot: Telegraf) => {
 
@@ -123,11 +123,36 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
                 `• <b>ثابت:</b> يتم تجاهل الرافعة في التوصية واستخدام القيمة المحددة أدناه لجميع الصفقات.\n\n` +
                 `اختر الوضع أو القيمة المطلوبة:`;
 
-            await ctx.replyWithHTML(msg, {
+            ctx.replyWithHTML(msg, {
                 reply_markup: buildLeverageKeyboard(user)
             });
         } catch (e) {
             ctx.reply('حدث خطأ أثناء فتح إعدادات الرافعة.');
+        }
+    });
+
+    bot.hears('📊 إعدادات الاستوب (التذبذب)', async (ctx) => {
+        try {
+            if (!ctx.from) return;
+            const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+            if (!user) return;
+    
+            const isEnabled = user.volatilitySlEnabled || false;
+            const currentPercent = user.volatilitySlPercentage || 5;
+    
+            const msg = `📊 <b>إعدادات الاستوب حسب تذبذب العملة</b>\n\n` +
+                `هذه الميزة تقوم بتحديد الـ Stop Loss تلقائياً بناءً على نسبة مئوية من سعر العملة الحالي عند فتح الصفقة.\n\n` +
+                `• <b>في صفقات الـ LONG:</b> يكون الاستوب = السعر الحالي - ${currentPercent}%\n` +
+                `• <b>في صفقات الـ SHORT:</b> يكون الاستوب = السعر الحالي + ${currentPercent}%\n\n` +
+                `الحالة الآن: <b>${isEnabled ? 'مفعلة 🟢' : 'معطلة 🔴'}</b>\n` +
+                `النسبة المحددة: <b>${currentPercent}%</b>\n\n` +
+                `اختر الحالة أو النسبة المطلوبة:`;
+    
+            await ctx.replyWithHTML(msg, {
+                reply_markup: buildVolatilitySlKeyboard(user)
+            });
+        } catch (e) {
+            ctx.reply('حدث خطأ أثناء فتح إعدادات الاستوب.');
         }
     });
 
@@ -283,6 +308,44 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             await ctx.reply(`✅ تم تحديث إعدادات الرافعة إلى: ${mode === 'fixed' ? `ثابت (x${val})` : 'تلقائي'}`, {
                 reply_markup: getMainMenuKeyboard(user)
             });
+            return;
+        }
+
+        // --- Volatility SL Callbacks ---
+        if (data.startsWith('vol_')) {
+            const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+            if (!user) return;
+
+            if (data === 'vol_toggle') {
+                user.volatilitySlEnabled = !user.volatilitySlEnabled;
+            } else if (data.startsWith('vol_perc_')) {
+                const perc = parseInt(data.replace('vol_perc_', ''));
+                if (!isNaN(perc)) {
+                    user.volatilitySlPercentage = perc;
+                }
+            }
+
+            await user.save();
+
+            const isEnabled = user.volatilitySlEnabled || false;
+            const currentPercent = user.volatilitySlPercentage || 5;
+
+            const newMsg = `📊 <b>إعدادات الاستوب حسب تذبذب العملة</b>\n\n` +
+                `هذه الميزة تقوم بتحديد الـ Stop Loss تلقائياً بناءً على نسبة مئوية من سعر العملة الحالي عند فتح الصفقة.\n\n` +
+                `• <b>في صفقات الـ LONG:</b> يكون الاستوب = السعر الحالي - ${currentPercent}%\n` +
+                `• <b>في صفقات الـ SHORT:</b> يكون الاستوب = السعر الحالي + ${currentPercent}%\n\n` +
+                `الحالة الآن: <b>${isEnabled ? 'مفعلة 🟢' : 'معطلة 🔴'}</b>\n` +
+                `النسبة المحددة: <b>${currentPercent}%</b>\n\n` +
+                `اختر الحالة أو النسبة المطلوبة:`;
+
+            try {
+                await ctx.editMessageText(newMsg, {
+                    parse_mode: 'HTML',
+                    reply_markup: buildVolatilitySlKeyboard(user)
+                });
+            } catch (e) { /* unchanged */ }
+
+            await ctx.answerCbQuery('✅ تم التحديث').catch(() => {});
             return;
         }
 

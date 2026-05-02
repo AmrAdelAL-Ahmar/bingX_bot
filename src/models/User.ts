@@ -21,6 +21,9 @@ export interface IUser extends Document {
     // Leverage Settings
     leverageMode: 'default' | 'fixed';
     fixedLeverageValue: number;
+    // Volatility Stop Loss Settings
+    volatilitySlEnabled: boolean;
+    volatilitySlPercentage: number;
 }
 
 const UserSchema: Schema = new Schema({
@@ -44,6 +47,9 @@ const UserSchema: Schema = new Schema({
     // Leverage Settings
     leverageMode: { type: String, enum: ['default', 'fixed'], default: 'default' },
     fixedLeverageValue: { type: Number, default: 10 },
+    // Volatility Stop Loss Settings
+    volatilitySlEnabled: { type: Boolean, default: false },
+    volatilitySlPercentage: { type: Number, default: 5 },
 });
 
 export default mongoose.model<IUser>('User', UserSchema);

@@ -95,7 +95,20 @@ export class TradeManager {
                     }
                     resolvedOrderType = 'market';
                 }
-                const stopLossPrice = await this.binance.priceToPrecision(signal.symbol, signal.stopLoss);
+
+                // 1.5 Calculate SL/TP prices
+                let stopLossPrice = await this.binance.priceToPrecision(signal.symbol, signal.stopLoss);
+                if (user.volatilitySlEnabled) {
+
+                    const percentage = user.volatilitySlPercentage || 5;
+                    if (signal.direction === 'LONG') {
+                        stopLossPrice = entryPrice * (1 - percentage / 100);
+                    } else {
+                        stopLossPrice = entryPrice * (1 + percentage / 100);
+                    }
+                    stopLossPrice = await this.binance.priceToPrecision(signal.symbol, stopLossPrice);
+                    logger.info(`[Volatility SL] Using calculated SL: ${stopLossPrice} (${percentage}%)`);
+                }
                 const takeProfitPrices = await Promise.all(signal.targets.map(t => this.binance.priceToPrecision(signal.symbol, t)));
 
                 // 2. Position Sizing & Risk Caps
@@ -264,7 +277,7 @@ export class TradeManager {
                     symbol: signal.symbol,
                     direction: signal.direction,
                     entryPrice: order.average || entryPrice,
-                    stopLoss: signal.stopLoss,
+                    stopLoss: stopLossPrice,
                     targets: signal.targets.map(t => ({ price: t, hit: false })),
                     amount: positionSizeUSDT,
                     leverage: leverage,
@@ -311,8 +324,8 @@ export class TradeManager {
                 }));
 
                 const slResult = {
-                    price: signal.stopLoss,
-                    pnlPercent: parseFloat(calculatePnL(entryPrice, signal.stopLoss, signal.direction!, leverage).toFixed(6))
+                    price: stopLossPrice,
+                    pnlPercent: parseFloat(calculatePnL(entryPrice, stopLossPrice, signal.direction!, leverage).toFixed(6))
                 };
 
                 return {
@@ -329,6 +342,7 @@ export class TradeManager {
                     orderType: resolvedOrderType,
                     isPending: resolvedOrderType === 'limit' && order.status === 'open'
                 };
+
             }
 
         } catch (error) {
