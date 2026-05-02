@@ -35,6 +35,9 @@ export const getMainMenuKeyboard = (user: any) => {
                 { text: `🔄 نوع تنفيذ الصفقة: ${orderModeLabel}` }
             ],
             [
+                { text: `⚖️ إعدادات الرافعة: ${user.leverageMode === 'fixed' ? `x${user.fixedLeverageValue}` : 'تلقائي'}` }
+            ],
+            [
                 { text: 'ℹ️ تعليمات الاستخدام (Help)' }
             ]
         ],
@@ -128,6 +131,37 @@ export const buildCapitalProtectionKeyboard = (user: any) => {
                 { text: currentPercent === 4 ? '✅ 4%' : '4%', callback_data: 'cap_perc_4' },
                 { text: currentPercent === 5 ? '✅ 5%' : '5%', callback_data: 'cap_perc_5' },
                 { text: currentPercent === 6 ? '✅ 6%' : '6%', callback_data: 'cap_perc_6' }
+            ]
+        ]
+    };
+};
+
+// --- LEVERAGE SETTINGS KEYBOARD ---
+export const buildLeverageKeyboard = (user: any) => {
+    const mode = user.leverageMode || 'default';
+    const val = user.fixedLeverageValue || 10;
+
+    return {
+        inline_keyboard: [
+            [
+                { 
+                    text: mode === 'default' ? '⚙️ تلقائي (حسب التوصية) ✔️' : '⚙️ تلقائي (حسب التوصية)', 
+                    callback_data: 'lev_mode_default' 
+                },
+                { 
+                    text: mode === 'fixed' ? '📌 ثابت ✔️' : '📌 ثابت', 
+                    callback_data: 'lev_mode_fixed' 
+                }
+            ],
+            [
+                { text: (mode === 'fixed' && val === 10) ? '✅ x10' : 'x10', callback_data: 'lev_val_10' },
+                { text: (mode === 'fixed' && val === 15) ? '✅ x15' : 'x15', callback_data: 'lev_val_15' },
+                { text: (mode === 'fixed' && val === 20) ? '✅ x20' : 'x20', callback_data: 'lev_val_20' }
+            ],
+            [
+                { text: (mode === 'fixed' && val === 25) ? '✅ x25' : 'x25', callback_data: 'lev_val_25' },
+                { text: (mode === 'fixed' && val === 50) ? '✅ x50' : 'x50', callback_data: 'lev_val_50' },
+                { text: (mode === 'fixed' && val === 100) ? '✅ x100' : 'x100', callback_data: 'lev_val_100' }
             ]
         ]
     };

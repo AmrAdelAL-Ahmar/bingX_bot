@@ -105,7 +105,14 @@ export class TradeManager {
                     riskPercentage = 5;
                 }
 
-                const leverage = signal.leverage || 10;
+                // 3. Leverage Calculation
+                let leverage = 10;
+                if (user.leverageMode === 'fixed') {
+                    leverage = user.fixedLeverageValue || 10;
+                } else {
+                    // Default mode: use signal leverage or fallback to 10
+                    leverage = signal.leverage || 10;
+                }
                 let marginUsed = balance * (riskPercentage / 100);
 
                 // 2.5 Total Exposure Limit check (Max 10%)

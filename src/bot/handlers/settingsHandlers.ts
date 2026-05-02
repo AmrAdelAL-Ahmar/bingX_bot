@@ -1,7 +1,7 @@
 import { Telegraf } from 'telegraf';
 import logger from '../../utils/logger';
 import User from '../../models/User';
-import { ALL_TP_THRESHOLDS, buildAlertSettingsKeyboard, buildCapitalProtectionKeyboard, getMainMenuKeyboard } from '../keyboards/baseKeyboards';
+import { ALL_TP_THRESHOLDS, buildAlertSettingsKeyboard, buildCapitalProtectionKeyboard, buildLeverageKeyboard, getMainMenuKeyboard } from '../keyboards/baseKeyboards';
 
 export const registerSettingsHandlers = (bot: Telegraf) => {
 
@@ -104,6 +104,30 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             });
         } catch (e) {
             ctx.reply('حدث خطأ أثناء فتح إعدادات التنفيذ.');
+        }
+    });
+
+    // --- Leverage Settings ---
+    bot.hears(/⚖️ إعدادات الرافعة/, async (ctx) => {
+        try {
+            if (!ctx.from) return;
+            const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+            if (!user) return;
+
+            const mode = user.leverageMode || 'default';
+            const val = user.fixedLeverageValue || 10;
+
+            const msg = `⚖️ <b>إعدادات الرافعة المالية (Leverage)</b>\n\n` +
+                `الوضع الحالي: <b>${mode === 'fixed' ? `📌 ثابت (x${val})` : '⚙️ تلقائي (حسب التوصية)'}</b>\n\n` +
+                `• <b>تلقائي:</b> يتبع الرافعة المذكورة في التوصية. إذا لم تذكر، يستخدم <b>x10</b>.\n` +
+                `• <b>ثابت:</b> يتم تجاهل الرافعة في التوصية واستخدام القيمة المحددة أدناه لجميع الصفقات.\n\n` +
+                `اختر الوضع أو القيمة المطلوبة:`;
+
+            await ctx.replyWithHTML(msg, {
+                reply_markup: buildLeverageKeyboard(user)
+            });
+        } catch (e) {
+            ctx.reply('حدث خطأ أثناء فتح إعدادات الرافعة.');
         }
     });
 
@@ -215,6 +239,50 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             } catch (e) { /* unchanged */ }
 
             await ctx.answerCbQuery('✅ تم التحديث').catch(() => {});
+            return;
+        }
+
+        // --- Leverage Callbacks ---
+        if (data.startsWith('lev_')) {
+            const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+            if (!user) return;
+
+            if (data === 'lev_mode_default') {
+                user.leverageMode = 'default';
+            } else if (data === 'lev_mode_fixed') {
+                user.leverageMode = 'fixed';
+            } else if (data.startsWith('lev_val_')) {
+                const val = parseInt(data.replace('lev_val_', ''));
+                if (!isNaN(val)) {
+                    user.fixedLeverageValue = val;
+                    user.leverageMode = 'fixed'; // Auto-switch to fixed if a value is selected
+                }
+            }
+
+            await user.save();
+
+            const mode = user.leverageMode || 'default';
+            const val = user.fixedLeverageValue || 10;
+
+            const newMsg = `⚖️ <b>إعدادات الرافعة المالية (Leverage)</b>\n\n` +
+                `تم التحديث! الوضع الحالي: <b>${mode === 'fixed' ? `📌 ثابت (x${val})` : '⚙️ تلقائي (حسب التوصية)'}</b>\n\n` +
+                `• <b>تلقائي:</b> يتبع الرافعة المذكورة في التوصية. إذا لم تذكر، يستخدم <b>x10</b>.\n` +
+                `• <b>ثابت:</b> يتم تجاهل الرافعة في التوصية واستخدام القيمة المحددة أدناه لجميع الصفقات.\n\n` +
+                `اختر الوضع أو القيمة المطلوبة:`;
+
+            try {
+                await ctx.editMessageText(newMsg, {
+                    parse_mode: 'HTML',
+                    reply_markup: buildLeverageKeyboard(user)
+                });
+            } catch (e) { /* unchanged */ }
+
+            await ctx.answerCbQuery('✅ تم التحديث').catch(() => {});
+            
+            // Update main menu
+            await ctx.reply(`✅ تم تحديث إعدادات الرافعة إلى: ${mode === 'fixed' ? `ثابت (x${val})` : 'تلقائي'}`, {
+                reply_markup: getMainMenuKeyboard(user)
+            });
             return;
         }
 

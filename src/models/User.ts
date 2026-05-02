@@ -18,6 +18,9 @@ export interface IUser extends Document {
     orderMode?: 'market' | 'limit';
     // Strict Capital Protection Risk (Max SL Loss as % of balance)
     maxSlRiskPercentage?: number; 
+    // Leverage Settings
+    leverageMode: 'default' | 'fixed';
+    fixedLeverageValue: number;
 }
 
 const UserSchema: Schema = new Schema({
@@ -38,6 +41,9 @@ const UserSchema: Schema = new Schema({
     orderMode: { type: String, enum: ['market', 'limit'], default: 'market' },
     // Strict Capital Protection Risk
     maxSlRiskPercentage: { type: Number, default: 6 },
+    // Leverage Settings
+    leverageMode: { type: String, enum: ['default', 'fixed'], default: 'default' },
+    fixedLeverageValue: { type: Number, default: 10 },
 });
 
 export default mongoose.model<IUser>('User', UserSchema);
