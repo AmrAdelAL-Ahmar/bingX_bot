@@ -24,6 +24,15 @@ export interface IUser extends Document {
     // Volatility Stop Loss Settings
     volatilitySlEnabled: boolean;
     volatilitySlPercentage: number;
+    // HITLAR Mode Settings
+    hitlarModeEnabled: boolean;
+    hitlarSettings: {
+        riskPercentage: number;
+        leverage: number;
+        volatilitySlPercentage: number;
+        capitalProtectionEnabled: boolean;
+        orderMode: 'limit' | 'market';
+    };
 }
 
 const UserSchema: Schema = new Schema({
@@ -50,6 +59,15 @@ const UserSchema: Schema = new Schema({
     // Volatility Stop Loss Settings
     volatilitySlEnabled: { type: Boolean, default: false },
     volatilitySlPercentage: { type: Number, default: 5 },
+    // HITLAR Mode Settings
+    hitlarModeEnabled: { type: Boolean, default: false },
+    hitlarSettings: {
+        riskPercentage: { type: Number, default: 3 },
+        leverage: { type: Number, default: 20 },
+        volatilitySlPercentage: { type: Number, default: 5 },
+        capitalProtectionEnabled: { type: Boolean, default: false },
+        orderMode: { type: String, enum: ['limit', 'market'], default: 'limit' },
+    },
 });
 
 export default mongoose.model<IUser>('User', UserSchema);

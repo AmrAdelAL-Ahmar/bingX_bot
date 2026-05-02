@@ -1,7 +1,7 @@
 import { Telegraf } from 'telegraf';
 import logger from '../../utils/logger';
 import User from '../../models/User';
-import { ALL_TP_THRESHOLDS, buildAlertSettingsKeyboard, buildCapitalProtectionKeyboard, buildLeverageKeyboard, getMainMenuKeyboard, buildVolatilitySlKeyboard } from '../keyboards/baseKeyboards';
+import { ALL_TP_THRESHOLDS, buildAlertSettingsKeyboard, buildCapitalProtectionKeyboard, buildLeverageKeyboard, getMainMenuKeyboard, buildVolatilitySlKeyboard, buildHitlarSettingsKeyboard } from '../keyboards/baseKeyboards';
 
 export const registerSettingsHandlers = (bot: Telegraf) => {
 
@@ -174,12 +174,111 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
     
         await ctx.replyWithHTML(msg, { reply_markup: buildAlertSettingsKeyboard(user) });
     });
+
+    bot.hears(/🚀 وضع هترل \(HITLAR\)/, async (ctx) => {
+        try {
+            if (!ctx.from) return;
+            const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+            if (!user) return;
+
+            user.hitlarModeEnabled = !user.hitlarModeEnabled;
+            await user.save();
+
+            const status = user.hitlarModeEnabled ? 'مفعل 🟢' : 'معطل 🔴';
+            ctx.reply(`🚀 تم تغيير حالة وضع هترل إلى: ${status}`, {
+                reply_markup: getMainMenuKeyboard(user)
+            });
+        } catch (e) {
+            ctx.reply('حدث خطأ أثناء تغيير حالة وضع هترل.');
+        }
+    });
+
+    bot.hears('⚙️ إعدادات وضع هترل', async (ctx) => {
+        try {
+            if (!ctx.from) return;
+            const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+            if (!user) return;
+
+            const settings = user.hitlarSettings;
+            const msg = `⚙️ <b>إعدادات وضع هترل (HITLAR Mode)</b>\n\n` +
+                `في هذا الوضع، يتم تجاهل بعض بارامترات التوصية واستخدام هذه الإعدادات الثابتة:\n\n` +
+                `💰 نسبة الدخول من رأس المال: <b>${settings.riskPercentage}%</b>\n` +
+                `⚖️ الرافعة المالية الثابتة: <b>x${settings.leverage}</b>\n` +
+                `📊 نسبة وقف الخسارة (تذبذب): <b>${settings.volatilitySlPercentage}%</b>\n` +
+                `🛡 حماية رأس المال الصارمة: <b>${settings.capitalProtectionEnabled ? 'مفعلة ✅' : 'معطلة ❌'}</b>\n` +
+                `🔄 نوع تنفيذ الصفقة: <b>${settings.orderMode === 'limit' ? '📌 حدي (Limit)' : '⚡ سوق (Market)'}</b>\n\n` +
+                `يمكنك تعديل أي من القيم بالضغط على الأزرار أدناه:`;
+
+            ctx.replyWithHTML(msg, {
+                reply_markup: buildHitlarSettingsKeyboard(user)
+            });
+        } catch (e) {
+            ctx.reply('حدث خطأ أثناء فتح إعدادات وضع هترل.');
+        }
+    });
     
     // Handle all inline keyboard callbacks
     bot.on('callback_query', async (ctx) => {
         const data = (ctx.callbackQuery as any).data as string;
         if (!data) return;
         if (!ctx.from) return;
+
+        // --- HITLAR Callbacks ---
+        if (data.startsWith('hitlar_')) {
+            const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+            if (!user) return;
+
+            if (data === 'hitlar_save') {
+                await ctx.deleteMessage().catch(() => {});
+                return ctx.answerCbQuery('✅ تم حفظ الإعدادات').catch(() => {});
+            }
+
+            if (data === 'hitlar_toggle_cap') {
+                user.hitlarSettings.capitalProtectionEnabled = !user.hitlarSettings.capitalProtectionEnabled;
+            } else if (data === 'hitlar_toggle_mode') {
+                user.hitlarSettings.orderMode = user.hitlarSettings.orderMode === 'limit' ? 'market' : 'limit';
+            } else if (data === 'hitlar_edit_risk') {
+                user.botState = 'AWAITING_HITLAR_RISK';
+                await user.save();
+                await ctx.answerCbQuery().catch(() => {});
+                return ctx.reply('يرجى إدخال نسبة المخاطرة لوضع هترل (مثال: 5):', {
+                    reply_markup: { keyboard: [[{ text: 'رجوع 🔙' }]], resize_keyboard: true }
+                });
+            } else if (data === 'hitlar_edit_lev') {
+                user.botState = 'AWAITING_HITLAR_LEV';
+                await user.save();
+                await ctx.answerCbQuery().catch(() => {});
+                return ctx.reply('يرجى إدخال الرافعة المالية لوضع هترل (مثال: 20):', {
+                    reply_markup: { keyboard: [[{ text: 'رجوع 🔙' }]], resize_keyboard: true }
+                });
+            } else if (data === 'hitlar_edit_sl') {
+                user.botState = 'AWAITING_HITLAR_SL';
+                await user.save();
+                await ctx.answerCbQuery().catch(() => {});
+                return ctx.reply('يرجى إدخال نسبة وقف الخسارة لوضع هترل (مثال: 5):', {
+                    reply_markup: { keyboard: [[{ text: 'رجوع 🔙' }]], resize_keyboard: true }
+                });
+            }
+
+            await user.save();
+            const settings = user.hitlarSettings;
+            const newMsg = `⚙️ <b>إعدادات وضع هترل (HITLAR Mode)</b>\n\n` +
+                `في هذا الوضع، يتم تجاهل بعض بارامترات التوصية واستخدام هذه الإعدادات الثابتة:\n\n` +
+                `💰 نسبة الدخول من رأس المال: <b>${settings.riskPercentage}%</b>\n` +
+                `⚖️ الرافعة المالية الثابتة: <b>x${settings.leverage}</b>\n` +
+                `📊 نسبة وقف الخسارة (تذبذب): <b>${settings.volatilitySlPercentage}%</b>\n` +
+                `🛡 حماية رأس المال الصارمة: <b>${settings.capitalProtectionEnabled ? 'مفعلة ✅' : 'معطلة ❌'}</b>\n` +
+                `🔄 نوع تنفيذ الصفقة: <b>${settings.orderMode === 'limit' ? '📌 حدي (Limit)' : '⚡ سوق (Market)'}</b>\n\n` +
+                `يمكنك تعديل أي من القيم بالضغط على الأزرار أدناه:`;
+
+            try {
+                await ctx.editMessageText(newMsg, {
+                    parse_mode: 'HTML',
+                    reply_markup: buildHitlarSettingsKeyboard(user)
+                });
+            } catch (e) {}
+            return ctx.answerCbQuery('✅ تم التحديث').catch(() => {});
+        }
 
         // --- Order Mode Callbacks ---
         if (data === 'order_mode_market' || data === 'order_mode_limit') {

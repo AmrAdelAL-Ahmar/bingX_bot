@@ -57,8 +57,18 @@ export class TradeManager {
                     return;
                 }
 
-                // Read user's order mode preference (default: market)
-                const userOrderMode: 'market' | 'limit' = (user as any).orderMode || 'market';
+                // Check if HITLAR mode is enabled
+                const isHitlar = user.hitlarModeEnabled;
+                const hitlar = user.hitlarSettings || {
+                    riskPercentage: 3,
+                    leverage: 20,
+                    volatilitySlPercentage: 5,
+                    capitalProtectionEnabled: false,
+                    orderMode: 'limit'
+                };
+
+                // Read user's order mode preference
+                const userOrderMode: 'market' | 'limit' = isHitlar ? hitlar.orderMode : (user.orderMode || 'market');
 
                 // Fetch current market price (needed for both modes)
                 const currentMarketPrice = await this.binance.getMarketPrice(signal.symbol);
@@ -98,29 +108,29 @@ export class TradeManager {
 
                 // 1.5 Calculate SL/TP prices
                 let stopLossPrice = await this.binance.priceToPrecision(signal.symbol, signal.stopLoss);
-                if (user.volatilitySlEnabled) {
-
-                    const percentage = user.volatilitySlPercentage || 5;
+                
+                // Use Volatility SL if enabled OR if HITLAR mode is enabled
+                if (user.volatilitySlEnabled || isHitlar) {
+                    const percentage = isHitlar ? hitlar.volatilitySlPercentage : (user.volatilitySlPercentage || 5);
                     if (signal.direction === 'LONG') {
                         stopLossPrice = entryPrice * (1 - percentage / 100);
                     } else {
                         stopLossPrice = entryPrice * (1 + percentage / 100);
                     }
                     stopLossPrice = await this.binance.priceToPrecision(signal.symbol, stopLossPrice);
-                    logger.info(`[Volatility SL] Using calculated SL: ${stopLossPrice} (${percentage}%)`);
+                    logger.info(`[${isHitlar ? 'HITLAR ' : ''}Volatility SL] Using calculated SL: ${stopLossPrice} (${percentage}%)`);
                 }
                 const takeProfitPrices = await Promise.all(signal.targets.map(t => this.binance.priceToPrecision(signal.symbol, t)));
 
                 // 2. Position Sizing & Risk Caps
-                let riskPercentage = signal.risk || user.riskPercentage || 2;
-                if (riskPercentage > 5) {
-                    logger.warn(`Requested risk ${riskPercentage}% exceeds single trade limit of 5%. Capping at 5%.`);
-                    riskPercentage = 5;
-                }
+                let riskPercentage = isHitlar ? hitlar.riskPercentage : (signal.risk || user.riskPercentage || 2);
+                if (riskPercentage > 100) riskPercentage = 100; // safety
 
                 // 3. Leverage Calculation
                 let leverage = 10;
-                if (user.leverageMode === 'fixed') {
+                if (isHitlar) {
+                    leverage = hitlar.leverage || 20;
+                } else if (user.leverageMode === 'fixed') {
                     leverage = user.fixedLeverageValue || 10;
                 } else {
                     // Default mode: use signal leverage or fallback to 10
@@ -155,7 +165,6 @@ export class TradeManager {
                 let positionSizeUSDT = marginUsed * leverage;
 
                 // Calculate Contracts first to check sizes
-
                 const rawAmount = positionSizeUSDT / entryPrice;
                 let amountContracts = await this.binance.amountToPrecision(signal.symbol, rawAmount);
                 const minAmount = await this.binance.getMarketMinAmount(signal.symbol);
@@ -173,9 +182,11 @@ export class TradeManager {
 
                 let scaledBySL = false;
                 // 4.5 Maximum Stop Loss Capital Risk Limit Check (Max 6% Loss)
-                const shouldEnforceMaxSlLoss = user.enforceMaxSlLoss !== null && user.enforceMaxSlLoss !== undefined
-                    ? user.enforceMaxSlLoss
-                    : process.env.ENFORCE_MAX_SL_LOSS === 'true';
+                const shouldEnforceMaxSlLoss = isHitlar ? hitlar.capitalProtectionEnabled : (
+                    (user.enforceMaxSlLoss !== null && user.enforceMaxSlLoss !== undefined)
+                        ? user.enforceMaxSlLoss
+                        : process.env.ENFORCE_MAX_SL_LOSS === 'true'
+                );
 
                 if (shouldEnforceMaxSlLoss) {
                     // Maximum amount of money we are willing to lose completely if SL is hit

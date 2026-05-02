@@ -10,6 +10,8 @@ export const getMainMenuKeyboard = (user: any) => {
     const orderMode = user.orderMode || 'market';
     const orderModeLabel = orderMode === 'limit' ? '📌 حدي (Limit)' : '⚡ سوق (Market)';
 
+    const hitlarStatus = user.hitlarModeEnabled ? '🟢 مفعل' : '🔴 معطل';
+
     return {
         keyboard: [
             [
@@ -26,6 +28,10 @@ export const getMainMenuKeyboard = (user: any) => {
             ],
             [
                 { text: '🛑 إلغاء كل الصفقات المفتوحة' }
+            ],
+            [
+                { text: `🚀 وضع هترل (HITLAR): ${hitlarStatus}` },
+                { text: '⚙️ إعدادات وضع هترل' }
             ],
             [
                 { text: '🛡 حماية رأس المال الصارمة' },
@@ -46,6 +52,43 @@ export const getMainMenuKeyboard = (user: any) => {
         ],
         resize_keyboard: true,
         is_persistent: true
+    };
+};
+
+// --- HITLAR SETTINGS KEYBOARD ---
+export const buildHitlarSettingsKeyboard = (user: any) => {
+    const settings = user.hitlarSettings || {
+        riskPercentage: 3,
+        leverage: 20,
+        volatilitySlPercentage: 5,
+        capitalProtectionEnabled: false,
+        orderMode: 'limit'
+    };
+
+    const capProtLabel = settings.capitalProtectionEnabled ? '🟢 حماية رأس المال: مفعلة' : '🔴 حماية رأس المال: معطلة';
+    const orderModeLabel = settings.orderMode === 'limit' ? '📌 تنفيذ حدي (Limit)' : '⚡ تنفيذ سوق (Market)';
+
+    return {
+        inline_keyboard: [
+            [
+                { text: `💰 نسبة الدخول: ${settings.riskPercentage}%`, callback_data: 'hitlar_edit_risk' }
+            ],
+            [
+                { text: `⚖️ الرافعة: x${settings.leverage}`, callback_data: 'hitlar_edit_lev' }
+            ],
+            [
+                { text: `📊 نسبة الاستوب: ${settings.volatilitySlPercentage}%`, callback_data: 'hitlar_edit_sl' }
+            ],
+            [
+                { text: capProtLabel, callback_data: 'hitlar_toggle_cap' }
+            ],
+            [
+                { text: orderModeLabel, callback_data: 'hitlar_toggle_mode' }
+            ],
+            [
+                { text: '✅ حفظ وإغلاق', callback_data: 'hitlar_save' }
+            ]
+        ]
     };
 };
 
