@@ -7,6 +7,9 @@ export const getMainMenuKeyboard = (user: any) => {
         : process.env.ENFORCE_MAX_SL_LOSS === 'true';
     const riskIcon = riskStatus ? '🟢 مفعل' : '🔴 معطل';
 
+    const orderMode = user.orderMode || 'market';
+    const orderModeLabel = orderMode === 'limit' ? '📌 حدي (Limit)' : '⚡ سوق (Market)';
+
     return {
         keyboard: [
             [
@@ -27,6 +30,9 @@ export const getMainMenuKeyboard = (user: any) => {
             [
                 { text: `🛡 حماية رأس المال (6% SL): ${riskIcon}` },
                 { text: `⚡ نسبة المخاطرة: ${user.riskPercentage || 3}%` }
+            ],
+            [
+                { text: `🔄 نوع تنفيذ الصفقة: ${orderModeLabel}` }
             ],
             [
                 { text: 'ℹ️ تعليمات الاستخدام (Help)' }

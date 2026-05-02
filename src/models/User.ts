@@ -14,6 +14,8 @@ export interface IUser extends Document {
     slWarningEnabled: boolean;
     tpWarningEnabled: boolean;
     tpWarningThresholds: number[]; // e.g., [70, 90]
+    // Order execution mode: 'market' (default) or 'limit'
+    orderMode?: 'market' | 'limit';
 }
 
 const UserSchema: Schema = new Schema({
@@ -30,6 +32,8 @@ const UserSchema: Schema = new Schema({
     slWarningEnabled: { type: Boolean, default: true },
     tpWarningEnabled: { type: Boolean, default: true },
     tpWarningThresholds: { type: [Number], default: [70, 90] },
+    // Order execution mode
+    orderMode: { type: String, enum: ['market', 'limit'], default: 'market' },
 });
 
 export default mongoose.model<IUser>('User', UserSchema);

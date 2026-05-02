@@ -195,12 +195,22 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                     if (signal.type === 'CLOSE') {
                         ctx.reply(`✅ تم إغلاق الصفقة (أو الصفقات) للعملة ${signal.symbol} بنجاح.`);
                     } else if (result) {
-                        let successMsg = `✅ <b>تم تنفيذ الصفقة بنجاح على Binance!</b>\n\n` +
+                        const orderTypeLabel = result.orderType === 'limit'
+                            ? `📌 حدي (Limit) عند ${result.entryPrice.toFixed(6)}`
+                            : '⚡ سوق (Market)';
+
+                        let successMsg = result.isPending
+                            ? `⏳ <b>تم وضع أمر حدي بنجاح — ينتظر التنفيذ!</b>
+💡 سيتم وضع الأهداف والاستوب تلقائياً عند تنفيذ الأمر.\n\n`
+                            : `✅ <b>تم تنفيذ الصفقة بنجاح على Binance!</b>\n\n`;
+
+                        successMsg +=
                             `الرمز: <b>${result.symbol}</b>\n` +
                             `الاتجاه: <b>${result.direction}</b>\n` +
+                            `نوع التنفيذ: <b>${orderTypeLabel}</b>\n` +
                             `الرافعة المالية: <b>${result.leverage}x</b>\n` +
                             `المبلغ المستثمر (Margin): <b>${result.margin.toFixed(6)} USDT</b>\n` +
-                            `نقطة الدخول: <b>${result.entryPrice.toFixed(6)}</b>\n\n`;
+                            `سعر الدخول: <b>${result.entryPrice.toFixed(6)}</b>\n\n`;
 
                         if (result.targets.length > 0) {
                             successMsg += `🎯 <b>الأهداف:</b>\n`;
@@ -213,8 +223,6 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                         successMsg += `🛑 <b>وقف الخسارة:</b> ${result.stopLoss.price.toFixed(6)} (${result.stopLoss.pnlPercent.toFixed(6)}%)`;
 
                         ctx.replyWithHTML(successMsg);
-                        
-                        // NOTE: If using a group, this is where you'd optionally broadbast.
                     }
                 } catch (error: any) {
                     logger.error(`Signal validation failed for ${ctx.from.username || telegramId}`, error);

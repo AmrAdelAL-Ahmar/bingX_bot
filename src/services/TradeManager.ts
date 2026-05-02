@@ -16,6 +16,8 @@ export interface TradeResult {
     riskPercentage: number;
     targets: { price: number; pnlPercent: number }[];
     stopLoss: { price: number; pnlPercent: number };
+    orderType: 'market' | 'limit'; // Resolved order type
+    isPending: boolean; // true if limit order not yet filled
 }
 
 export class TradeManager {
@@ -55,13 +57,43 @@ export class TradeManager {
                     return;
                 }
 
+                // Read user's order mode preference (default: market)
+                const userOrderMode: 'market' | 'limit' = (user as any).orderMode || 'market';
+
+                // Fetch current market price (needed for both modes)
+                const currentMarketPrice = await this.binance.getMarketPrice(signal.symbol);
+
                 let entryPrice: number;
-                if (signal.entry && signal.entry.length > 0) {
-                    entryPrice = await this.binance.priceToPrecision(signal.symbol, signal.entry[0]);
+                let resolvedOrderType: 'market' | 'limit' = 'market'; // final resolved type
+
+                if (userOrderMode === 'limit' && signal.entry && signal.entry.length > 0) {
+                    const rawEntry = signal.entry[0];
+
+                    // Smart check: for LONG, if entry > market → price already passed, use market
+                    // For SHORT, if entry < market → price already passed, use market
+                    const entryAlreadyPassed =
+                        (signal.direction === 'LONG' && rawEntry > currentMarketPrice) ||
+                        (signal.direction === 'SHORT' && rawEntry < currentMarketPrice);
+
+                    if (entryAlreadyPassed) {
+                        logger.warn(`[Limit→Market Fallback] Entry price (${rawEntry}) is past market (${currentMarketPrice}) for ${signal.direction}. Falling back to market order.`);
+                        entryPrice = currentMarketPrice;
+                        resolvedOrderType = 'market';
+                    } else {
+                        entryPrice = await this.binance.priceToPrecision(signal.symbol, rawEntry);
+                        resolvedOrderType = 'limit';
+                        logger.info(`[Limit Order] Using entry price: ${entryPrice} for ${signal.symbol}`);
+                    }
                 } else {
-                    logger.info(`No entry price provided for ${signal.symbol}. Fetching current market price...`);
-                    entryPrice = await this.binance.getMarketPrice(signal.symbol);
-                    logger.info(`Fetched Market Price for ${signal.symbol}: ${entryPrice}`);
+                    // Market mode or no entry price in signal
+                    if (signal.entry && signal.entry.length > 0) {
+                        // Use signal entry for position sizing calculations only
+                        entryPrice = await this.binance.priceToPrecision(signal.symbol, signal.entry[0]);
+                    } else {
+                        entryPrice = currentMarketPrice;
+                        logger.info(`No entry price provided for ${signal.symbol}. Using market price: ${entryPrice}`);
+                    }
+                    resolvedOrderType = 'market';
                 }
                 const stopLossPrice = await this.binance.priceToPrecision(signal.symbol, signal.stopLoss);
                 const takeProfitPrices = await Promise.all(signal.targets.map(t => this.binance.priceToPrecision(signal.symbol, t)));
@@ -174,18 +206,19 @@ export class TradeManager {
                         // Hedge Mode: positionSide is required (LONG or SHORT)
                         orderParams.positionSide = signal.direction;
                     }
-                    // Note: stopPrice here is just for logging context; SL is placed as a separate order
-                    const orderType = signal.entry && signal.entry.length > 0 ? 'limit' : 'market';
-                    const executionPrice = orderType === 'limit' ? entryPrice : undefined;
+                    // Note: SL/TP are placed as separate orders after execution
+                    const executionPrice = resolvedOrderType === 'limit' ? entryPrice : undefined;
 
                     order = await this.binance.placeOrder(
                         signal.symbol,
-                        orderType,
+                        resolvedOrderType,
                         signal.direction === 'LONG' ? 'buy' : 'sell',
                         amountContracts,
                         executionPrice,
                         orderParams
                     );
+
+                    logger.info(`[Order Placed] Type: ${resolvedOrderType.toUpperCase()}, Price: ${executionPrice || 'MARKET'}, Qty: ${amountContracts}`);
 
                 } catch (err: any) {
                     // Retry with 50% size if Insufficient Margin
@@ -197,12 +230,11 @@ export class TradeManager {
                         if (hedgeModeRetry) {
                             retryParams.positionSide = signal.direction;
                         }
-                        const orderTypeRetry = signal.entry && signal.entry.length > 0 ? 'limit' : 'market';
-                        const executionPriceRetry = orderTypeRetry === 'limit' ? entryPrice : undefined;
+                        const executionPriceRetry = resolvedOrderType === 'limit' ? entryPrice : undefined;
 
                         order = await this.binance.placeOrder(
                             signal.symbol,
-                            orderTypeRetry,
+                            resolvedOrderType,
                             signal.direction === 'LONG' ? 'buy' : 'sell',
                             reducedAmount,
                             executionPriceRetry,
@@ -213,7 +245,10 @@ export class TradeManager {
                     }
                 }
 
-                // 6. Save to DB
+                const tradeLog = resolvedOrderType === 'limit'
+                    ? `Limit order placed at ${entryPrice} on ${new Date().toISOString()} via Signal. Risk: ${riskPercentage}%, Lev: ${leverage}x. SL/TP pending fill.`
+                    : `Opened trade at ${new Date().toISOString()} via Signal. Risk: ${riskPercentage}%, Lev: ${leverage}x`;
+
                 const trade = new Trade({
                     userId: user._id,
                     symbol: signal.symbol,
@@ -224,25 +259,34 @@ export class TradeManager {
                     amount: positionSizeUSDT,
                     leverage: leverage,
                     binanceOrderId: order.id,
-                    currentStatus: 'OPEN',
-                    logs: [`Opened trade at ${new Date().toISOString()} via Signal. Risk: ${riskPercentage}%, Lev: ${leverage}x`]
+                    currentStatus: resolvedOrderType === 'limit' && order.status === 'open' ? 'PENDING' : 'OPEN',
+                    logs: [tradeLog]
                 });
                 await trade.save();
 
                 logger.info(`✅ Trade successfully executed for ${signal.symbol}: ${order.id}`);
 
                 // 6.5 Place SL/TP orders on Binance Futures
-                try {
-                    await this.binance.placeSLTPOrders(
-                        signal.symbol,
-                        signal.direction!,
-                        amountContracts,
-                        stopLossPrice,
-                        takeProfitPrices,
-                        hedgeMode
-                    );
-                } catch (slTpErr: any) {
-                    logger.error(`⚠️ Main order placed but failed to set SL/TP: ${slTpErr.message}`);
+                // For MARKET orders: place SL/TP immediately.
+                // For LIMIT orders: only place SL/TP if the order was filled immediately (status = 'closed').
+                const orderFilled = order.status === 'closed' || order.status === 'filled';
+                const shouldPlaceSlTp = resolvedOrderType === 'market' || orderFilled;
+
+                if (shouldPlaceSlTp) {
+                    try {
+                        await this.binance.placeSLTPOrders(
+                            signal.symbol,
+                            signal.direction!,
+                            amountContracts,
+                            stopLossPrice,
+                            takeProfitPrices,
+                            hedgeMode
+                        );
+                    } catch (slTpErr: any) {
+                        logger.error(`⚠️ Main order placed but failed to set SL/TP: ${slTpErr.message}`);
+                    }
+                } else {
+                    logger.info(`⏳ [Limit Order] SL/TP will be placed after order ${order.id} is filled. Current status: ${order.status}`);
                 }
 
                 // 7. Calculate PnL stats for reporting
@@ -271,7 +315,9 @@ export class TradeManager {
                     leverage,
                     riskPercentage,
                     targets: targetsResult,
-                    stopLoss: slResult
+                    stopLoss: slResult,
+                    orderType: resolvedOrderType,
+                    isPending: resolvedOrderType === 'limit' && order.status === 'open'
                 };
             }
 

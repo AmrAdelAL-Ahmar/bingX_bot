@@ -12,7 +12,8 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
                 `• <b>صفقاتي المفتوحة:</b> يعرض الصفقات المفتوحة وحالة الربح/الخسارة لكل واحدة.\n` +
                 `• <b>التقارير:</b> يعرض ملخص نتائج الصفقات المغلقة (يومياً أو بصفة عامة).\n` +
                 `• <b>إلغاء الصفقات:</b> يمكنك اختيارياً إلغاء كل الصفقات أو تحديد عملة معينة ليتم إغلاقها بسعر السوق (Market).\n` +
-                `• <b>حماية رأس المال:</b> إذا كانت مفعلة، سيقوم البوت بتقليل حجم الصفقة إجبارياً بحيث لا تتجاوز خسارة الـ Stop Loss حاجز الـ 6% من حسابك.`;
+                `• <b>حماية رأس المال:</b> إذا كانت مفعلة، سيقوم البوت بتقليل حجم الصفقة إجبارياً بحيث لا تتجاوز خسارة الـ Stop Loss حاجز الـ 6% من حسابك.\n` +
+                `• <b>نوع تنفيذ الصفقة:</b> اختر بين أمر السوق (Market) للدخول الفوري، أو أمر حدي (Limit) للانتظار على سعر محدد.`;
     
             ctx.replyWithHTML(helpMsg);
         } catch (e) { }
@@ -66,6 +67,44 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
         }
     });
 
+    // --- Order Execution Mode ---
+    bot.hears(/🔄 نوع تنفيذ الصفقة/, async (ctx) => {
+        try {
+            if (!ctx.from) return;
+            const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+            if (!user) return;
+
+            const currentMode = user.orderMode || 'market';
+
+            const msg =
+                `🔄 <b>نوع تنفيذ الصفقات</b>\n\n` +
+                `الوضع الحالي: <b>${currentMode === 'limit' ? '📌 حدي (Limit)' : '⚡ سوق (Market)'}</b>\n\n` +
+                `• <b>أمر السوق (Market):</b> يدخل الصفقة فوراً بأفضل سعر متاح.\n` +
+                `• <b>أمر حدي (Limit):</b> ينتظر السعر المحدد في التوصية. يتم وضع الأهداف والاستوب بعد التنفيذ.\n` +
+                `  <i>ℹ️ إذا كان سعر الدخول غير مناسب (أكبر من السوق للشراء أو أصغر للبيع) يدخل بسعر السوق مباشرة.</i>\n\n` +
+                `اختر الوضع الذي تريده:`;
+
+            await ctx.replyWithHTML(msg, {
+                reply_markup: {
+                    inline_keyboard: [
+                        [
+                            {
+                                text: currentMode === 'market' ? '⚡ سوق (Market) ✔️' : '⚡ سوق (Market)',
+                                callback_data: 'order_mode_market'
+                            },
+                            {
+                                text: currentMode === 'limit' ? '📌 حدي (Limit) ✔️' : '📌 حدي (Limit)',
+                                callback_data: 'order_mode_limit'
+                            }
+                        ]
+                    ]
+                }
+            });
+        } catch (e) {
+            ctx.reply('حدث خطأ أثناء فتح إعدادات التنفيذ.');
+        }
+    });
+
     bot.hears('⚙️ إعدادات التنبيهات', async (ctx) => {
         if (!ctx.from) return;
         const user = await User.findOne({ telegramId: ctx.from.id.toString() });
@@ -85,12 +124,62 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
         await ctx.replyWithHTML(msg, { reply_markup: buildAlertSettingsKeyboard(user) });
     });
     
-    // Handle alert settings inline keyboard
+    // Handle all inline keyboard callbacks
     bot.on('callback_query', async (ctx) => {
         const data = (ctx.callbackQuery as any).data as string;
-        if (!data || !data.startsWith('alert_')) return;
-    
+        if (!data) return;
         if (!ctx.from) return;
+
+        // --- Order Mode Callbacks ---
+        if (data === 'order_mode_market' || data === 'order_mode_limit') {
+            const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+            if (!user) return;
+
+            const newMode = data === 'order_mode_limit' ? 'limit' : 'market';
+            user.orderMode = newMode;
+            await user.save();
+
+            const modeLabel = newMode === 'limit' ? '📌 حدي (Limit)' : '⚡ سوق (Market)';
+            const msg =
+                `🔄 <b>نوع تنفيذ الصفقات</b>\n\n` +
+                `تم التحديث! الوضع الحالي: <b>${modeLabel}</b>\n\n` +
+                `• <b>أمر السوق (Market):</b> يدخل الصفقة فوراً بأفضل سعر متاح.\n` +
+                `• <b>أمر حدي (Limit):</b> ينتظر السعر المحدد في التوصية. يتم وضع الأهداف والاستوب بعد التنفيذ.\n` +
+                `  <i>ℹ️ إذا كان سعر الدخول غير مناسب (أكبر من السوق للشراء أو أصغر للبيع) يدخل بسعر السوق مباشرة.</i>\n\n` +
+                `اختر الوضع الذي تريده:`;
+
+            try {
+                await ctx.editMessageText(msg, {
+                    parse_mode: 'HTML',
+                    reply_markup: {
+                        inline_keyboard: [
+                            [
+                                {
+                                    text: newMode === 'market' ? '⚡ سوق (Market) ✔️' : '⚡ سوق (Market)',
+                                    callback_data: 'order_mode_market'
+                                },
+                                {
+                                    text: newMode === 'limit' ? '📌 حدي (Limit) ✔️' : '📌 حدي (Limit)',
+                                    callback_data: 'order_mode_limit'
+                                }
+                            ]
+                        ]
+                    }
+                });
+            } catch (e) { /* message unchanged */ }
+
+            await ctx.answerCbQuery(`✅ تم التحويل إلى ${modeLabel}`).catch(() => {});
+
+            // Also update the main menu keyboard
+            await ctx.reply(`✅ تم تحديث نوع التنفيذ إلى: ${modeLabel}`, {
+                reply_markup: getMainMenuKeyboard(user)
+            });
+            return;
+        }
+
+        // --- Alert Settings Callbacks ---
+        if (!data.startsWith('alert_')) return;
+    
         const user = await User.findOne({ telegramId: ctx.from.id.toString() });
         if (!user) return;
     

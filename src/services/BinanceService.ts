@@ -228,9 +228,9 @@ export class BinanceService {
                 slParams.positionSide = direction;
                 await this.exchange.createOrder(symbol, 'STOP_MARKET', closeSide, amount, undefined, slParams);
             } else {
-                // One-Way Mode: Use reduceOnly and specified amount to allow placement before fill
-                slParams.reduceOnly = true;
-                await this.exchange.createOrder(symbol, 'STOP_MARKET', closeSide, amount, undefined, slParams);
+                // One-Way Mode: closePosition closes the full position automatically
+                slParams.closePosition = true;
+                await this.exchange.createOrder(symbol, 'STOP_MARKET', closeSide, undefined, undefined, slParams);
             }
             logger.info(`✅ Stop Loss order placed at ${stopLossPrice.toFixed(6)} for ${symbol}`);
         } catch (err: any) {
@@ -248,9 +248,9 @@ export class BinanceService {
                 try {
                     const tpParams: any = {
                         stopPrice: tpPrice,
-                        reduceOnly: true,
+                        closePosition: true,
                     };
-                    await this.exchange.createOrder(symbol, 'TAKE_PROFIT_MARKET', closeSide, amount, undefined, tpParams);
+                    await this.exchange.createOrder(symbol, 'TAKE_PROFIT_MARKET', closeSide, undefined, undefined, tpParams);
                     logger.info(`✅ Take Profit order placed at ${tpPrice.toFixed(6)} for ${symbol}`);
                 } catch (err: any) {
                     logger.error(`❌ Failed to place Take Profit at ${tpPrice.toFixed(6)} for ${symbol}: ${err.message}`);
