@@ -9,6 +9,7 @@ import { ReportingService } from './services/ReportingService';
 import { PositionMonitor } from './services/PositionMonitor';
 import { startHealthServer } from './server';
 import { ensureUser } from './bot/middlewares/userMiddleware';
+import { sendTelegramMessage } from './utils/telegram';
 
 // Import newly extracted bot handlers
 import { registerMessageHandlers } from './bot/handlers/messageHandlers';
@@ -27,10 +28,9 @@ const reportingService = new ReportingService(bot);
 // Initialize Monitor
 const positionMonitor = new PositionMonitor(binanceService, async (telegramId, msg) => {
     try {
-        await bot.telegram.sendMessage(telegramId, msg, { parse_mode: 'HTML' });
-        logger.info(`Notification sent successfully to ${telegramId}`);
+        await sendTelegramMessage(bot, telegramId, msg);
     } catch (error) {
-        logger.error(`Error sending notification to ${telegramId}:`, error);
+        // Error already logged in utility
     }
 });
 

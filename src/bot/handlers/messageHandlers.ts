@@ -6,6 +6,7 @@ import { getMainMenuKeyboard, getTraderSettingsKeyboard } from '../keyboards/bas
 
 import { SignalParser } from '../../services/SignalParser';
 import { TradeManager } from '../../services/TradeManager';
+import { sendTelegramMessage } from '../../utils/telegram';
 
 export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManager) => {
 
@@ -72,6 +73,30 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                     return ctx.reply('يرجى إدخال رقم صحيح بين 1 و 5:');
                 }
             }
+
+            if (user.botState === 'AWAITING_TP_SPLITS') {
+                if (message === 'رجوع 🔙') {
+                    user.botState = 'NONE';
+                    await user.save();
+                    return ctx.reply('تم الإلغاء.', { reply_markup: getTraderSettingsKeyboard(user) });
+                }
+
+                const parts = message.replace(/,/g, ' ').split(/\s+/).filter(p => p.trim() !== '');
+                const splits = parts.map(p => parseInt(p));
+                const sum = splits.reduce((a, b) => a + b, 0);
+
+                if (splits.some(isNaN) || sum !== 100 || splits.length === 0) {
+                    return ctx.reply('⚠️ إدخال غير صحيح. الرجاء التأكد من إدخال أرقام صحيحة وأن المجموع يساوي 100.\nمثال: 50 30 20');
+                }
+
+                user.tpProfitSplits = splits;
+                user.botState = 'NONE';
+                await user.save();
+                return ctx.reply(`✅ تم تحديث نسب تقسيم الأرباح بنجاح: ${splits.join('% - ')}%`, {
+                    reply_markup: getTraderSettingsKeyboard(user)
+                });
+            }
+
 
             if (user.botState === 'AWAITING_CANCEL_ALL_CONFIRM') {
                 if (message === 'نعم، متأكد ✅') {
@@ -292,11 +317,11 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                         
                         successMsg += `🛑 <b>وقف الخسارة:</b> ${result.stopLoss.price.toFixed(6)} (${result.stopLoss.pnlPercent.toFixed(6)}%)`;
 
-                        await ctx.replyWithHTML(successMsg);
+                        await sendTelegramMessage(bot, ctx.chat.id, successMsg);
 
                         // Send notification to user's private bot if different from current chat
                         if (user.telegramId && user.telegramId !== ctx.chat.id.toString()) {
-                            await bot.telegram.sendMessage(user.telegramId, successMsg, { parse_mode: 'HTML' })
+                            await sendTelegramMessage(bot, user.telegramId, successMsg)
                                 .catch(e => logger.error(`Failed to send duplicate notification to user: ${e.message}`));
                         }
                     }

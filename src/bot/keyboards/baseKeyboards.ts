@@ -66,7 +66,8 @@ export const getTraderSettingsKeyboard = (user: any) => {
                 { text: '⚙️ إعدادات وضع هترل' }
             ],
             [
-                { text: '⚙️ إعدادات التنبيهات' }
+                { text: '⚙️ إعدادات التنبيهات' },
+                { text: '🎯 استراتيجية الأهداف والأخطاء' }
             ],
             [
                 { text: 'رجوع للقائمة الرئيسية 🔙' }
@@ -261,6 +262,39 @@ export const buildVolatilitySlKeyboard = (user: any) => {
                 { text: currentPercent === 5 ? '✅ 5%' : '5%', callback_data: 'vol_perc_5' },
                 { text: currentPercent === 10 ? '✅ 10%' : '10%', callback_data: 'vol_perc_10' },
                 { text: currentPercent === 15 ? '✅ 15%' : '15%', callback_data: 'vol_perc_15' }
+            ]
+        ]
+    };
+};
+// --- STRATEGY SETTINGS KEYBOARD ---
+export const buildStrategySettingsKeyboard = (user: any) => {
+    const tpMode = user.tpExecutionMode === 'single' ? '🎯 هدف واحد فقط (TP1)' : '🎯 أهداف متعددة';
+    const splitMode = user.tpSplitMode === 'manual' ? 'يدوي (مخصص)' : 'تلقائي (متساوي)';
+    const beStatus = user.autoBreakEven ? '🟢 مفعل' : '🔴 معطل';
+    const errorMitStatus = user.errorMitigationEnabled ? '🟢 مفعل' : '🔴 معطل';
+    
+    return {
+        inline_keyboard: [
+            [
+                { text: `وضع الأهداف: ${tpMode}`, callback_data: 'strat_toggle_tp_mode' }
+            ],
+            [
+                { text: `تقسيم الأرباح: ${splitMode}`, callback_data: 'strat_toggle_split_mode' }
+            ],
+            [
+                { text: `نقل الاستوب للدخول (BE): ${beStatus}`, callback_data: 'strat_toggle_be' }
+            ],
+            [
+                { text: `معالجة الأخطاء تلقائياً: ${errorMitStatus}`, callback_data: 'strat_toggle_err_mit' }
+            ],
+            [
+                { text: 'ℹ️ تفاصيل معالجة الأخطاء', callback_data: 'strat_info_err_mit' }
+            ],
+            [
+                { text: '📊 تخصيص نسب الأرباح يدوياً', callback_data: 'strat_edit_splits' }
+            ],
+            [
+                { text: '✅ إغلاق', callback_data: 'strat_close' }
             ]
         ]
     };

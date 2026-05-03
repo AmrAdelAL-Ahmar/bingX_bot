@@ -133,7 +133,7 @@ export class PositionMonitor {
                         const entry = trade.entryPrice;
 
                         // --- TP1 BreakEven Logic ---
-                        if (!trade.isBreakEvenSet && trade.targets.length > 0) {
+                        if (user?.autoBreakEven && !trade.isBreakEvenSet && trade.targets.length > 0) {
                             const tp1 = trade.targets[0].price;
                             const tp1Hit = trade.direction === 'LONG'
                                 ? currentPrice >= tp1
@@ -142,13 +142,7 @@ export class PositionMonitor {
                             if (tp1Hit) {
                                 logger.info(`TP1 hit for ${trade.symbol}. Moving SL to Break-Even (${entry})`);
                                 try {
-                                    // BinanceService should have setStopLoss implemented or we handle it here
-                                    // For now, let's assume it's there
-                                    // @ts-ignore
-                                    if (typeof this.binance.setStopLoss === 'function') {
-                                        // @ts-ignore
-                                        await this.binance.setStopLoss(symbol, entry, trade.direction);
-                                    }
+                                    await this.binance.setStopLoss(symbol, entry, trade.direction);
                                     trade.isBreakEvenSet = true;
                                     trade.logs.push(`Auto-adjusted SL to BE at ${entry} after TP1 hit`);
                                     await trade.save();

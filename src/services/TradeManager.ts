@@ -108,20 +108,45 @@ export class TradeManager {
                 }
 
                 // 1.5 Calculate SL/TP prices
-                let stopLossPrice = await this.binance.priceToPrecision(signal.symbol, signal.stopLoss);
-                
-                // Use Volatility SL if enabled OR if HITLAR mode is enabled
-                if (user.volatilitySlEnabled || isHitlar) {
+                let stopLossPrice = signal.stopLoss || 0;
+                let takeProfitPrices = signal.targets || [];
+
+                // Use Volatility SL if enabled OR if HITLAR mode is enabled OR if missing from signal + mitigation enabled
+                const needsAutoSl = (stopLossPrice === 0 && user.errorMitigationEnabled);
+                if (user.volatilitySlEnabled || isHitlar || needsAutoSl) {
                     const percentage = isHitlar ? hitlar.volatilitySlPercentage : (user.volatilitySlPercentage || 5);
                     if (signal.direction === 'LONG') {
                         stopLossPrice = entryPrice * (1 - percentage / 100);
                     } else {
                         stopLossPrice = entryPrice * (1 + percentage / 100);
                     }
-                    stopLossPrice = await this.binance.priceToPrecision(signal.symbol, stopLossPrice);
-                    logger.info(`[${isHitlar ? 'HITLAR ' : ''}Volatility SL] Using calculated SL: ${stopLossPrice} (${percentage}%)`);
+                    if (needsAutoSl) {
+                        logger.info(`[Auto-Mitigation] Missing SL for ${signal.symbol}. Applied volatility SL: ${stopLossPrice.toFixed(6)} (${percentage}%)`);
+                    } else {
+                        logger.info(`[${isHitlar ? 'HITLAR ' : ''}Volatility SL] Using calculated SL: ${stopLossPrice.toFixed(6)} (${percentage}%)`);
+                    }
                 }
-                const takeProfitPrices = await Promise.all(signal.targets.map(t => this.binance.priceToPrecision(signal.symbol, t)));
+
+                // Auto TP if missing + mitigation enabled
+                if (takeProfitPrices.length === 0 && user.errorMitigationEnabled) {
+                    const tpPercentage = (user.volatilitySlPercentage || 5) * 2;
+                    const tp1 = signal.direction === 'LONG'
+                        ? entryPrice * (1 + tpPercentage / 100)
+                        : entryPrice * (1 - tpPercentage / 100);
+                    takeProfitPrices = [tp1];
+                    logger.info(`[Auto-Mitigation] Missing TP for ${signal.symbol}. Applied default TP: ${tp1.toFixed(6)} (${tpPercentage}%)`);
+                }
+
+                // Final Validation: If still missing, we cannot proceed
+                if (stopLossPrice === 0 || takeProfitPrices.length === 0) {
+                    const errMsg = `Trade rejected for ${signal.symbol}: Missing ${stopLossPrice === 0 ? 'SL' : 'TP'} and mitigation could not resolve it.`;
+                    logger.error(errMsg);
+                    throw new Error(errMsg);
+                }
+
+                // Final precision check
+                stopLossPrice = await this.binance.priceToPrecision(signal.symbol, stopLossPrice);
+                const finalTpPrices = await Promise.all(takeProfitPrices.map(t => this.binance.priceToPrecision(signal.symbol, t)));
 
                 // 2. Position Sizing & Risk Caps
                 let riskPercentage = isHitlar ? hitlar.riskPercentage : (signal.risk || user.riskPercentage || 2);
@@ -181,6 +206,16 @@ export class TradeManager {
                     throw new Error(reason);
                 }
 
+                // --- Binance Minimum Notional Check (5 USDT) ---
+                const MIN_NOTIONAL = 5.1; // Using 5.1 for safety margin
+                if (user.errorMitigationEnabled && positionSizeUSDT < MIN_NOTIONAL) {
+                    logger.warn(`Position notional (${positionSizeUSDT.toFixed(2)} USDT) is below minimum (${MIN_NOTIONAL} USDT). Scaling up to minimum.`);
+                    positionSizeUSDT = MIN_NOTIONAL;
+                    // Recalculate contracts based on new notional
+                    const adjustedRawAmount = positionSizeUSDT / entryPrice;
+                    amountContracts = await this.binance.amountToPrecision(signal.symbol, adjustedRawAmount);
+                }
+
                 let scaledBySL = false;
                 // 4.5 Maximum Stop Loss Capital Risk Limit Check (Max 6% Loss)
                 const shouldEnforceMaxSlLoss = isHitlar ? hitlar.capitalProtectionEnabled : (
@@ -229,7 +264,15 @@ export class TradeManager {
 
                 // 5. Set Leverage, Margin Mode, and Place Market Order
                 await this.binance.setMarginMode(signal.symbol, signal.marginMode || 'CROSS');
-                await this.binance.setLeverage(signal.symbol, leverage, signal.direction);
+                try {
+                    await this.binance.setLeverage(signal.symbol, leverage, signal.direction);
+                } catch (levErr: any) {
+                    if (user.errorMitigationEnabled) {
+                        logger.warn(`Failed to set leverage to ${leverage}x for ${signal.symbol}: ${levErr.message}. Continuing with existing leverage.`);
+                    } else {
+                        throw levErr;
+                    }
+                }
 
                 // Detect position mode ONCE before placing orders
                 const hedgeMode = await this.binance.isHedgeMode();
@@ -290,7 +333,7 @@ export class TradeManager {
                     direction: signal.direction,
                     entryPrice: order.average || entryPrice,
                     stopLoss: stopLossPrice,
-                    targets: signal.targets.map(t => ({ price: t, hit: false })),
+                    targets: finalTpPrices.map(t => ({ price: t, hit: false })),
                     amount: positionSizeUSDT,
                     leverage: leverage,
                     binanceOrderId: order.id,
@@ -310,13 +353,17 @@ export class TradeManager {
 
                 if (shouldPlaceSlTp) {
                     try {
+                        // Filter targets if single TP mode is active
+                        const finalTargets = user.tpExecutionMode === 'single' ? [finalTpPrices[0]] : finalTpPrices;
+                        
                         await this.binance.placeSLTPOrders(
                             signal.symbol,
                             signal.direction!,
                             amountContracts,
                             stopLossPrice,
-                            takeProfitPrices,
-                            hedgeMode
+                            finalTargets,
+                            hedgeMode,
+                            user.tpExecutionMode === 'single' ? [100] : (user.tpSplitMode === 'auto' ? undefined : user.tpProfitSplits)
                         );
                     } catch (slTpErr: any) {
                         logger.error(`⚠️ Main order placed but failed to set SL/TP: ${slTpErr.message}`);

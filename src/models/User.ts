@@ -33,6 +33,12 @@ export interface IUser extends Document {
         capitalProtectionEnabled: boolean;
         orderMode: 'limit' | 'market';
     };
+    // --- New Trading Strategy Settings ---
+    tpExecutionMode: 'single' | 'multiple'; // single = TP1 only, multiple = all targets
+    autoBreakEven: boolean; // Move SL to Entry after TP1
+    tpSplitMode: 'auto' | 'manual'; // auto = equal split, manual = use tpProfitSplits
+    tpProfitSplits: number[]; // e.g., [50, 50] or [100]
+    errorMitigationEnabled: boolean; // Toggle for auto-scaling notional and leverage fallback
 }
 
 const UserSchema: Schema = new Schema({
@@ -68,6 +74,12 @@ const UserSchema: Schema = new Schema({
         capitalProtectionEnabled: { type: Boolean, default: false },
         orderMode: { type: String, enum: ['limit', 'market'], default: 'limit' },
     },
+    // --- New Trading Strategy Settings ---
+    tpExecutionMode: { type: String, enum: ['single', 'multiple'], default: 'multiple' },
+    autoBreakEven: { type: Boolean, default: true },
+    tpSplitMode: { type: String, enum: ['auto', 'manual'], default: 'auto' },
+    tpProfitSplits: { type: [Number], default: [50, 50] },
+    errorMitigationEnabled: { type: Boolean, default: true },
 });
 
 export default mongoose.model<IUser>('User', UserSchema);

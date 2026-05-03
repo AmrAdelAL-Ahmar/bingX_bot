@@ -175,12 +175,11 @@ export class SignalParser {
             }
 
             // Final check
-            // Entry is optional now (will use market price if missing)
-            if (!symbol || targets.length === 0 || stopLoss === 0) {
-                // If we have symbol and something else, we might still want to try?
-                // But generally fail to avoid bad trades.
+            if (!symbol) {
                 return null;
             }
+
+            // Return whatever we have, even if partial
 
             return {
                 type: 'TRADE',

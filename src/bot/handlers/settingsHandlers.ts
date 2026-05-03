@@ -1,7 +1,7 @@
 import { Telegraf } from 'telegraf';
 import logger from '../../utils/logger';
 import User from '../../models/User';
-import { ALL_TP_THRESHOLDS, buildAlertSettingsKeyboard, buildCapitalProtectionKeyboard, buildLeverageKeyboard, getMainMenuKeyboard, buildVolatilitySlKeyboard, buildHitlarSettingsKeyboard, getHiddenMenuKeyboard, getTraderSettingsKeyboard } from '../keyboards/baseKeyboards';
+import { ALL_TP_THRESHOLDS, buildAlertSettingsKeyboard, buildCapitalProtectionKeyboard, buildLeverageKeyboard, getMainMenuKeyboard, buildVolatilitySlKeyboard, buildHitlarSettingsKeyboard, getHiddenMenuKeyboard, getTraderSettingsKeyboard, buildStrategySettingsKeyboard } from '../keyboards/baseKeyboards';
 
 
 
@@ -233,6 +233,27 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             `اضغط على الأزرار أدناه لتعديل الإعدادات:`;
     
         await ctx.replyWithHTML(msg, { reply_markup: buildAlertSettingsKeyboard(user) });
+    });
+
+    bot.hears('🎯 استراتيجية الأهداف والأخطاء', async (ctx) => {
+        try {
+            if (!ctx.from) return;
+            const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+            if (!user) return;
+
+            const msg = `🎯 <b>استراتيجية الأهداف ومعالجة الأخطاء</b>\n\n` +
+                `تحكم في كيفية جني الأرباح وحماية الصفقة تلقائياً:\n\n` +
+                `• <b>وضع الأهداف:</b> اختر بين الاكتفاء بالهدف الأول فقط أو الاستمرار لجميع الأهداف.\n` +
+                `• <b>نقل الاستوب (Break-Even):</b> عند ضرب الهدف الأول، يتم نقل الـ SL لسعر الدخول تلقائياً.\n` +
+                `• <b>معالجة الأخطاء:</b> تفعيل الإصلاحات التلقائية (مثل تعديل حجم الصفقة الصغير جداً أو الرافعة غير المدعومة).\n\n` +
+                `اختر من القائمة أدناه لتعديل الاستراتيجية:`;
+
+            await ctx.replyWithHTML(msg, {
+                reply_markup: buildStrategySettingsKeyboard(user)
+            });
+        } catch (e) {
+            ctx.reply('حدث خطأ أثناء فتح إعدادات الاستراتيجية.');
+        }
     });
 
     bot.hears(/🚀 وضع هترل \(HITLAR\)/, async (ctx) => {
@@ -663,6 +684,92 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
         } catch (e) {
             await ctx.answerCbQuery('✅ تم الحفظ').catch(e => logger.error(`Failed to answer alerts cb error: ${e.message}`));
         }
+    });
+
+    // --- STRATEGY SETTINGS Callbacks ---
+    bot.on('callback_query', async (ctx) => {
+        const data = (ctx.callbackQuery as any).data as string;
+        if (!data || !data.startsWith('strat_')) return;
+        if (!ctx.from) return;
+
+        const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+        if (!user) return;
+
+        if (data === 'strat_toggle_tp_mode') {
+            user.tpExecutionMode = user.tpExecutionMode === 'single' ? 'multiple' : 'single';
+            if (user.tpExecutionMode === 'single') {
+                user.tpProfitSplits = [100];
+            } else {
+                user.tpProfitSplits = [50, 50]; // default multiple
+            }
+        } else if (data === 'strat_toggle_be') {
+            user.autoBreakEven = !user.autoBreakEven;
+        } else if (data === 'strat_toggle_err_mit') {
+            user.errorMitigationEnabled = !user.errorMitigationEnabled;
+        } else if (data === 'strat_close') {
+            await ctx.deleteMessage().catch(() => {});
+            return ctx.answerCbQuery('✅ تم الحفظ').catch(() => {});
+        } else if (data === 'strat_info_err_mit') {
+            await ctx.answerCbQuery().catch(() => {});
+            const infoMsg = `ℹ️ <b>كيف يعمل نظام معالجة الأخطاء؟</b>\n\n` +
+                `<b>1. رفع حجم الصفقة (Minimum Notional):</b>\n` +
+                `إذا كانت قيمة صفقتك المحسوبة أقل من المسموح (مثلاً أقل من 5 USDT)، سيقوم البوت تلقائياً برفعها إلى الحد الأدنى لضمان الدخول بدلاً من رفض الصفقة.\n\n` +
+                `<b>2. توليد الاستوب والأهداف المفقودة:</b>\n` +
+                `إذا وصلت توصية بدون SL أو TP، سيقوم البوت بحسابها تلقائياً بناءً على "نسبة التذبذب" التي حددتها في الإعدادات لتأمين الصفقة.\n\n` +
+                `<b>3. الرافعة الاحتياطية (Leverage Fallback):</b>\n` +
+                `إذا فشلت المنصة في ضبط الرافعة المطلوبة (مثلاً العملة لا تدعم 100x)، سيحاول البوت استخدام رافعة آمنة (مثل 20x أو أقل) لتمرير الصفقة.\n\n` +
+                `<b>4. التقسيم الذكي للأهداف:</b>\n` +
+                `يمنع البوت تعارض الأوامر في وضع One-Way عن طريق تقسيم كميات البيع على الأهداف بذكاء.`;
+            return ctx.replyWithHTML(infoMsg, {
+                reply_markup: {
+                    inline_keyboard: [[{ text: 'إغلاق الرسالة ❌', callback_data: 'strat_close_info' }]]
+                }
+            });
+        } else if (data === 'strat_toggle_split_mode') {
+            if (user.tpExecutionMode === 'single') {
+                return ctx.answerCbQuery('لا يمكن تغيير نوع التقسيم في وضع "هدف واحد فقط".', { show_alert: true });
+            }
+            user.tpSplitMode = user.tpSplitMode === 'manual' ? 'auto' : 'manual';
+        } else if (data === 'strat_close_info') {
+            await ctx.deleteMessage().catch(() => {});
+            return ctx.answerCbQuery().catch(() => {});
+        } else if (data === 'strat_edit_splits') {
+            if (user.tpExecutionMode === 'single') {
+                return ctx.answerCbQuery('لا يمكن تخصيص التقسيم في وضع "هدف واحد فقط". يرجى تغييره أولاً.', { show_alert: true });
+            }
+            if (user.tpSplitMode !== 'manual') {
+                return ctx.answerCbQuery('يرجى تغيير وضع التقسيم إلى "يدوي (مخصص)" أولاً لتتمكن من إدخال النسب.', { show_alert: true });
+            }
+            user.botState = 'AWAITING_TP_SPLITS';
+            await user.save();
+            await ctx.answerCbQuery().catch(() => {});
+            return ctx.reply('📊 <b>تخصيص تقسيم الأرباح</b>\n\nقم بكتابة نسب الأهداف مفصولة بمسافة أو فاصلة (مثال: 50 30 20 أو 40,60).\nيجب أن يكون المجموع 100.', {
+                parse_mode: 'HTML',
+                reply_markup: { keyboard: [[{ text: 'رجوع 🔙' }]], resize_keyboard: true }
+            });
+        }
+
+
+        await user.save();
+        const tpMode = user.tpExecutionMode === 'single' ? '🎯 هدف واحد فقط (TP1)' : '🎯 أهداف متعددة';
+        const splitMode = user.tpSplitMode === 'manual' ? 'يدوي (مخصص)' : 'تلقائي (متساوي)';
+        const beStatus = user.autoBreakEven ? '🟢 مفعل' : '🔴 معطل';
+        const errorMitStatus = user.errorMitigationEnabled ? '🟢 مفعل' : '🔴 معطل';
+
+        const newMsg = `🎯 <b>استراتيجية الأهداف ومعالجة الأخطاء</b>\n\n` +
+            `وضع الأهداف: <b>${tpMode}</b>\n` +
+            `تقسيم الأرباح: <b>${splitMode}</b>\n` +
+            `نقل الاستوب للدخول (BE): <b>${beStatus}</b>\n` +
+            `معالجة الأخطاء تلقائياً: <b>${errorMitStatus}</b>\n\n` +
+            `اختر من القائمة أدناه لتعديل الاستراتيجية:`;
+
+        try {
+            await ctx.editMessageText(newMsg, {
+                parse_mode: 'HTML',
+                reply_markup: buildStrategySettingsKeyboard(user)
+            });
+        } catch (e) {}
+        await ctx.answerCbQuery('✅ تم التحديث').catch(() => {});
     });
 
 };
