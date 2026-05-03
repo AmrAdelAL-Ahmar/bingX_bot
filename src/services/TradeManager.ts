@@ -12,6 +12,7 @@ export interface TradeResult {
     entryPrice: number;
     amount: number; // Quantity in coins
     margin: number; // USDT used
+    marginPercentage: number; // % of total balance
     leverage: number;
     riskPercentage: number;
     targets: { price: number; pnlPercent: number }[];
@@ -27,7 +28,7 @@ export class TradeManager {
         this.binance = binanceService;
     }
 
-    async executeSignal(signal: ParsedSignal, userId: string): Promise<TradeResult | undefined> {
+    async executeSignal(signal: ParsedSignal, userId: string, sourceChatId?: string): Promise<TradeResult | undefined> {
         try {
             const user = await User.findById(userId);
             if (!user || !user.isActive) {
@@ -293,6 +294,7 @@ export class TradeManager {
                     amount: positionSizeUSDT,
                     leverage: leverage,
                     binanceOrderId: order.id,
+                    sourceChatId: sourceChatId,
                     currentStatus: resolvedOrderType === 'limit' && order.status === 'open' ? 'PENDING' : 'OPEN',
                     logs: [tradeLog]
                 });
@@ -339,6 +341,8 @@ export class TradeManager {
                     pnlPercent: parseFloat(calculatePnL(entryPrice, stopLossPrice, signal.direction!, leverage).toFixed(6))
                 };
 
+                const marginPercentage = parseFloat(((marginUsed / balance) * 100).toFixed(2));
+
                 return {
                     tradeId: trade._id.toString(),
                     symbol: signal.symbol,
@@ -346,6 +350,7 @@ export class TradeManager {
                     entryPrice: parseFloat((order.average || entryPrice).toFixed(6)),
                     amount: parseFloat(amountContracts.toFixed(6)),
                     margin: parseFloat(marginUsed.toFixed(6)),
+                    marginPercentage,
                     leverage,
                     riskPercentage,
                     targets: targetsResult,

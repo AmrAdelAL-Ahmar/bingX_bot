@@ -239,8 +239,8 @@ export class PositionMonitor {
 
                         if (currentPrice) {
                             const isLong = trade.direction === 'LONG';
-                            const priceDiff = isLong ? (currentPrice - entry) : (entry - currentPrice);
-                            pnlPercent = (priceDiff / entry) * 100 * lev;
+                            const diff = isLong ? (currentPrice - entry) : (entry - currentPrice);
+                            pnlPercent = (diff / entry) * 100 * lev;
                         }
 
                         trade.currentStatus = pnlPercent > 0 ? 'CLOSED_PROFIT' : 'CLOSED_LOSS';
@@ -249,9 +249,47 @@ export class PositionMonitor {
                         trade.logs.push(`Position monitor detected close. PnL: ${pnlPercent.toFixed(2)}%`);
                         await trade.save();
 
-                        // NOTE: Notifications to group are intentionally DISABLED when SL/TP is hit.
-                        // Only warnings (sent before the close) are used to alert the user.
-                        logger.info(`Trade ${trade._id} (${trade.symbol}) closed. PnL: ${pnlPercent.toFixed(2)}%. No group notification sent.`);
+                        // --- Enhanced Exit Notification ---
+                        if (telegramId) {
+                            const closeTime = trade.closeTime || new Date();
+                            const durationMs = closeTime.getTime() - trade.entryTime.getTime();
+                            const durationMinutes = Math.floor(durationMs / 60000);
+                            const durationHours = Math.floor(durationMinutes / 60);
+                            const durationStr = durationHours > 0 
+                                ? `${durationHours} ساعة و ${durationMinutes % 60} دقيقة`
+                                : `${durationMinutes} دقيقة`;
+
+                            const margin = trade.amount / lev;
+                            const profitAmount = margin * (pnlPercent / 100);
+                            
+                            // Calculate capital percentage
+                            let capitalPercentageStr = 'N/A';
+                            if (totalBalance > 0) {
+                                capitalPercentageStr = ((margin / totalBalance) * 100).toFixed(2) + '%';
+                            }
+
+                            const statusEmoji = pnlPercent >= 0 ? '✅' : '🛑';
+                            const statusLabel = pnlPercent >= 0 ? 'ضرب الهدف' : 'ضرب الاستوب';
+
+                            const exitMsg = `${statusEmoji} <b>إغلاق صفقة: ${trade.symbol}</b>\n\n` +
+                                `📝 الحالة: <b>${statusLabel}</b>\n` +
+                                `💰 الربح/الخسارة: <b>${profitAmount.toFixed(2)} USDT (${pnlPercent.toFixed(2)}%)</b>\n` +
+                                `💵 مبلغ الدخول: <b>${margin.toFixed(2)} USDT</b> (${capitalPercentageStr} من رأس المال)\n` +
+                                `🏁 سعر الدخول: <b>${entry.toFixed(6)}</b>\n` +
+                                `🚪 سعر الإغلاق: <b>${currentPrice.toFixed(6)}</b>\n` +
+                                `⏱️ استمرت الصفقة: <b>${durationStr}</b>\n\n` +
+                                `🤖 نظام التداول الآلي`;
+
+                            // Send to user
+                            await this.notifier(telegramId, exitMsg);
+
+                            // Send to source group if different
+                            if (trade.sourceChatId && trade.sourceChatId !== telegramId) {
+                                await this.notifier(trade.sourceChatId, exitMsg);
+                            }
+                        }
+
+                        logger.info(`Trade ${trade._id} (${trade.symbol}) closed. PnL: ${pnlPercent.toFixed(2)}%. Notifications sent.`);
                     }
                 }
             }

@@ -241,7 +241,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                 ctx.reply(`📡 تم التعرف على الإشارة (${signal.symbol} - ${signal.direction || signal.type}).\n⏳ جاري إرسال الطلب للمنصة...`);
                 
                 try {
-                    const result = await tradeManager.executeSignal(signal, user._id.toString());
+                    const result = await tradeManager.executeSignal(signal, user._id.toString(), ctx.chat.id.toString());
                     
                     if (signal.type === 'CLOSE') {
                         ctx.reply(`✅ تم إغلاق الصفقة (أو الصفقات) للعملة ${signal.symbol} بنجاح.`);
@@ -260,7 +260,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                             `الاتجاه: <b>${result.direction}</b>\n` +
                             `نوع التنفيذ: <b>${orderTypeLabel}</b>\n` +
                             `الرافعة المالية: <b>${result.leverage}x</b>\n` +
-                            `المبلغ المستثمر (Margin): <b>${result.margin.toFixed(6)} USDT</b>\n` +
+                            `المبلغ المستثمر (Margin): <b>${result.margin.toFixed(6)} USDT</b> (${result.marginPercentage}% من رأس المال)\n` +
                             `سعر الدخول: <b>${result.entryPrice.toFixed(6)}</b>\n\n`;
 
                         if (result.targets.length > 0) {
@@ -273,7 +273,13 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                         
                         successMsg += `🛑 <b>وقف الخسارة:</b> ${result.stopLoss.price.toFixed(6)} (${result.stopLoss.pnlPercent.toFixed(6)}%)`;
 
-                        ctx.replyWithHTML(successMsg);
+                        await ctx.replyWithHTML(successMsg);
+
+                        // Send notification to user's private bot if different from current chat
+                        if (user.telegramId && user.telegramId !== ctx.chat.id.toString()) {
+                            await bot.telegram.sendMessage(user.telegramId, successMsg, { parse_mode: 'HTML' })
+                                .catch(e => logger.error(`Failed to send duplicate notification to user: ${e.message}`));
+                        }
                     }
                 } catch (error: any) {
                     logger.error(`Signal validation failed for ${ctx.from.username || telegramId}`, error);
