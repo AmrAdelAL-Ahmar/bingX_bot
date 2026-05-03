@@ -43,32 +43,43 @@ export const getHiddenMenuKeyboard = () => {
     };
 };
 
-// --- TRADER SETTINGS KEYBOARD ---
-export const buildTraderSettingsKeyboard = (user: any) => {
-    const hitlarStatus = user.hitlarModeEnabled ? '🟢' : '🔴';
+// --- TRADER SETTINGS KEYBOARD (REPLY KEYBOARD) ---
+export const getTraderSettingsKeyboard = (user: any) => {
+    const hitlarStatus = user.hitlarModeEnabled ? '🟢 مفعل' : '🔴 معطل';
+    const orderMode = user.orderMode === 'limit' ? '📌 حدي' : '⚡ سوق';
+
     return {
-        inline_keyboard: [
+        keyboard: [
             [
-                { text: '📊 نسبة المخاطرة', callback_data: 'settings_risk' },
-                { text: '🔄 نوع التنفيذ', callback_data: 'settings_order_mode' }
+                { text: `⚡ نسبة المخاطرة: ${user.riskPercentage || 3}%` },
+                { text: `🔄 نوع تنفيذ الصفقة: ${orderMode}` }
             ],
             [
-                { text: '⚖️ إعدادات الرافعة', callback_data: 'settings_leverage' },
-                { text: '🛑 إعدادات الاستوب', callback_data: 'settings_vol_sl' }
+                { text: `⚖️ إعدادات الرافعة: ${user.leverageMode === 'fixed' ? `x${user.fixedLeverageValue}` : 'تلقائي'}` },
+                { text: '📊 إعدادات الاستوب (التذبذب)' }
             ],
             [
-                { text: '🛡 حماية رأس المال الصارمة', callback_data: 'settings_cap_prot' }
+                { text: '🛡 حماية رأس المال الصارمة' }
             ],
             [
-                { text: `🚀 وضع هترل (HITLAR): ${hitlarStatus}`, callback_data: 'settings_hitlar_toggle' },
-                { text: '⚙️ إعدادات هترل', callback_data: 'settings_hitlar_settings' }
+                { text: `🚀 وضع هترل (HITLAR): ${hitlarStatus}` },
+                { text: '⚙️ إعدادات وضع هترل' }
             ],
             [
-                { text: '🔔 إعدادات التنبيهات', callback_data: 'settings_alerts' }
+                { text: '⚙️ إعدادات التنبيهات' }
+            ],
+            [
+                { text: 'رجوع للقائمة الرئيسية 🔙' }
             ]
-        ]
+        ],
+
+        resize_keyboard: true,
+        is_persistent: true
     };
 };
+
+// Keep buildTraderSettingsKeyboard for inline usage if needed, but the user requested reply keyboard.
+// export const buildTraderSettingsKeyboard = (user: any) => {
 
 
 // --- HITLAR SETTINGS KEYBOARD ---
@@ -173,15 +184,15 @@ export const buildCapitalProtectionKeyboard = (user: any) => {
     const isEnabled = (user.enforceMaxSlLoss !== null && user.enforceMaxSlLoss !== undefined)
         ? user.enforceMaxSlLoss
         : process.env.ENFORCE_MAX_SL_LOSS === 'true';
-    
+
     const currentPercent = user.maxSlRiskPercentage || 6;
 
     return {
         inline_keyboard: [
             [
-                { 
-                    text: isEnabled ? '🟢 مفعل' : '🔴 معطل', 
-                    callback_data: 'cap_toggle' 
+                {
+                    text: isEnabled ? '🟢 مفعل' : '🔴 معطل',
+                    callback_data: 'cap_toggle'
                 }
             ],
             [
@@ -206,13 +217,13 @@ export const buildLeverageKeyboard = (user: any) => {
     return {
         inline_keyboard: [
             [
-                { 
-                    text: mode === 'default' ? '⚙️ تلقائي (حسب التوصية) ✔️' : '⚙️ تلقائي (حسب التوصية)', 
-                    callback_data: 'lev_mode_default' 
+                {
+                    text: mode === 'default' ? '⚙️ تلقائي (حسب التوصية) ✔️' : '⚙️ تلقائي (حسب التوصية)',
+                    callback_data: 'lev_mode_default'
                 },
-                { 
-                    text: mode === 'fixed' ? '📌 ثابت ✔️' : '📌 ثابت', 
-                    callback_data: 'lev_mode_fixed' 
+                {
+                    text: mode === 'fixed' ? '📌 ثابت ✔️' : '📌 ثابت',
+                    callback_data: 'lev_mode_fixed'
                 }
             ],
             [
@@ -236,9 +247,9 @@ export const buildVolatilitySlKeyboard = (user: any) => {
     return {
         inline_keyboard: [
             [
-                { 
-                    text: isEnabled ? '🟢 مفعل' : '🔴 معطل', 
-                    callback_data: 'vol_toggle' 
+                {
+                    text: isEnabled ? '🟢 مفعل' : '🔴 معطل',
+                    callback_data: 'vol_toggle'
                 }
             ],
             [

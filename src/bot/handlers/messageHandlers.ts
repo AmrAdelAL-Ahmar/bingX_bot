@@ -2,7 +2,8 @@ import { Telegraf } from 'telegraf';
 import logger from '../../utils/logger';
 import User from '../../models/User';
 import Trade from '../../models/Trade';
-import { getMainMenuKeyboard } from '../keyboards/baseKeyboards';
+import { getMainMenuKeyboard, getTraderSettingsKeyboard } from '../keyboards/baseKeyboards';
+
 import { SignalParser } from '../../services/SignalParser';
 import { TradeManager } from '../../services/TradeManager';
 
@@ -54,8 +55,9 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                 if (message === 'رجوع 🔙') {
                     user.botState = 'NONE';
                     await user.save();
-                    return ctx.reply('تم الإلغاء.', { reply_markup: getMainMenuKeyboard(user) });
+                    return ctx.reply('تم الإلغاء.', { reply_markup: getTraderSettingsKeyboard(user) });
                 }
+
 
                 const riskValue = parseInt(message.replace('%', ''));
                 if (!isNaN(riskValue) && riskValue >= 1 && riskValue <= 5) {
@@ -63,8 +65,9 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                     user.botState = 'NONE';
                     await user.save();
                     return ctx.reply(`✅ تم تحديث نسبة المخاطرة إلى ${riskValue}%.`, {
-                        reply_markup: getMainMenuKeyboard(user)
+                        reply_markup: getTraderSettingsKeyboard(user)
                     });
+
                 } else {
                     return ctx.reply('يرجى إدخال رقم صحيح بين 1 و 5:');
                 }
@@ -197,14 +200,16 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                 if (message === 'رجوع 🔙') {
                     user.botState = 'NONE';
                     await user.save();
-                    return ctx.reply('تم الإلغاء.', { reply_markup: getMainMenuKeyboard(user) });
+                    return ctx.reply('تم الإلغاء.', { reply_markup: getTraderSettingsKeyboard(user) });
                 }
+
                 const val = parseInt(message.replace('%', ''));
                 if (!isNaN(val) && val >= 1 && val <= 100) {
                     user.hitlarSettings.riskPercentage = val;
                     user.botState = 'NONE';
                     await user.save();
-                    return ctx.reply(`✅ تم تحديث نسبة الدخول لوضع هترل إلى ${val}%.`, { reply_markup: getMainMenuKeyboard(user) });
+                    return ctx.reply(`✅ تم تحديث نسبة الدخول لوضع هترل إلى ${val}%.`, { reply_markup: getTraderSettingsKeyboard(user) });
+
                 } else {
                     return ctx.reply('يرجى إدخال رقم بين 1 و 100:');
                 }
@@ -214,14 +219,16 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                 if (message === 'رجوع 🔙') {
                     user.botState = 'NONE';
                     await user.save();
-                    return ctx.reply('تم الإلغاء.', { reply_markup: getMainMenuKeyboard(user) });
+                    return ctx.reply('تم الإلغاء.', { reply_markup: getTraderSettingsKeyboard(user) });
                 }
+
                 const val = parseInt(message.replace('x', ''));
                 if (!isNaN(val) && val >= 1 && val <= 125) {
                     user.hitlarSettings.leverage = val;
                     user.botState = 'NONE';
                     await user.save();
-                    return ctx.reply(`✅ تم تحديث الرافعة المالية لوضع هترل إلى x${val}.`, { reply_markup: getMainMenuKeyboard(user) });
+                    return ctx.reply(`✅ تم تحديث الرافعة المالية لوضع هترل إلى x${val}.`, { reply_markup: getTraderSettingsKeyboard(user) });
+
                 } else {
                     return ctx.reply('يرجى إدخال رقم بين 1 و 125:');
                 }
@@ -231,14 +238,16 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                 if (message === 'رجوع 🔙') {
                     user.botState = 'NONE';
                     await user.save();
-                    return ctx.reply('تم الإلغاء.', { reply_markup: getMainMenuKeyboard(user) });
+                    return ctx.reply('تم الإلغاء.', { reply_markup: getTraderSettingsKeyboard(user) });
                 }
+
                 const val = parseInt(message.replace('%', ''));
                 if (!isNaN(val) && val >= 1 && val <= 50) {
                     user.hitlarSettings.volatilitySlPercentage = val;
                     user.botState = 'NONE';
                     await user.save();
-                    return ctx.reply(`✅ تم تحديث نسبة وقف الخسارة لوضع هترل إلى ${val}%.`, { reply_markup: getMainMenuKeyboard(user) });
+                    return ctx.reply(`✅ تم تحديث نسبة وقف الخسارة لوضع هترل إلى ${val}%.`, { reply_markup: getTraderSettingsKeyboard(user) });
+
                 } else {
                     return ctx.reply('يرجى إدخال رقم بين 1 و 50:');
                 }

@@ -1,7 +1,9 @@
 import { Telegraf } from 'telegraf';
 import logger from '../../utils/logger';
 import User from '../../models/User';
-import { ALL_TP_THRESHOLDS, buildAlertSettingsKeyboard, buildCapitalProtectionKeyboard, buildLeverageKeyboard, getMainMenuKeyboard, buildVolatilitySlKeyboard, buildHitlarSettingsKeyboard, buildTraderSettingsKeyboard, getHiddenMenuKeyboard } from '../keyboards/baseKeyboards';
+import { ALL_TP_THRESHOLDS, buildAlertSettingsKeyboard, buildCapitalProtectionKeyboard, buildLeverageKeyboard, getMainMenuKeyboard, buildVolatilitySlKeyboard, buildHitlarSettingsKeyboard, getHiddenMenuKeyboard, getTraderSettingsKeyboard } from '../keyboards/baseKeyboards';
+
+
 
 
 export const registerSettingsHandlers = (bot: Telegraf) => {
@@ -35,16 +37,27 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             if (!user) return;
 
             const msg = `⚙️ <b>لوحة تحكم المتداول</b>\n\n` +
-                `من هنا يمكنك ضبط كافة إعدادات البوت لتناسب استراتيجيتك الخاصة في التداول.\n\n` +
-                `اختر أحد الإعدادات التالية للتعديل:`;
+                `تم فتح قائمة الإعدادات في لوحة المفاتيح أدناه. يمكنك الآن ضبط كافة تفاصيل التداول بسهولة.`;
 
             await ctx.replyWithHTML(msg, {
-                reply_markup: buildTraderSettingsKeyboard(user)
+                reply_markup: getTraderSettingsKeyboard(user)
             });
         } catch (e) {
             ctx.reply('حدث خطأ أثناء فتح إعدادات المتداول.');
         }
     });
+
+    bot.hears('رجوع للقائمة الرئيسية 🔙', async (ctx) => {
+        try {
+            if (!ctx.from) return;
+            const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+            if (!user) return;
+            await ctx.reply('العودة للقائمة الرئيسية...', {
+                reply_markup: getMainMenuKeyboard(user)
+            });
+        } catch (e) {}
+    });
+
 
     bot.hears('📱 إخفاء القائمة', async (ctx) => {
         try {
@@ -233,8 +246,9 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
 
             const status = user.hitlarModeEnabled ? 'مفعل 🟢' : 'معطل 🔴';
             ctx.reply(`🚀 تم تغيير حالة وضع هترل إلى: ${status}`, {
-                reply_markup: getMainMenuKeyboard(user)
+                reply_markup: getTraderSettingsKeyboard(user)
             });
+
         } catch (e) {
             ctx.reply('حدث خطأ أثناء تغيير حالة وضع هترل.');
         }
@@ -345,15 +359,6 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
                 return ctx.replyWithHTML(msg, { reply_markup: buildCapitalProtectionKeyboard(user) });
             }
 
-            if (data === 'settings_hitlar_toggle') {
-                user.hitlarModeEnabled = !user.hitlarModeEnabled;
-                await user.save();
-                await ctx.answerCbQuery(`🚀 وضع هترل: ${user.hitlarModeEnabled ? 'مفعل 🟢' : 'معطل 🔴'}`).catch(() => {});
-                try {
-                    await ctx.editMessageReplyMarkup(buildTraderSettingsKeyboard(user));
-                } catch (e) {}
-                return;
-            }
 
             if (data === 'settings_hitlar_settings') {
                 const settings = user.hitlarSettings;
@@ -477,10 +482,11 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
 
             await ctx.answerCbQuery(`✅ تم التحويل إلى ${modeLabel}`).catch(() => {});
 
-            // Also update the main menu keyboard
+            // Also update the trader settings keyboard
             await ctx.reply(`✅ تم تحديث نوع التنفيذ إلى: ${modeLabel}`, {
-                reply_markup: getMainMenuKeyboard(user)
+                reply_markup: getTraderSettingsKeyboard(user)
             });
+
             return;
         }
 
@@ -560,10 +566,11 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
 
             await ctx.answerCbQuery('✅ تم التحديث').catch(() => {});
             
-            // Update main menu
+            // Update trader settings menu
             await ctx.reply(`✅ تم تحديث إعدادات الرافعة إلى: ${mode === 'fixed' ? `ثابت (x${val})` : 'تلقائي'}`, {
-                reply_markup: getMainMenuKeyboard(user)
+                reply_markup: getTraderSettingsKeyboard(user)
             });
+
             return;
         }
 
