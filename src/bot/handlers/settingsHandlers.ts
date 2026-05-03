@@ -687,9 +687,8 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
     });
 
     // --- STRATEGY SETTINGS Callbacks ---
-    bot.on('callback_query', async (ctx) => {
+    bot.action(/^strat_/, async (ctx) => {
         const data = (ctx.callbackQuery as any).data as string;
-        if (!data || !data.startsWith('strat_')) return;
         if (!ctx.from) return;
 
         const user = await User.findOne({ telegramId: ctx.from.id.toString() });
