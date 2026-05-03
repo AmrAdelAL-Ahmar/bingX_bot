@@ -2,16 +2,6 @@ import { BinanceService } from '../../services/BinanceService';
 
 // --- HELPER: GET MAIN MENU KEYBOARD ---
 export const getMainMenuKeyboard = (user: any) => {
-    const riskStatus = (user.enforceMaxSlLoss !== null && user.enforceMaxSlLoss !== undefined)
-        ? user.enforceMaxSlLoss
-        : process.env.ENFORCE_MAX_SL_LOSS === 'true';
-    const riskIcon = riskStatus ? '🟢 مفعل' : '🔴 معطل';
-
-    const orderMode = user.orderMode || 'market';
-    const orderModeLabel = orderMode === 'limit' ? '📌 حدي (Limit)' : '⚡ سوق (Market)';
-
-    const hitlarStatus = user.hitlarModeEnabled ? '🟢 مفعل' : '🔴 معطل';
-
     return {
         keyboard: [
             [
@@ -20,7 +10,7 @@ export const getMainMenuKeyboard = (user: any) => {
             ],
             [
                 { text: '📊 التقارير' },
-                { text: '⚙️ إعدادات التنبيهات' }
+                { text: '⚙️ إعدادات المتداول' }
             ],
             [
                 { text: '🔍 الاستعلام عن صفقة محددة' },
@@ -30,30 +20,56 @@ export const getMainMenuKeyboard = (user: any) => {
                 { text: '🛑 إلغاء كل الصفقات المفتوحة' }
             ],
             [
-                { text: `🚀 وضع هترل (HITLAR): ${hitlarStatus}` },
-                { text: '⚙️ إعدادات وضع هترل' }
-            ],
-            [
-                { text: '🛡 حماية رأس المال الصارمة' },
-                { text: `⚡ نسبة المخاطرة: ${user.riskPercentage || 3}%` }
-            ],
-            [
-                { text: `🔄 نوع تنفيذ الصفقة: ${orderModeLabel}` }
-            ],
-            [
-                { text: `⚖️ إعدادات الرافعة: ${user.leverageMode === 'fixed' ? `x${user.fixedLeverageValue}` : 'تلقائي'}` }
-            ],
-            [
-                { text: '📊 إعدادات الاستوب (التذبذب)' }
-            ],
-            [
                 { text: 'ℹ️ تعليمات الاستخدام (Help)' }
+            ],
+            [
+                { text: '📱 إخفاء القائمة' }
             ]
         ],
         resize_keyboard: true,
         is_persistent: true
     };
 };
+
+export const getHiddenMenuKeyboard = () => {
+    return {
+        keyboard: [
+            [
+                { text: '📱 إظهار القائمة' }
+            ]
+        ],
+        resize_keyboard: true,
+        is_persistent: true
+    };
+};
+
+// --- TRADER SETTINGS KEYBOARD ---
+export const buildTraderSettingsKeyboard = (user: any) => {
+    const hitlarStatus = user.hitlarModeEnabled ? '🟢' : '🔴';
+    return {
+        inline_keyboard: [
+            [
+                { text: '📊 نسبة المخاطرة', callback_data: 'settings_risk' },
+                { text: '🔄 نوع التنفيذ', callback_data: 'settings_order_mode' }
+            ],
+            [
+                { text: '⚖️ إعدادات الرافعة', callback_data: 'settings_leverage' },
+                { text: '🛑 إعدادات الاستوب', callback_data: 'settings_vol_sl' }
+            ],
+            [
+                { text: '🛡 حماية رأس المال الصارمة', callback_data: 'settings_cap_prot' }
+            ],
+            [
+                { text: `🚀 وضع هترل (HITLAR): ${hitlarStatus}`, callback_data: 'settings_hitlar_toggle' },
+                { text: '⚙️ إعدادات هترل', callback_data: 'settings_hitlar_settings' }
+            ],
+            [
+                { text: '🔔 إعدادات التنبيهات', callback_data: 'settings_alerts' }
+            ]
+        ]
+    };
+};
+
 
 // --- HITLAR SETTINGS KEYBOARD ---
 export const buildHitlarSettingsKeyboard = (user: any) => {

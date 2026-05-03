@@ -10,7 +10,15 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
 
     bot.start(async (ctx) => {
         const user = await User.findOne({ telegramId: ctx.from.id.toString() });
-        ctx.reply('مرحباً بك! أنا جاهز للتداول. يمكنك إرسال إشارة تداول أو استخدام القائمة أدناه:', {
+        const welcomeMsg = `🤖 <b>مرحباً بك في بوت التداول الآلي!</b>\n\n` +
+            `أنا مساعدك الذكي لتنفيذ صفقات العملات الرقمية على منصة Binance بشكل آلي واحترافي.\n\n` +
+            `🚀 <b>ماذا يمكنني أن أفعل لك؟</b>\n` +
+            `• تنفيذ الصفقات فور استقبال الإشارات.\n` +
+            `• إدارة المخاطر وحماية رأس المال.\n` +
+            `• متابعة صفقاتك وعرض تقارير الأرباح.\n\n` +
+            `استخدم القائمة أدناه للتحكم في كافة الإعدادات.`;
+
+        ctx.replyWithHTML(welcomeMsg, {
             reply_markup: user ? getMainMenuKeyboard(user) : undefined
         });
     });
@@ -20,13 +28,15 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
             const user = await User.findOne({ telegramId: ctx.from.id.toString() });
             if (!user) return;
     
-            await ctx.reply('مرحباً بك في قائمة التحكم الخاصة بالبوت 🤖\nاختر أحد الإجراءات التالية:', {
+            await ctx.reply('🤖 <b>قائمة التحكم - بوت التداول الآلي</b>\nاختر أحد الإجراءات التالية:', {
+                parse_mode: 'HTML',
                 reply_markup: getMainMenuKeyboard(user)
             }).catch(e => logger.error(`Failed to send menu: ${e.message}`));
         } catch (error) {
             logger.error('Error in /menu:', error);
         }
     });
+
 
     // Handle generic text messages (Signals, Cancellations, Report Dates)
     bot.on('message', async (ctx) => {

@@ -1,23 +1,70 @@
 import { Telegraf } from 'telegraf';
 import logger from '../../utils/logger';
 import User from '../../models/User';
-import { ALL_TP_THRESHOLDS, buildAlertSettingsKeyboard, buildCapitalProtectionKeyboard, buildLeverageKeyboard, getMainMenuKeyboard, buildVolatilitySlKeyboard, buildHitlarSettingsKeyboard } from '../keyboards/baseKeyboards';
+import { ALL_TP_THRESHOLDS, buildAlertSettingsKeyboard, buildCapitalProtectionKeyboard, buildLeverageKeyboard, getMainMenuKeyboard, buildVolatilitySlKeyboard, buildHitlarSettingsKeyboard, buildTraderSettingsKeyboard, getHiddenMenuKeyboard } from '../keyboards/baseKeyboards';
+
 
 export const registerSettingsHandlers = (bot: Telegraf) => {
 
     bot.hears('ℹ️ تعليمات الاستخدام (Help)', async (ctx) => {
         try {
-            const helpMsg = `ℹ️ <b>دليل الاستخدام السريع:</b>\n\n` +
-                `• <b>رصيدي:</b> يعرض كمية الـ USDT والأرباح العائمة حالياً.\n` +
-                `• <b>صفقاتي المفتوحة:</b> يعرض الصفقات المفتوحة وحالة الربح/الخسارة لكل واحدة.\n` +
-                `• <b>التقارير:</b> يعرض ملخص نتائج الصفقات المغلقة (يومياً أو بصفة عامة).\n` +
-                `• <b>إلغاء الصفقات:</b> يمكنك اختيارياً إلغاء كل الصفقات أو تحديد عملة معينة ليتم إغلاقها بسعر السوق (Market).\n` +
-                `• <b>حماية رأس المال:</b> إذا كانت مفعلة، سيقوم البوت بتقليل حجم الصفقة إجبارياً بحيث لا تتجاوز خسارة الـ Stop Loss حاجز الـ 6% من حسابك.\n` +
-                `• <b>نوع تنفيذ الصفقة:</b> اختر بين أمر السوق (Market) للدخول الفوري، أو أمر حدي (Limit) للانتظار على سعر محدد.`;
+            const helpMsg = `ℹ️ <b>دليل استخدام بوت التداول الآلي:</b>\n\n` +
+                `• <b>💰 الرصيد:</b> عرض رصيدك الحالي في منصة Binance وملخص الأرباح والخسائر.\n` +
+                `• <b>💼 صفقاتي:</b> متابعة الصفقات المفتوحة حالياً وحالتها لحظة بلحظة.\n` +
+                `• <b>📊 التقارير:</b> عرض إحصائيات مفصلة لنتائج تداولاتك (يومي، شهري، سنوي).\n` +
+                `• <b>⚙️ إعدادات المتداول:</b>\n` +
+                `  - <b>نسبة المخاطرة:</b> تحديد نسبة الدخول من رأس المال لكل صفقة (1% - 5%).\n` +
+                `  - <b>نوع التنفيذ:</b> الاختيار بين دخول السوق الفوري (Market) أو انتظار السعر المحدد (Limit).\n` +
+                `  - <b>الرافعة المالية:</b> ضبط الرافعة بشكل تلقائي حسب التوصية أو تثبيتها لقيمة معينة.\n` +
+                `  - <b>إعدادات الاستوب:</b> تفعيل وقف الخسارة التلقائي بناءً على تذبذب السعر.\n` +
+                `  - <b>حماية رأس المال:</b> ضمان عدم خسارة أكثر من نسبة محددة من إجمالي الحساب.\n` +
+                `  - <b>وضع هترل (HITLAR):</b> وضع تداول سريع بإعدادات مسبقة الضبط.\n` +
+                `  - <b>التنبيهات:</b> تخصيص التنبيهات التي تصلك عند تحقيق الأهداف أو الاستوب.\n\n` +
+                `• <b>📱 إخفاء القائمة:</b> لتقليل المساحة التي تأخذها القائمة على الهواتف.\n` +
+                `• <b>🔍 الاستعلام/الإلغاء:</b> للبحث عن صفقة محددة أو إغلاقها يدوياً.\n\n` +
+                `💡 <b>البوت يعمل بشكل آلي بالكامل بمجرد استقبال إشارة التداول.</b>`;
     
             ctx.replyWithHTML(helpMsg);
         } catch (e) { }
     });
+
+    bot.hears('⚙️ إعدادات المتداول', async (ctx) => {
+        try {
+            if (!ctx.from) return;
+            const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+            if (!user) return;
+
+            const msg = `⚙️ <b>لوحة تحكم المتداول</b>\n\n` +
+                `من هنا يمكنك ضبط كافة إعدادات البوت لتناسب استراتيجيتك الخاصة في التداول.\n\n` +
+                `اختر أحد الإعدادات التالية للتعديل:`;
+
+            await ctx.replyWithHTML(msg, {
+                reply_markup: buildTraderSettingsKeyboard(user)
+            });
+        } catch (e) {
+            ctx.reply('حدث خطأ أثناء فتح إعدادات المتداول.');
+        }
+    });
+
+    bot.hears('📱 إخفاء القائمة', async (ctx) => {
+        try {
+            await ctx.reply('تم إخفاء القائمة. يمكنك إظهارها في أي وقت بالضغط على الزر أدناه أو إرسال /menu', {
+                reply_markup: getHiddenMenuKeyboard()
+            });
+        } catch (e) {}
+    });
+
+    bot.hears('📱 إظهار القائمة', async (ctx) => {
+        try {
+            if (!ctx.from) return;
+            const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+            if (!user) return;
+            await ctx.reply('مرحباً بك مجدداً! تم إظهار القائمة الرئيسية.', {
+                reply_markup: getMainMenuKeyboard(user)
+            });
+        } catch (e) {}
+    });
+
     
     bot.hears(/⚡ نسبة المخاطرة/, async (ctx) => {
         try {
@@ -223,7 +270,117 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
         if (!data) return;
         if (!ctx.from) return;
 
+        // --- TRADER SETTINGS Callbacks ---
+        if (data.startsWith('settings_')) {
+            const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+            if (!user) return;
+
+            if (data === 'settings_risk') {
+                user.botState = 'AWAITING_RISK_PERCENTAGE';
+                await user.save();
+                await ctx.answerCbQuery().catch(() => {});
+                return ctx.reply('قم بإدخال نسبة المخاطرة الجديدة (رقم بين 1 و 5):', {
+                    reply_markup: {
+                        keyboard: [
+                            [{ text: '1%' }, { text: '2%' }, { text: '3%' }, { text: '4%' }, { text: '5%' }],
+                            [{ text: 'رجوع 🔙' }]
+                        ],
+                        resize_keyboard: true,
+                        one_time_keyboard: true
+                    }
+                });
+            }
+
+            if (data === 'settings_order_mode') {
+                const currentMode = user.orderMode || 'market';
+                const msg = `🔄 <b>نوع تنفيذ الصفقات</b>\n\n` +
+                    `الوضع الحالي: <b>${currentMode === 'limit' ? '📌 حدي (Limit)' : '⚡ سوق (Market)'}</b>\n\n` +
+                    `• <b>أمر السوق (Market):</b> يدخل الصفقة فوراً بأفضل سعر متاح.\n` +
+                    `• <b>أمر حدي (Limit):</b> ينتظر السعر المحدد في التوصية.\n\n` +
+                    `اختر الوضع الذي تريده:`;
+                await ctx.answerCbQuery().catch(() => {});
+                return ctx.replyWithHTML(msg, {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [
+                                { text: currentMode === 'market' ? '⚡ سوق (Market) ✔️' : '⚡ سوق (Market)', callback_data: 'order_mode_market' },
+                                { text: currentMode === 'limit' ? '📌 حدي (Limit) ✔️' : '📌 حدي (Limit)', callback_data: 'order_mode_limit' }
+                            ]
+                        ]
+                    }
+                });
+            }
+
+            if (data === 'settings_leverage') {
+                const mode = user.leverageMode || 'default';
+                const val = user.fixedLeverageValue || 10;
+                const msg = `⚖️ <b>إعدادات الرافعة المالية (Leverage)</b>\n\n` +
+                    `الوضع الحالي: <b>${mode === 'fixed' ? `📌 ثابت (x${val})` : '⚙️ تلقائي (حسب التوصية)'}</b>\n\n` +
+                    `اختر الوضع أو القيمة المطلوبة:`;
+                await ctx.answerCbQuery().catch(() => {});
+                return ctx.replyWithHTML(msg, { reply_markup: buildLeverageKeyboard(user) });
+            }
+
+            if (data === 'settings_vol_sl') {
+                const isEnabled = user.volatilitySlEnabled || false;
+                const currentPercent = user.volatilitySlPercentage || 5;
+                const msg = `📊 <b>إعدادات الاستوب حسب تذبذب العملة</b>\n\n` +
+                    `الحالة الآن: <b>${isEnabled ? 'مفعلة 🟢' : 'معطلة 🔴'}</b>\n` +
+                    `النسبة المحددة: <b>${currentPercent}%</b>\n\n` +
+                    `اختر الحالة أو النسبة المطلوبة:`;
+                await ctx.answerCbQuery().catch(() => {});
+                return ctx.replyWithHTML(msg, { reply_markup: buildVolatilitySlKeyboard(user) });
+            }
+
+            if (data === 'settings_cap_prot') {
+                const isEnabled = (user.enforceMaxSlLoss !== null && user.enforceMaxSlLoss !== undefined)
+                    ? user.enforceMaxSlLoss
+                    : process.env.ENFORCE_MAX_SL_LOSS === 'true';
+                const currentPercent = user.maxSlRiskPercentage || 6;
+                const msg = `🛡 <b>ميزة حماية رأس المال الصارمة</b>\n\n` +
+                    `الحالة الآن: <b>${isEnabled ? 'مفعلة 🟢' : 'معطلة 🔴'}</b>\n` +
+                    `النسبة المحددة: <b>${currentPercent}%</b>\n\n` +
+                    `اختر الحالة أو النسبة المطلوبة:`;
+                await ctx.answerCbQuery().catch(() => {});
+                return ctx.replyWithHTML(msg, { reply_markup: buildCapitalProtectionKeyboard(user) });
+            }
+
+            if (data === 'settings_hitlar_toggle') {
+                user.hitlarModeEnabled = !user.hitlarModeEnabled;
+                await user.save();
+                await ctx.answerCbQuery(`🚀 وضع هترل: ${user.hitlarModeEnabled ? 'مفعل 🟢' : 'معطل 🔴'}`).catch(() => {});
+                try {
+                    await ctx.editMessageReplyMarkup(buildTraderSettingsKeyboard(user));
+                } catch (e) {}
+                return;
+            }
+
+            if (data === 'settings_hitlar_settings') {
+                const settings = user.hitlarSettings;
+                const msg = `⚙️ <b>إعدادات وضع هترل (HITLAR Mode)</b>\n\n` +
+                    `💰 نسبة الدخول: <b>${settings.riskPercentage}%</b>\n` +
+                    `⚖️ الرافعة: <b>x${settings.leverage}</b>\n` +
+                    `📊 نسبة الاستوب: <b>${settings.volatilitySlPercentage}%</b>\n\n` +
+                    `اختر لتعديل القيم:`;
+                await ctx.answerCbQuery().catch(() => {});
+                return ctx.replyWithHTML(msg, { reply_markup: buildHitlarSettingsKeyboard(user) });
+            }
+
+            if (data === 'settings_alerts') {
+                const slOn: boolean = user.slWarningEnabled !== false;
+                const tpOn: boolean = user.tpWarningEnabled !== false;
+                const thresholds: number[] = user.tpWarningThresholds || [70, 90];
+                const msg = `⚙️ <b>إعدادات التنبيهات</b>\n\n` +
+                    `🔔 تنبيه SL: <b>${slOn ? 'مفعل ✅' : 'معطل ❌'}</b>\n` +
+                    `🎯 تنبيه TP: <b>${tpOn ? 'مفعل ✅' : 'معطل ❌'}</b>\n\n` +
+                    `اختر لتعديل الإعدادات:`;
+                await ctx.answerCbQuery().catch(() => {});
+                return ctx.replyWithHTML(msg, { reply_markup: buildAlertSettingsKeyboard(user) });
+            }
+        }
+
         // --- HITLAR Callbacks ---
+
         if (data.startsWith('hitlar_')) {
             const user = await User.findOne({ telegramId: ctx.from.id.toString() });
             if (!user) return;
