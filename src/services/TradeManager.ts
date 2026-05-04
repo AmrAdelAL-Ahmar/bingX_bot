@@ -284,7 +284,11 @@ export class TradeManager {
                         // Hedge Mode: positionSide is required (LONG or SHORT)
                         orderParams.positionSide = signal.direction;
                     }
-                    // Note: SL/TP are placed as separate orders after execution
+                    
+                    // Attach Stop Loss and Take Profit 1 directly to the main order
+                    orderParams.stopLossPrice = stopLossPrice;
+                    orderParams.takeProfitPrice = finalTpPrices[0];
+
                     const executionPrice = resolvedOrderType === 'limit' ? entryPrice : undefined;
 
                     order = await this.bingx.placeOrder(
@@ -308,6 +312,10 @@ export class TradeManager {
                         if (hedgeModeRetry) {
                             retryParams.positionSide = signal.direction;
                         }
+                        
+                        retryParams.stopLossPrice = stopLossPrice;
+                        retryParams.takeProfitPrice = finalTpPrices[0];
+
                         const executionPriceRetry = resolvedOrderType === 'limit' ? entryPrice : undefined;
 
                         order = await this.bingx.placeOrder(
@@ -345,32 +353,13 @@ export class TradeManager {
 
                 logger.info(`✅ Trade successfully executed for ${signal.symbol}: ${order.id}`);
 
-                // 6.5 Place SL/TP orders on Binance Futures
-                // For MARKET orders: place SL/TP immediately.
-                // For LIMIT orders: only place SL/TP if the order was filled immediately (status = 'closed').
-                const orderFilled = order.status === 'closed' || order.status === 'filled';
-                const shouldPlaceSlTp = resolvedOrderType === 'market' || orderFilled;
-
-                if (shouldPlaceSlTp) {
-                    try {
-                        // Filter targets if single TP mode is active
-                        const finalTargets = user.tpExecutionMode === 'single' ? [finalTpPrices[0]] : finalTpPrices;
-                        
-                        await this.bingx.placeSLTPOrders(
-                            signal.symbol,
-                            signal.direction!,
-                            amountContracts,
-                            stopLossPrice,
-                            finalTargets,
-                            hedgeMode,
-                            user.tpExecutionMode === 'single' ? [100] : (user.tpSplitMode === 'auto' ? undefined : user.tpProfitSplits)
-                        );
-                    } catch (slTpErr: any) {
-                        logger.error(`⚠️ Main order placed but failed to set SL/TP: ${slTpErr.message}`);
-                    }
+                // 6.5 SL/TP orders are now attached to the main order and handled by BingX.
+                if (resolvedOrderType === 'market' || order.status === 'closed' || order.status === 'filled') {
+                    logger.info(`✅ Main order executed. Attached SL at ${stopLossPrice.toFixed(6)} and TP at ${finalTpPrices[0].toFixed(6)} are active.`);
                 } else {
-                    logger.info(`⏳ [Limit Order] SL/TP will be placed after order ${order.id} is filled. Current status: ${order.status}`);
+                    logger.info(`⏳ [Limit Order] Attached SL and TP will activate when order ${order.id} is filled.`);
                 }
+
 
                 // 7. Calculate PnL stats for reporting
                 const calculatePnL = (entry: number, exit: number, direction: string, lev: number) => {

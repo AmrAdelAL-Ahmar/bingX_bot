@@ -46,37 +46,17 @@ export class PositionMonitor {
                     if (!order) continue;
 
                     if (order.status === 'closed' || order.status === 'filled') {
-                        logger.info(`Limit order filled for ${trade.symbol}. Placing SL/TP now...`);
+                        logger.info(`Limit order filled for ${trade.symbol}. SL/TP were already attached.`);
                         
-                        // Detect mode for SL/TP placement
-                        const hedgeMode = await this.bingx.isHedgeMode();
-                        
-                        // Prepare SL/TP prices with precision
-                        const stopLossPrice = await this.bingx.priceToPrecision(trade.symbol, trade.stopLoss);
-                        const takeProfitPrices = await Promise.all(trade.targets.map(t => this.bingx.priceToPrecision(trade.symbol, t.price)));
-                        
-                        // Calculate amount Contracts (using the amount field which is positionSizeUSDT)
-                        const amountContracts = await this.bingx.amountToPrecision(trade.symbol, trade.amount / trade.entryPrice);
-
-                        // Place orders
-                        await this.bingx.placeSLTPOrders(
-                            trade.symbol,
-                            trade.direction,
-                            amountContracts,
-                            stopLossPrice,
-                            takeProfitPrices,
-                            hedgeMode
-                        );
-
                         // Update trade status to OPEN
                         trade.currentStatus = 'OPEN';
-                        trade.logs.push(`Limit order filled and SL/TP placed at ${new Date().toISOString()}`);
+                        trade.logs.push(`Limit order filled at ${new Date().toISOString()}`);
                         await trade.save();
 
                         // Notify user
                         const user = await User.findById(trade.userId);
                         if (user?.telegramId) {
-                            await this.notifier(user.telegramId, `✅ <b>تم تنفيذ الأمر الحدي للعملة ${trade.symbol}!</b>\nتم وضع أوامر وقف الخسارة والأهداف بنجاح.`);
+                            await this.notifier(user.telegramId, `✅ <b>تم تنفيذ الأمر الحدي للعملة ${trade.symbol}!</b>\nلقد تم تفعيل صفقتك المعلقة وتم ربط أوامر الوقف والهدف تلقائياً.`);
                         }
                     } else if (order.status === 'canceled' || order.status === 'expired') {
                         logger.info(`Limit order for ${trade.symbol} was canceled or expired.`);
