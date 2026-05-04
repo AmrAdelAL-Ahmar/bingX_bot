@@ -20,9 +20,22 @@ export const registerPortfolioHandlers = (bot: Telegraf, xtService: IExchangeSer
             if (positions && positions.length > 0) {
                 for (const pos of positions) {
                     if (parseFloat(pos.contracts) === 0) continue;
-                    const pnl = pos.unrealizedPnl !== undefined ? pos.unrealizedPnl :
+                    let pnl = pos.unrealizedPnl !== undefined ? pos.unrealizedPnl :
                         (pos.info && pos.info.unrealizedProfit ? parseFloat(pos.info.unrealizedProfit) : 0);
-                    totalPnl += pnl;
+                    
+                    if (pnl === 0 || isNaN(pnl)) {
+                        try {
+                            const markPrice = await xtService.getMarketPrice(pos.symbol);
+                            const entryPrice = parseFloat(pos.entryPrice) || parseFloat(pos.info?.entryPrice) || markPrice;
+                            const amountCoins = parseFloat(pos.info?.size) || (parseFloat(pos.contracts) * await xtService.getContractSize(pos.symbol));
+                            const posSide = (pos.side || pos.info?.positionSide || 'LONG').toString().toUpperCase();
+                            
+                            pnl = posSide === 'LONG' ? (markPrice - entryPrice) * amountCoins : (entryPrice - markPrice) * amountCoins;
+                        } catch (e) {
+                            logger.warn(`Could not manually calculate PNL for balance info ${pos.symbol}`);
+                        }
+                    }
+                    totalPnl += pnl || 0;
                 }
                 const pnlEmoji = totalPnl >= 0 ? '🟢' : '🔴';
                 msg += `الأرباح/الخسائر غير المحققة للصفقات المفتوحة: ${pnlEmoji} <b>${formatAmount(totalPnl)} USDT</b>\n`;
@@ -96,7 +109,9 @@ export const registerPortfolioHandlers = (bot: Telegraf, xtService: IExchangeSer
                     if (live > 0) markPrice = live;
                 } catch (e) {}
 
-                const amountCoins = parseFloat(pos.contracts) || parseFloat(pos.info?.positionAmt) || 0;
+                const rawContracts = parseFloat(pos.contracts) || parseFloat(pos.info?.positionAmt) || 0;
+                const contractSize = await xtService.getContractSize(pos.symbol);
+                const amountCoins = rawContracts * contractSize;
                 const posSide = (pos.side || pos.info?.side || 'LONG').toString().toUpperCase();
 
                 const trade = openTrades.find(t => t.symbol === pos.symbol || pos.symbol.includes(t.symbol.split('/')[0]));

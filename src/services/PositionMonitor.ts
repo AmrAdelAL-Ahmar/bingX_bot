@@ -40,10 +40,12 @@ export class PositionMonitor {
 
             // Fetch positions once for both pending and active checks
             let currentPositions: any[] = [];
+            let openOrders: any[] = [];
             try {
                 currentPositions = await this.exchange.getPositions();
+                openOrders = await this.exchange.getOpenOrders();
             } catch (e) {
-                logger.error('Failed to fetch positions:', e);
+                logger.error('Failed to fetch positions/orders:', e);
             }
 
             // --- 1. Handle Pending (Limit) Orders ---
@@ -51,6 +53,12 @@ export class PositionMonitor {
                 if (!trade.xtOrderId) continue;
 
                 try {
+                    // Check if the limit order is still open on the exchange
+                    const isStillOpen = openOrders.find((o: any) => o.id === trade.xtOrderId);
+                    if (isStillOpen) {
+                        continue; // Still pending, no action needed
+                    }
+
                     // Check if there is an open position for this symbol and direction
                     const pos = currentPositions.find((p: any) =>
                         p.symbol === trade.symbol &&
@@ -107,8 +115,11 @@ export class PositionMonitor {
                             );
                         }
                     } else {
-                        // We could check if order is cancelled via getOrder, but XT API fetchOrder is not supported.
-                        // For now, if no position exists, it remains pending.
+                        // Order is NOT open, and NO position exists. It must have been canceled.
+                        logger.info(`Limit order for ${trade.symbol} was canceled or expired.`);
+                        trade.currentStatus = 'CANCELLED';
+                        trade.logs.push(`Order was not found in open orders and no position exists.`);
+                        await trade.save();
                     }
                 } catch (err: any) {
                     logger.error(`Error checking pending order ${trade.xtOrderId}:`, err);
@@ -135,11 +146,12 @@ export class PositionMonitor {
                 const tradesForSymbol = openTrades.filter(t => t.symbol === symbol);
 
                 for (const trade of tradesForSymbol) {
-                    const matchingPos = positions.find((p: any) =>
-                        ((trade.direction === 'LONG' && p.side.toLowerCase() === 'long') ||
-                            (trade.direction === 'SHORT' && p.side.toLowerCase() === 'short')) &&
-                        parseFloat(p.contracts || '0') > 0
-                    );
+                    const matchingPos = positions.find((p: any) => {
+                        const pSide = (p.side || p.info?.positionSide || 'LONG').toString().toUpperCase();
+                        return ((trade.direction === 'LONG' && pSide === 'LONG') ||
+                                (trade.direction === 'SHORT' && pSide === 'SHORT')) &&
+                               parseFloat(p.contracts || '0') > 0;
+                    });
 
                     // Lookup user settings
                     let user: any = null;

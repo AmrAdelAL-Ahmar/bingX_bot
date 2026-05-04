@@ -270,6 +270,16 @@ export class XTService implements IExchangeService {
         }
     }
 
+    async getOpenOrders(symbol?: string): Promise<any[]> {
+        try {
+            await this.exchange.loadMarkets();
+            return await this.exchange.fetchOpenOrders(symbol);
+        } catch (error: any) {
+            logger.error(`[XT] Error fetching open orders for ${symbol || 'all'}:`, error.message);
+            return [];
+        }
+    }
+
     /**
      * Places Stop Loss and Take Profit orders on XT Futures.
      *

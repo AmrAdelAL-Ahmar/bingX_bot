@@ -210,6 +210,16 @@ export class BinanceService implements IExchangeService {
         }
     }
 
+    async getOpenOrders(symbol?: string): Promise<any[]> {
+        try {
+            await this.exchange.loadMarkets();
+            return await this.exchange.fetchOpenOrders(symbol);
+        } catch (error: any) {
+            logger.error(`[Binance] Error fetching open orders for ${symbol || 'all'}:`, error.message);
+            return [];
+        }
+    }
+
     /**
      * Places Stop Loss and Take Profit orders on Binance Futures after the main market order.
      * 

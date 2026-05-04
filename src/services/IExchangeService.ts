@@ -87,6 +87,11 @@ export interface IExchangeService {
     getOrder(symbol: string, orderId: string): Promise<any | null>;
 
     /**
+     * Fetches all open/pending orders. Optionally filtered by symbol.
+     */
+    getOpenOrders(symbol?: string): Promise<any[]>;
+
+    /**
      * Places Stop Loss and Take Profit orders after the main order has been executed.
      */
     placeSLTPOrders(
