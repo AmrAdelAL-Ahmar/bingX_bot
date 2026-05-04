@@ -38,32 +38,37 @@ export class PositionMonitor {
             const pendingTrades = allTrackedTrades.filter(t => t.currentStatus === 'PENDING');
             const activeTrades = allTrackedTrades.filter(t => t.currentStatus !== 'PENDING');
 
+            // Fetch positions once for both pending and active checks
+            let currentPositions: any[] = [];
+            try {
+                currentPositions = await this.exchange.getPositions();
+            } catch (e) {
+                logger.error('Failed to fetch positions:', e);
+            }
+
             // --- 1. Handle Pending (Limit) Orders ---
             for (const trade of pendingTrades) {
                 if (!trade.xtOrderId) continue;
 
                 try {
-                    const order = await this.exchange.getOrder(trade.symbol, trade.xtOrderId);
-                    if (!order) continue;
+                    // Check if there is an open position for this symbol and direction
+                    const pos = currentPositions.find((p: any) =>
+                        p.symbol === trade.symbol &&
+                        parseFloat(p.contracts || '0') > 0 &&
+                        ((trade.direction === 'LONG' && (p.side || p.info?.positionSide || 'LONG').toString().toUpperCase() === 'LONG') ||
+                         (trade.direction === 'SHORT' && (p.side || p.info?.positionSide || 'SHORT').toString().toUpperCase() === 'SHORT'))
+                    );
 
-                    logger.info(`[Pending] ${trade.symbol} order ${trade.xtOrderId} status: ${order.status}`);
+                    if (pos) {
+                        logger.info(`Limit order filled (detected via position) for ${trade.symbol}. Placing SL/TP now...`);
 
-                    // XT may use different status strings — normalize
-                    const isFilled = ['closed', 'filled', 'FILLED', 'done', 'DONE', 'full_fill'].includes(order.status)
-                        || (order.filled && parseFloat(order.filled) > 0 && order.remaining === 0);
-                    const isCancelled = ['canceled', 'cancelled', 'expired', 'CANCELED', 'CANCELLED'].includes(order.status);
-
-                    if (isFilled) {
-                        logger.info(`Limit order filled for ${trade.symbol}. Placing SL/TP now...`);
-
-                        // Use actual filled qty from exchange — more accurate than recalculating
-                        const filledQty = order.filled && parseFloat(order.filled) > 0
-                            ? parseFloat(order.filled)
-                            : await this.exchange.amountToPrecision(trade.symbol, trade.amount / trade.entryPrice);
+                        const contractSize = await this.exchange.getContractSize(trade.symbol);
+                        const filledQty = parseFloat(pos.contracts);
 
                         // Update entry price to actual fill price if available
-                        if (order.average && parseFloat(order.average) > 0) {
-                            trade.entryPrice = parseFloat(order.average);
+                        const posEntryPrice = parseFloat(pos.entryPrice) || parseFloat(pos.info?.entryPrice);
+                        if (posEntryPrice && posEntryPrice > 0) {
+                            trade.entryPrice = posEntryPrice;
                         }
 
                         // Detect mode for SL/TP placement
@@ -101,11 +106,9 @@ export class PositionMonitor {
                                 `تم وضع أوامر وقف الخسارة والأهداف بنجاح.`
                             );
                         }
-                    } else if (isCancelled) {
-                        logger.info(`Limit order for ${trade.symbol} was canceled or expired.`);
-                        trade.currentStatus = 'CANCELLED';
-                        trade.logs.push(`Order was ${order.status} on exchange.`);
-                        await trade.save();
+                    } else {
+                        // We could check if order is cancelled via getOrder, but XT API fetchOrder is not supported.
+                        // For now, if no position exists, it remains pending.
                     }
                 } catch (err: any) {
                     logger.error(`Error checking pending order ${trade.xtOrderId}:`, err);

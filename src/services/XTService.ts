@@ -293,10 +293,15 @@ export class XTService implements IExchangeService {
 
         // --- Stop Loss Order ---
         try {
-            const slParams = { ...baseParams, stopPrice: stopLossPrice };
-            // Use 'stop' (limit-stop) with explicit price — works reliably on XT
-            await this.exchange.createOrder(symbol, 'stop', closeSide, amount, stopLossPrice, slParams);
-            logger.info(`✅ [XT] Stop Loss placed at ${stopLossPrice.toFixed(6)} for ${symbol}`);
+            const cleanAmount = await this.amountToPrecision(symbol, amount);
+            if (cleanAmount > 0) {
+                const slParams = { ...baseParams, stopPrice: stopLossPrice };
+                // Use 'stop' (limit-stop) with explicit price — works reliably on XT
+                await this.exchange.createOrder(symbol, 'stop', closeSide, cleanAmount, stopLossPrice, slParams);
+                logger.info(`✅ [XT] Stop Loss placed at ${stopLossPrice.toFixed(6)} for ${symbol} (Qty: ${cleanAmount})`);
+            } else {
+                logger.error(`❌ [XT] Stop Loss amount too small after precision formatting for ${symbol}: ${amount}`);
+            }
         } catch (slErr: any) {
             logger.error(`❌ [XT] Failed to place Stop Loss for ${symbol}: ${slErr.message}`);
         }
@@ -304,14 +309,42 @@ export class XTService implements IExchangeService {
         // --- Take Profit Orders ---
         if (takeProfitPrices.length === 0) return;
 
-        const portionSize = amount / takeProfitPrices.length;
-        for (const tpPrice of takeProfitPrices) {
+        let remainingAmount = amount;
+        const numTargets = takeProfitPrices.length;
+        
+        for (let i = 0; i < numTargets; i++) {
+            if (remainingAmount <= 0) break;
+            
+            const tpPrice = takeProfitPrices[i];
+            
             try {
-                const tpAmount = parseFloat(portionSize.toFixed(6));
+                // Determine portion: divide remaining by remaining targets
+                const rawPortion = remainingAmount / (numTargets - i);
+                let tpAmount = await this.amountToPrecision(symbol, rawPortion);
+                
+                // If the precision makes it 0 (e.g. 0.5 contracts), and this is the last target, just use all remaining
+                // Or if it's not the last, we might have to floor it or let amountToPrecision handle it.
+                if (tpAmount <= 0) {
+                    if (i === numTargets - 1) {
+                        tpAmount = await this.amountToPrecision(symbol, remainingAmount);
+                    } else {
+                        logger.warn(`[XT] Take Profit portion too small for ${symbol} target ${i+1}, skipping this target.`);
+                        continue;
+                    }
+                }
+                
+                if (tpAmount > remainingAmount) {
+                    tpAmount = await this.amountToPrecision(symbol, remainingAmount);
+                }
+
+                if (tpAmount <= 0) continue;
+
                 const tpParams = { ...baseParams, stopPrice: tpPrice };
                 // Use 'take_profit' (limit-take-profit) with explicit price — works reliably on XT
                 await this.exchange.createOrder(symbol, 'take_profit', closeSide, tpAmount, tpPrice, tpParams);
-                logger.info(`✅ [XT] Take Profit placed at ${tpPrice.toFixed(6)} for ${symbol}`);
+                logger.info(`✅ [XT] Take Profit placed at ${tpPrice.toFixed(6)} for ${symbol} (Qty: ${tpAmount})`);
+                
+                remainingAmount -= tpAmount;
             } catch (tpErr: any) {
                 logger.error(`❌ [XT] Failed to place Take Profit at ${tpPrice.toFixed(6)} for ${symbol}: ${tpErr.message}`);
             }
