@@ -45,24 +45,40 @@ export class PositionMonitor {
                     const order = await this.exchange.getOrder(trade.symbol, trade.xtOrderId);
                     if (!order) continue;
 
-                    if (order.status === 'closed' || order.status === 'filled') {
+                    logger.info(`[Pending] ${trade.symbol} order ${trade.xtOrderId} status: ${order.status}`);
+
+                    // XT may use different status strings — normalize
+                    const isFilled = ['closed', 'filled', 'FILLED', 'done', 'DONE', 'full_fill'].includes(order.status)
+                        || (order.filled && parseFloat(order.filled) > 0 && order.remaining === 0);
+                    const isCancelled = ['canceled', 'cancelled', 'expired', 'CANCELED', 'CANCELLED'].includes(order.status);
+
+                    if (isFilled) {
                         logger.info(`Limit order filled for ${trade.symbol}. Placing SL/TP now...`);
+
+                        // Use actual filled qty from exchange — more accurate than recalculating
+                        const filledQty = order.filled && parseFloat(order.filled) > 0
+                            ? parseFloat(order.filled)
+                            : await this.exchange.amountToPrecision(trade.symbol, trade.amount / trade.entryPrice);
+
+                        // Update entry price to actual fill price if available
+                        if (order.average && parseFloat(order.average) > 0) {
+                            trade.entryPrice = parseFloat(order.average);
+                        }
 
                         // Detect mode for SL/TP placement
                         const hedgeMode = await this.exchange.isHedgeMode();
 
                         // Prepare SL/TP prices with precision
                         const stopLossPrice = await this.exchange.priceToPrecision(trade.symbol, trade.stopLoss);
-                        const takeProfitPrices = await Promise.all(trade.targets.map(t => this.exchange.priceToPrecision(trade.symbol, t.price)));
-
-                        // Calculate amount Contracts (using the amount field which is positionSizeUSDT)
-                        const amountContracts = await this.exchange.amountToPrecision(trade.symbol, trade.amount / trade.entryPrice);
+                        const takeProfitPrices = await Promise.all(
+                            trade.targets.map(t => this.exchange.priceToPrecision(trade.symbol, t.price))
+                        );
 
                         // Place orders
                         await this.exchange.placeSLTPOrders(
                             trade.symbol,
                             trade.direction,
-                            amountContracts,
+                            filledQty,
                             stopLossPrice,
                             takeProfitPrices,
                             hedgeMode
@@ -70,15 +86,21 @@ export class PositionMonitor {
 
                         // Update trade status to OPEN
                         trade.currentStatus = 'OPEN';
-                        trade.logs.push(`Limit order filled and SL/TP placed at ${new Date().toISOString()}`);
+                        trade.entryTime = new Date();
+                        trade.logs.push(`Limit order filled at ${trade.entryPrice} on ${new Date().toISOString()}. SL/TP placed.`);
                         await trade.save();
 
                         // Notify user
                         const user = await User.findById(trade.userId);
                         if (user?.telegramId) {
-                            await this.notifier(user.telegramId, `✅ <b>تم تنفيذ الأمر الحدي للعملة ${trade.symbol}!</b>\nتم وضع أوامر وقف الخسارة والأهداف بنجاح.`);
+                            await this.notifier(
+                                user.telegramId,
+                                `✅ <b>تم تنفيذ الأمر الحدي للعملة ${trade.symbol}!</b>\n` +
+                                `سعر الدخول الفعلي: <b>${trade.entryPrice.toFixed(6)}</b>\n` +
+                                `تم وضع أوامر وقف الخسارة والأهداف بنجاح.`
+                            );
                         }
-                    } else if (order.status === 'canceled' || order.status === 'expired') {
+                    } else if (isCancelled) {
                         logger.info(`Limit order for ${trade.symbol} was canceled or expired.`);
                         trade.currentStatus = 'CANCELLED';
                         trade.logs.push(`Order was ${order.status} on exchange.`);
@@ -129,7 +151,11 @@ export class PositionMonitor {
                     if (matchingPos) {
                         // --- Position is still ACTIVE: check warnings ---
 
-                        const currentPrice: number = parseFloat(matchingPos.markPrice) || await this.exchange.getMarketPrice(symbol);
+                        // Position still active — get current price from markPrice or market
+                    const rawMark = matchingPos.markPrice ?? matchingPos.info?.markPrice ?? matchingPos.info?.markValue;
+                    const currentPrice: number = (rawMark && parseFloat(rawMark) > 0)
+                        ? parseFloat(rawMark)
+                        : await this.exchange.getMarketPrice(symbol);
                         const entry = trade.entryPrice;
 
                         // --- TP1 BreakEven Logic ---
@@ -237,11 +263,21 @@ export class PositionMonitor {
                         const lev = trade.leverage || 10;
                         let pnlPercent = 0;
 
-                        if (currentPrice) {
+                        // Calculate PnL using last market price as close price
+                        let closePrice = currentPrice;
+                        // Try to get a more accurate close price
+                        try {
+                            const marketClose = await this.exchange.getMarketPrice(symbol);
+                            if (marketClose > 0) closePrice = marketClose;
+                        } catch (_) {}
+
+                        if (closePrice && entry > 0) {
                             const isLong = trade.direction === 'LONG';
-                            const diff = isLong ? (currentPrice - entry) : (entry - currentPrice);
+                            const diff = isLong ? (closePrice - entry) : (entry - closePrice);
                             pnlPercent = (diff / entry) * 100 * lev;
                         }
+
+                        trade.closePrice = closePrice;
 
                         trade.currentStatus = pnlPercent > 0 ? 'CLOSED_PROFIT' : 'CLOSED_LOSS';
                         trade.closeTime = new Date();

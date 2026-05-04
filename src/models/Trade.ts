@@ -19,6 +19,7 @@ export interface ITrade extends Document {
     bingxOrderId?: string;
     entryTime: Date;
     closeTime?: Date;
+    closePrice?: number;
     sourceChatId?: string;
     logs: string[];
     // Warning tracking
@@ -49,6 +50,7 @@ const TradeSchema: Schema = new Schema({
     bingxOrderId: { type: String },
     entryTime: { type: Date, default: Date.now },
     closeTime: { type: Date },
+    closePrice: { type: Number },
     sourceChatId: { type: String },
     logs: [{ type: String }],
     // Warning tracking
