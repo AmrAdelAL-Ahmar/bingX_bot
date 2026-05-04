@@ -60,12 +60,12 @@ export class PositionMonitor {
                     }
 
                     // Check if there is an open position for this symbol and direction
-                    const pos = currentPositions.find((p: any) =>
-                        p.symbol === trade.symbol &&
-                        parseFloat(p.contracts || '0') > 0 &&
-                        ((trade.direction === 'LONG' && (p.side || p.info?.positionSide || 'LONG').toString().toUpperCase() === 'LONG') ||
-                         (trade.direction === 'SHORT' && (p.side || p.info?.positionSide || 'SHORT').toString().toUpperCase() === 'SHORT'))
-                    );
+                    const pos = currentPositions.find((p: any) => {
+                        const pSide = (p.side || p.info?.positionSide || p.info?.side || 'LONG').toString().toUpperCase();
+                        const isLongMatch = trade.direction === 'LONG' && (pSide === 'LONG' || pSide === 'BUY');
+                        const isShortMatch = trade.direction === 'SHORT' && (pSide === 'SHORT' || pSide === 'SELL');
+                        return (isLongMatch || isShortMatch) && p.symbol === trade.symbol && parseFloat(p.contracts || '0') > 0;
+                    });
 
                     if (pos) {
                         logger.info(`Limit order filled (detected via position) for ${trade.symbol}. Placing SL/TP now...`);
@@ -147,10 +147,10 @@ export class PositionMonitor {
 
                 for (const trade of tradesForSymbol) {
                     const matchingPos = positions.find((p: any) => {
-                        const pSide = (p.side || p.info?.positionSide || 'LONG').toString().toUpperCase();
-                        return ((trade.direction === 'LONG' && pSide === 'LONG') ||
-                                (trade.direction === 'SHORT' && pSide === 'SHORT')) &&
-                               parseFloat(p.contracts || '0') > 0;
+                        const pSide = (p.side || p.info?.positionSide || p.info?.side || 'LONG').toString().toUpperCase();
+                        const isLongMatch = trade.direction === 'LONG' && (pSide === 'LONG' || pSide === 'BUY');
+                        const isShortMatch = trade.direction === 'SHORT' && (pSide === 'SHORT' || pSide === 'SELL');
+                        return (isLongMatch || isShortMatch) && parseFloat(p.contracts || '0') > 0;
                     });
 
                     // Lookup user settings
