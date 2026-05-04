@@ -44,7 +44,7 @@ export const registerTradingHandlers = (bot: Telegraf, BingXService: BingXServic
             await user.save();
 
             const pnlEmoji = totalPnl >= 0 ? '🟢 إجمالي أرباح' : '🔴 إجمالي خسارة';
-            let confirmMsg = `⚠️ <b>تأكيد إغلاق جميع الصفقات (${activePosCount} صفقات) على Binance</b>\n\n` +
+            let confirmMsg = `⚠️ <b>تأكيد إغلاق جميع الصفقات (${activePosCount} صفقات) على Bingx </b>\n\n` +
                 `💰 <b>رأس المال المتاح (الرصيد):</b> ${balance.toFixed(2)} USDT\n` +
                 `${pnlEmoji} عائمة لهذه الصفقات: <b>${totalPnl.toFixed(2)} USDT</b>\n\n` +
                 `الرصيد المتوقع بعد الإغلاق: <b>${(balance + totalPnl).toFixed(2)} USDT</b>\n\n` +
@@ -109,54 +109,54 @@ export const registerTradingHandlers = (bot: Telegraf, BingXService: BingXServic
                 ctx.reply('الرجاء كتابة اسم العملة. مثال: /status BTC');
                 return;
             }
-    
+
             // Find trade
             const user = await User.findOne({ telegramId: ctx.from.id.toString() });
             if (!user) return;
-    
+
             // Look for exact match or partial match in DB
             const trade = await Trade.findOne({
                 userId: user._id,
                 currentStatus: { $in: ['OPEN', 'TP1_HIT', 'TP2_HIT'] },
                 symbol: { $regex: input.toUpperCase() }
             }).sort({ entryTime: -1 });
-    
+
             if (!trade) {
                 ctx.reply(`لا يوجد صفقة مفتوحة للعملة ${input}`);
                 return;
             }
-    
-            // Fetch live PnL from Binance
+
+            // Fetch live PnL from Bingx 
             const positions = await BingXService.getPositions(trade.symbol);
             const pos = positions.find((p: any) => p.symbol === trade.symbol);
             const balance = await BingXService.getBalance();
-    
-            let msg = `📊 <b>Binance Status: ${trade.symbol}</b>\n` +
+
+            let msg = `📊 <b>Bingx  Status: ${trade.symbol}</b>\n` +
                 `النوع: ${trade.direction === 'LONG' ? 'شراء (LONG) 🟢' : 'بيع (SHORT) 🔴'}\n` +
                 `الرافعة: <b>${trade.leverage || 'N/A'}x</b>\n`;
-    
+
             if (pos) {
                 const posEntryPrice = parseFloat(pos.entryPrice);
                 msg += `سعر الدخول: ${posEntryPrice.toFixed(4)}\n`;
-    
+
                 const pnl = pos.unrealizedPnl !== undefined ? pos.unrealizedPnl :
                     (pos.info && pos.info.unrealizedProfit ? parseFloat(pos.info.unrealizedProfit) : 0);
-    
+
                 let margin = pos.initialMargin !== undefined ? pos.initialMargin :
                     (pos.info && pos.info.isolatedMargin ? parseFloat(pos.info.isolatedMargin) : 0);
-    
+
                 if (!margin && pos.notional) {
                     margin = Math.abs(pos.notional) / (pos.leverage || 10);
                 }
-    
+
                 const roe = pos.percentage !== undefined ? pos.percentage : (margin > 0 ? (pnl / margin) * 100 : 0);
-    
+
                 msg += `الربح/الخسارة العائمة: ${pnl >= 0 ? '🟢' : '🔴'} <b>${pnl.toFixed(4)} USDT</b> (${roe.toFixed(2)}%)\n`;
                 msg += `النسبة من المحفظة: ${((margin / balance) * 100).toFixed(2)}%\n`;
             } else {
                 msg += `الصفقة موجودة في النظام ولكن غير متصلة مؤقتاً بالمنصة.\n`;
             }
-    
+
             ctx.replyWithHTML(msg);
         } catch (error) {
             ctx.reply('Error fetching status from bingXService.');

@@ -11,7 +11,7 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
     bot.hears('ℹ️ تعليمات الاستخدام (Help)', async (ctx) => {
         try {
             const helpMsg = `ℹ️ <b>دليل استخدام بوت التداول الآلي:</b>\n\n` +
-                `• <b>💰 الرصيد:</b> عرض رصيدك الحالي في منصة Binance وملخص الأرباح والخسائر.\n` +
+                `• <b>💰 الرصيد:</b> عرض رصيدك الحالي في منصة Bingx  وملخص الأرباح والخسائر.\n` +
                 `• <b>💼 صفقاتي:</b> متابعة الصفقات المفتوحة حالياً وحالتها لحظة بلحظة.\n` +
                 `• <b>📊 التقارير:</b> عرض إحصائيات مفصلة لنتائج تداولاتك (يومي، شهري، سنوي).\n` +
                 `• <b>⚙️ إعدادات المتداول:</b>\n` +
@@ -25,7 +25,7 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
                 `• <b>📱 إخفاء القائمة:</b> لتقليل المساحة التي تأخذها القائمة على الهواتف.\n` +
                 `• <b>🔍 الاستعلام/الإلغاء:</b> للبحث عن صفقة محددة أو إغلاقها يدوياً.\n\n` +
                 `💡 <b>البوت يعمل بشكل آلي بالكامل بمجرد استقبال إشارة التداول.</b>`;
-    
+
             ctx.replyWithHTML(helpMsg);
         } catch (e) { }
     });
@@ -55,7 +55,7 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             await ctx.reply('العودة للقائمة الرئيسية...', {
                 reply_markup: getMainMenuKeyboard(user)
             });
-        } catch (e) {}
+        } catch (e) { }
     });
 
 
@@ -64,7 +64,7 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             await ctx.reply('تم إخفاء القائمة. يمكنك إظهارها في أي وقت بالضغط على الزر أدناه أو إرسال /menu', {
                 reply_markup: getHiddenMenuKeyboard()
             });
-        } catch (e) {}
+        } catch (e) { }
     });
 
     bot.hears('📱 إظهار القائمة', async (ctx) => {
@@ -75,10 +75,10 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             await ctx.reply('مرحباً بك مجدداً! تم إظهار القائمة الرئيسية.', {
                 reply_markup: getMainMenuKeyboard(user)
             });
-        } catch (e) {}
+        } catch (e) { }
     });
 
-    
+
     bot.hears(/⚡ نسبة المخاطرة/, async (ctx) => {
         try {
             if (!ctx.from) return;
@@ -108,19 +108,19 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             if (!ctx.from) return;
             const user = await User.findOne({ telegramId: ctx.from.id.toString() });
             if (!user) return;
-    
+
             const isEnabled = (user.enforceMaxSlLoss !== null && user.enforceMaxSlLoss !== undefined)
                 ? user.enforceMaxSlLoss
                 : process.env.ENFORCE_MAX_SL_LOSS === 'true';
-            
+
             const currentPercent = user.maxSlRiskPercentage || 6;
-    
+
             const msg = `🛡 <b>ميزة حماية رأس المال الصارمة</b>\n\n` +
                 `هذه الميزة تقوم بتقليل حجم الصفقة إجبارياً بحيث لا تتجاوز خسارة الـ Stop Loss النسبة المحددة من إجمالي رأس مالك.\n\n` +
                 `الحالة الآن: <b>${isEnabled ? 'مفعلة 🟢' : 'معطلة 🔴'}</b>\n` +
                 `النسبة المحددة: <b>${currentPercent}%</b>\n\n` +
                 `اختر الحالة أو النسبة المطلوبة:`;
-    
+
             await ctx.replyWithHTML(msg, {
                 reply_markup: buildCapitalProtectionKeyboard(user)
             });
@@ -196,10 +196,10 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             if (!ctx.from) return;
             const user = await User.findOne({ telegramId: ctx.from.id.toString() });
             if (!user) return;
-    
+
             const isEnabled = user.volatilitySlEnabled || false;
             const currentPercent = user.volatilitySlPercentage || 5;
-    
+
             const msg = `📊 <b>إعدادات الاستوب حسب تذبذب العملة</b>\n\n` +
                 `هذه الميزة تقوم بتحديد الـ Stop Loss تلقائياً بناءً على نسبة مئوية من سعر العملة الحالي عند فتح الصفقة.\n\n` +
                 `• <b>في صفقات الـ LONG:</b> يكون الاستوب = السعر الحالي - ${currentPercent}%\n` +
@@ -207,7 +207,7 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
                 `الحالة الآن: <b>${isEnabled ? 'مفعلة 🟢' : 'معطلة 🔴'}</b>\n` +
                 `النسبة المحددة: <b>${currentPercent}%</b>\n\n` +
                 `اختر الحالة أو النسبة المطلوبة:`;
-    
+
             await ctx.replyWithHTML(msg, {
                 reply_markup: buildVolatilitySlKeyboard(user)
             });
@@ -220,18 +220,18 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
         if (!ctx.from) return;
         const user = await User.findOne({ telegramId: ctx.from.id.toString() });
         if (!user) return;
-    
+
         const slOn: boolean = user.slWarningEnabled !== false;
         const tpOn: boolean = user.tpWarningEnabled !== false;
         const thresholds: number[] = user.tpWarningThresholds || [70, 90];
-    
+
         const msg = `⚙️ <b>إعدادات التنبيهات</b>\n\n` +
             `🔔 تنبيه وقف الخسارة (SL): <b>${slOn ? 'مفعل ✅' : 'معطل ❌'}</b>\n` +
             `   يُرسل تحذير عندما تصل الخسارة إلى 5% من رأس المال.\n\n` +
             `🎯 تنبيه الهدف (TP): <b>${tpOn ? 'مفعل ✅' : 'معطل ❌'}</b>\n` +
             `   النسب المفعّلة: <b>${thresholds.sort((a, b) => a - b).join('%, ')}%</b>\n\n` +
             `اضغط على الأزرار أدناه لتعديل الإعدادات:`;
-    
+
         await ctx.replyWithHTML(msg, { reply_markup: buildAlertSettingsKeyboard(user) });
     });
 
@@ -298,7 +298,7 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             ctx.reply('حدث خطأ أثناء فتح إعدادات وضع هترل.');
         }
     });
-    
+
     // Handle all inline keyboard callbacks
     bot.on('callback_query', async (ctx) => {
         const data = (ctx.callbackQuery as any).data as string;
@@ -313,7 +313,7 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             if (data === 'settings_risk') {
                 user.botState = 'AWAITING_RISK_PERCENTAGE';
                 await user.save();
-                await ctx.answerCbQuery().catch(() => {});
+                await ctx.answerCbQuery().catch(() => { });
                 return ctx.reply('قم بإدخال نسبة المخاطرة الجديدة (رقم بين 1 و 5):', {
                     reply_markup: {
                         keyboard: [
@@ -333,7 +333,7 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
                     `• <b>أمر السوق (Market):</b> يدخل الصفقة فوراً بأفضل سعر متاح.\n` +
                     `• <b>أمر حدي (Limit):</b> ينتظر السعر المحدد في التوصية.\n\n` +
                     `اختر الوضع الذي تريده:`;
-                await ctx.answerCbQuery().catch(() => {});
+                await ctx.answerCbQuery().catch(() => { });
                 return ctx.replyWithHTML(msg, {
                     reply_markup: {
                         inline_keyboard: [
@@ -352,7 +352,7 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
                 const msg = `⚖️ <b>إعدادات الرافعة المالية (Leverage)</b>\n\n` +
                     `الوضع الحالي: <b>${mode === 'fixed' ? `📌 ثابت (x${val})` : '⚙️ تلقائي (حسب التوصية)'}</b>\n\n` +
                     `اختر الوضع أو القيمة المطلوبة:`;
-                await ctx.answerCbQuery().catch(() => {});
+                await ctx.answerCbQuery().catch(() => { });
                 return ctx.replyWithHTML(msg, { reply_markup: buildLeverageKeyboard(user) });
             }
 
@@ -363,7 +363,7 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
                     `الحالة الآن: <b>${isEnabled ? 'مفعلة 🟢' : 'معطلة 🔴'}</b>\n` +
                     `النسبة المحددة: <b>${currentPercent}%</b>\n\n` +
                     `اختر الحالة أو النسبة المطلوبة:`;
-                await ctx.answerCbQuery().catch(() => {});
+                await ctx.answerCbQuery().catch(() => { });
                 return ctx.replyWithHTML(msg, { reply_markup: buildVolatilitySlKeyboard(user) });
             }
 
@@ -376,7 +376,7 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
                     `الحالة الآن: <b>${isEnabled ? 'مفعلة 🟢' : 'معطلة 🔴'}</b>\n` +
                     `النسبة المحددة: <b>${currentPercent}%</b>\n\n` +
                     `اختر الحالة أو النسبة المطلوبة:`;
-                await ctx.answerCbQuery().catch(() => {});
+                await ctx.answerCbQuery().catch(() => { });
                 return ctx.replyWithHTML(msg, { reply_markup: buildCapitalProtectionKeyboard(user) });
             }
 
@@ -388,7 +388,7 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
                     `⚖️ الرافعة: <b>x${settings.leverage}</b>\n` +
                     `📊 نسبة الاستوب: <b>${settings.volatilitySlPercentage}%</b>\n\n` +
                     `اختر لتعديل القيم:`;
-                await ctx.answerCbQuery().catch(() => {});
+                await ctx.answerCbQuery().catch(() => { });
                 return ctx.replyWithHTML(msg, { reply_markup: buildHitlarSettingsKeyboard(user) });
             }
 
@@ -400,7 +400,7 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
                     `🔔 تنبيه SL: <b>${slOn ? 'مفعل ✅' : 'معطل ❌'}</b>\n` +
                     `🎯 تنبيه TP: <b>${tpOn ? 'مفعل ✅' : 'معطل ❌'}</b>\n\n` +
                     `اختر لتعديل الإعدادات:`;
-                await ctx.answerCbQuery().catch(() => {});
+                await ctx.answerCbQuery().catch(() => { });
                 return ctx.replyWithHTML(msg, { reply_markup: buildAlertSettingsKeyboard(user) });
             }
         }
@@ -412,8 +412,8 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             if (!user) return;
 
             if (data === 'hitlar_save') {
-                await ctx.deleteMessage().catch(() => {});
-                return ctx.answerCbQuery('✅ تم حفظ الإعدادات').catch(() => {});
+                await ctx.deleteMessage().catch(() => { });
+                return ctx.answerCbQuery('✅ تم حفظ الإعدادات').catch(() => { });
             }
 
             if (data === 'hitlar_toggle_cap') {
@@ -423,21 +423,21 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             } else if (data === 'hitlar_edit_risk') {
                 user.botState = 'AWAITING_HITLAR_RISK';
                 await user.save();
-                await ctx.answerCbQuery().catch(() => {});
+                await ctx.answerCbQuery().catch(() => { });
                 return ctx.reply('يرجى إدخال نسبة المخاطرة لوضع هترل (مثال: 5):', {
                     reply_markup: { keyboard: [[{ text: 'رجوع 🔙' }]], resize_keyboard: true }
                 });
             } else if (data === 'hitlar_edit_lev') {
                 user.botState = 'AWAITING_HITLAR_LEV';
                 await user.save();
-                await ctx.answerCbQuery().catch(() => {});
+                await ctx.answerCbQuery().catch(() => { });
                 return ctx.reply('يرجى إدخال الرافعة المالية لوضع هترل (مثال: 20):', {
                     reply_markup: { keyboard: [[{ text: 'رجوع 🔙' }]], resize_keyboard: true }
                 });
             } else if (data === 'hitlar_edit_sl') {
                 user.botState = 'AWAITING_HITLAR_SL';
                 await user.save();
-                await ctx.answerCbQuery().catch(() => {});
+                await ctx.answerCbQuery().catch(() => { });
                 return ctx.reply('يرجى إدخال نسبة وقف الخسارة لوضع هترل (مثال: 5):', {
                     reply_markup: { keyboard: [[{ text: 'رجوع 🔙' }]], resize_keyboard: true }
                 });
@@ -459,8 +459,8 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
                     parse_mode: 'HTML',
                     reply_markup: buildHitlarSettingsKeyboard(user)
                 });
-            } catch (e) {}
-            return ctx.answerCbQuery('✅ تم التحديث').catch(() => {});
+            } catch (e) { }
+            return ctx.answerCbQuery('✅ تم التحديث').catch(() => { });
         }
 
         // --- Order Mode Callbacks ---
@@ -501,7 +501,7 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
                 });
             } catch (e) { /* message unchanged */ }
 
-            await ctx.answerCbQuery(`✅ تم التحويل إلى ${modeLabel}`).catch(() => {});
+            await ctx.answerCbQuery(`✅ تم التحويل إلى ${modeLabel}`).catch(() => { });
 
             // Also update the trader settings keyboard
             await ctx.reply(`✅ تم تحديث نوع التنفيذ إلى: ${modeLabel}`, {
@@ -546,7 +546,7 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
                 });
             } catch (e) { /* unchanged */ }
 
-            await ctx.answerCbQuery('✅ تم التحديث').catch(() => {});
+            await ctx.answerCbQuery('✅ تم التحديث').catch(() => { });
             return;
         }
 
@@ -585,8 +585,8 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
                 });
             } catch (e) { /* unchanged */ }
 
-            await ctx.answerCbQuery('✅ تم التحديث').catch(() => {});
-            
+            await ctx.answerCbQuery('✅ تم التحديث').catch(() => { });
+
             // Update trader settings menu
             await ctx.reply(`✅ تم تحديث إعدادات الرافعة إلى: ${mode === 'fixed' ? `ثابت (x${val})` : 'تلقائي'}`, {
                 reply_markup: getTraderSettingsKeyboard(user)
@@ -629,16 +629,16 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
                 });
             } catch (e) { /* unchanged */ }
 
-            await ctx.answerCbQuery('✅ تم التحديث').catch(() => {});
+            await ctx.answerCbQuery('✅ تم التحديث').catch(() => { });
             return;
         }
 
         // --- Alert Settings Callbacks ---
         if (!data.startsWith('alert_')) return;
-    
+
         const user = await User.findOne({ telegramId: ctx.from.id.toString() });
         if (!user) return;
-    
+
         if (data === 'alert_toggle_sl') {
             user.slWarningEnabled = !(user.slWarningEnabled !== false);
         } else if (data === 'alert_toggle_tp') {
@@ -660,21 +660,21 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
         } else {
             return;
         }
-    
+
         await user.save();
-    
+
         // Update the inline keyboard message
         const slOn: boolean = user.slWarningEnabled !== false;
         const tpOn: boolean = user.tpWarningEnabled !== false;
         const thresholds: number[] = user.tpWarningThresholds || [];
-    
+
         const newMsg = `⚙️ <b>إعدادات التنبيهات</b>\n\n` +
             `🔔 تنبيه وقف الخسارة (SL): <b>${slOn ? 'مفعل ✅' : 'معطل ❌'}</b>\n` +
             `   يُرسل تحذير عندما تصل الخسارة إلى 5% من رأس المال.\n\n` +
             `🎯 تنبيه الهدف (TP): <b>${tpOn ? 'مفعل ✅' : 'معطل ❌'}</b>\n` +
             `   النسب المفعّلة: <b>${thresholds.length > 0 ? thresholds.sort((a, b) => a - b).join('%, ') + '%' : 'لا يوجد'}</b>\n\n` +
             `اضغط على الأزرار أدناه لتعديل الإعدادات:`;
-    
+
         try {
             await ctx.editMessageText(newMsg, {
                 parse_mode: 'HTML',
@@ -706,10 +706,10 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
         } else if (data === 'strat_toggle_err_mit') {
             user.errorMitigationEnabled = !user.errorMitigationEnabled;
         } else if (data === 'strat_close') {
-            await ctx.deleteMessage().catch(() => {});
-            return ctx.answerCbQuery('✅ تم الحفظ').catch(() => {});
+            await ctx.deleteMessage().catch(() => { });
+            return ctx.answerCbQuery('✅ تم الحفظ').catch(() => { });
         } else if (data === 'strat_info_err_mit') {
-            await ctx.answerCbQuery().catch(() => {});
+            await ctx.answerCbQuery().catch(() => { });
             const infoMsg = `ℹ️ <b>كيف يعمل نظام معالجة الأخطاء؟</b>\n\n` +
                 `<b>1. رفع حجم الصفقة (Minimum Notional):</b>\n` +
                 `إذا كانت قيمة صفقتك المحسوبة أقل من المسموح (مثلاً أقل من 5 USDT)، سيقوم البوت تلقائياً برفعها إلى الحد الأدنى لضمان الدخول بدلاً من رفض الصفقة.\n\n` +
@@ -730,8 +730,8 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             }
             user.tpSplitMode = user.tpSplitMode === 'manual' ? 'auto' : 'manual';
         } else if (data === 'strat_close_info') {
-            await ctx.deleteMessage().catch(() => {});
-            return ctx.answerCbQuery().catch(() => {});
+            await ctx.deleteMessage().catch(() => { });
+            return ctx.answerCbQuery().catch(() => { });
         } else if (data === 'strat_edit_splits') {
             if (user.tpExecutionMode === 'single') {
                 return ctx.answerCbQuery('لا يمكن تخصيص التقسيم في وضع "هدف واحد فقط". يرجى تغييره أولاً.', { show_alert: true });
@@ -741,7 +741,7 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             }
             user.botState = 'AWAITING_TP_SPLITS';
             await user.save();
-            await ctx.answerCbQuery().catch(() => {});
+            await ctx.answerCbQuery().catch(() => { });
             return ctx.reply('📊 <b>تخصيص تقسيم الأرباح</b>\n\nقم بكتابة نسب الأهداف مفصولة بمسافة أو فاصلة (مثال: 50 30 20 أو 40,60).\nيجب أن يكون المجموع 100.', {
                 parse_mode: 'HTML',
                 reply_markup: { keyboard: [[{ text: 'رجوع 🔙' }]], resize_keyboard: true }
@@ -767,8 +767,8 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
                 parse_mode: 'HTML',
                 reply_markup: buildStrategySettingsKeyboard(user)
             });
-        } catch (e) {}
-        await ctx.answerCbQuery('✅ تم التحديث').catch(() => {});
+        } catch (e) { }
+        await ctx.answerCbQuery('✅ تم التحديث').catch(() => { });
     });
 
 };

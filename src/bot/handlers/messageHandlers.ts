@@ -13,7 +13,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
     bot.start(async (ctx) => {
         const user = await User.findOne({ telegramId: ctx.from.id.toString() });
         const welcomeMsg = `🤖 <b>مرحباً بك في بوت التداول الآلي!</b>\n\n` +
-            `أنا مساعدك الذكي لتنفيذ صفقات العملات الرقمية على منصة Binance بشكل آلي واحترافي.\n\n` +
+            `أنا مساعدك الذكي لتنفيذ صفقات العملات الرقمية على منصة Bingx  بشكل آلي واحترافي.\n\n` +
             `🚀 <b>ماذا يمكنني أن أفعل لك؟</b>\n` +
             `• تنفيذ الصفقات فور استقبال الإشارات.\n` +
             `• إدارة المخاطر وحماية رأس المال.\n` +
@@ -24,12 +24,12 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
             reply_markup: user ? getMainMenuKeyboard(user) : undefined
         });
     });
-    
+
     bot.command('menu', async (ctx) => {
         try {
             const user = await User.findOne({ telegramId: ctx.from.id.toString() });
             if (!user) return;
-    
+
             await ctx.reply('🤖 <b>قائمة التحكم - بوت التداول الآلي</b>\nاختر أحد الإجراءات التالية:', {
                 parse_mode: 'HTML',
                 reply_markup: getMainMenuKeyboard(user)
@@ -44,7 +44,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
     bot.on('message', async (ctx) => {
         try {
             if (!ctx.from || !('text' in ctx.message)) return;
-            
+
             const message = ctx.message.text;
             const telegramId = ctx.from.id.toString();
             const user = await User.findOne({ telegramId });
@@ -146,7 +146,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                     ctx.reply('تم الإلغاء.', { reply_markup: getMainMenuKeyboard(user) });
                     return;
                 }
-                
+
                 // Let's forward the query logic back to the command simulation or manual trigger
                 // Since `/status` logic was defined in trading, we reuse that logic basically.
                 // We mock message to let the existing /status command handle it nicely if we want, or do inline.
@@ -164,7 +164,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                     } else {
                         ctx.reply(`يتم الاستعلام، جرب استخدام زر "صفقاتي المفتوحة" لمعرفة التفاصيل بديهيا.`, { reply_markup: getMainMenuKeyboard(user) });
                     }
-                } catch (error) {}
+                } catch (error) { }
 
                 user.botState = 'NONE';
                 await user.save();
@@ -203,9 +203,9 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                         });
 
                         let msg = `📊 <b>تقرير مخصص ليوم ${message}</b>\n\n` +
-                                  `✅ إجمالي الصفقات المغلقة: <b>${trades.length}</b>\n` +
-                                  `💰 إجمالي مبلغ الربح/الخسارة: ${netPnl >= 0 ? '🟢' : '🔴'} <b>${netPnl.toFixed(2)} USDT</b>\n`;
-                        
+                            `✅ إجمالي الصفقات المغلقة: <b>${trades.length}</b>\n` +
+                            `💰 إجمالي مبلغ الربح/الخسارة: ${netPnl >= 0 ? '🟢' : '🔴'} <b>${netPnl.toFixed(2)} USDT</b>\n`;
+
                         ctx.replyWithHTML(msg).catch(e => logger.error(`Failed to send custom report: ${e.message}`));
                     } else {
                         ctx.reply('❌ تاريخ غير صحيح، يرجى الإلغاء والمحاولة مرة أخرى.');
@@ -283,10 +283,10 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
             if (signal) {
                 logger.info(`Received valid signal from ${ctx.from.username || telegramId}`);
                 ctx.reply(`📡 تم التعرف على الإشارة (${signal.symbol} - ${signal.direction || signal.type}).\n⏳ جاري إرسال الطلب للمنصة...`);
-                
+
                 try {
                     const result = await tradeManager.executeSignal(signal, user._id.toString(), ctx.chat.id.toString());
-                    
+
                     if (signal.type === 'CLOSE') {
                         ctx.reply(`✅ تم إغلاق الصفقة (أو الصفقات) للعملة ${signal.symbol} بنجاح.`);
                     } else if (result) {
@@ -297,7 +297,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                         let successMsg = result.isPending
                             ? `⏳ <b>تم وضع أمر حدي بنجاح — ينتظر التنفيذ!</b>
 💡 سيتم وضع الأهداف والاستوب تلقائياً عند تنفيذ الأمر.\n\n`
-                            : `✅ <b>تم تنفيذ الصفقة بنجاح على Binance!</b>\n\n`;
+                            : `✅ <b>تم تنفيذ الصفقة بنجاح على Bingx !</b>\n\n`;
 
                         successMsg +=
                             `الرمز: <b>${result.symbol}</b>\n` +
@@ -314,7 +314,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                             });
                             successMsg += '\n';
                         }
-                        
+
                         successMsg += `🛑 <b>وقف الخسارة:</b> ${result.stopLoss.price.toFixed(6)} (${result.stopLoss.pnlPercent.toFixed(6)}%)`;
 
                         await sendTelegramMessage(bot, ctx.chat.id, successMsg);

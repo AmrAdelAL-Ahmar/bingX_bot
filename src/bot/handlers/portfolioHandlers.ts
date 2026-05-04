@@ -5,12 +5,12 @@ import User from '../../models/User';
 import Trade from '../../models/Trade';
 
 export const registerPortfolioHandlers = (bot: Telegraf, BingXService: BingXService) => {
-    
+
     bot.hears('💰 رصيدي وملخص الأرباح', async (ctx) => {
         try {
             const balance = await BingXService.getBalance();
 
-            let msg = `<b>💰 تفاصيل الحساب (Binance):</b>\n\n`;
+            let msg = `<b>💰 تفاصيل الحساب (Bingx ):</b>\n\n`;
             msg += `الرصيد المتاح (USDT): <b>${balance.toFixed(2)}</b>\n`;
 
             const positions = await BingXService.getPositions();
@@ -54,7 +54,7 @@ export const registerPortfolioHandlers = (bot: Telegraf, BingXService: BingXServ
                 currentStatus: { $in: ['OPEN', 'TP1_HIT', 'TP2_HIT'] }
             });
 
-            let msg = '<b>💼 صفقاتي المفتوحة (Binance Live) 🟢:</b>\n\n';
+            let msg = '<b>💼 صفقاتي المفتوحة (Bingx  Live) 🟢:</b>\n\n';
             let totalPnl = 0;
             let totalMarginUsed = 0;
 
@@ -136,7 +136,7 @@ export const registerPortfolioHandlers = (bot: Telegraf, BingXService: BingXServ
     bot.command('balance', async (ctx) => {
         try {
             const balance = await BingXService.getBalance();
-            ctx.reply(`Current Binance Futures Balance: ${balance} USDT`);
+            ctx.reply(`Current Bingx  Futures Balance: ${balance} USDT`);
         } catch (error) {
             ctx.reply('Error fetching balance from bingXService.');
         }

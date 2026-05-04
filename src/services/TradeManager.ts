@@ -206,7 +206,7 @@ export class TradeManager {
                     throw new Error(reason);
                 }
 
-                // --- Binance Minimum Notional Check (5 USDT) ---
+                // --- Bingx  Minimum Notional Check (5 USDT) ---
                 const MIN_NOTIONAL = 5.1; // Using 5.1 for safety margin
                 if (user.errorMitigationEnabled && positionSizeUSDT < MIN_NOTIONAL) {
                     logger.warn(`Position notional (${positionSizeUSDT.toFixed(2)} USDT) is below minimum (${MIN_NOTIONAL} USDT). Scaling up to minimum.`);
@@ -284,7 +284,7 @@ export class TradeManager {
                         // Hedge Mode: positionSide is required (LONG or SHORT)
                         orderParams.positionSide = signal.direction;
                     }
-                    
+
                     // Attach Stop Loss and Take Profit 1 directly to the main order
                     orderParams.stopLoss = {
                         triggerPrice: stopLossPrice,
@@ -318,7 +318,7 @@ export class TradeManager {
                         if (hedgeModeRetry) {
                             retryParams.positionSide = signal.direction;
                         }
-                        
+
                         retryParams.stopLoss = {
                             triggerPrice: stopLossPrice,
                             type: 'STOP_MARKET'
@@ -341,14 +341,14 @@ export class TradeManager {
                     } else if (err.message && err.message.includes('PositionSide')) {
                         logger.warn(`Position mode mismatch detected. Retrying with flipped hedgeMode assumption...`);
                         const retryParams: any = {};
-                        
+
                         // Flip the assumption: if hedgeMode was true, we didn't send positionSide. 
                         // Wait, if hedgeMode was true, we DID send positionSide. So we remove it.
                         // If hedgeMode was false, we didn't send it, so we ADD it.
                         if (!hedgeMode) {
                             retryParams.positionSide = signal.direction;
                         }
-                        
+
                         retryParams.stopLoss = {
                             triggerPrice: stopLossPrice,
                             type: 'STOP_MARKET'
@@ -386,7 +386,7 @@ export class TradeManager {
                     targets: finalTpPrices.map(t => ({ price: t, hit: false })),
                     amount: positionSizeUSDT,
                     leverage: leverage,
-                    binanceOrderId: order.id,
+                    bingxOrderId: order.id,
                     sourceChatId: sourceChatId,
                     currentStatus: resolvedOrderType === 'limit' && order.status === 'open' ? 'PENDING' : 'OPEN',
                     logs: [tradeLog]

@@ -39,10 +39,11 @@ export class PositionMonitor {
 
             // --- 1. Handle Pending (Limit) Orders ---
             for (const trade of pendingTrades) {
-                if (!trade.bingxOrderId) continue;
+                const orderId = trade.bingxOrderId || trade.binanceOrderId;
+                if (!orderId) continue;
 
                 try {
-                    const order = await this.bingx.getOrder(trade.symbol, trade.bingxOrderId);
+                    const order = await this.bingx.getOrder(trade.symbol, orderId);
                     if (!order) continue;
 
                     if (order.status === 'closed' || order.status === 'filled') {
@@ -56,7 +57,13 @@ export class PositionMonitor {
                         // Notify user
                         const user = await User.findById(trade.userId);
                         if (user?.telegramId) {
-                            await this.notifier(user.telegramId, `✅ <b>تم تنفيذ الأمر الحدي للعملة ${trade.symbol}!</b>\nلقد تم تفعيل صفقتك المعلقة وتم ربط أوامر الوقف والهدف تلقائياً.`);
+                            const msg = `✅ <b>تم تنفيذ الأمر الحدي للعملة ${trade.symbol}!</b>\nلقد تم تفعيل صفقتك المعلقة وتم ربط أوامر الوقف والهدف تلقائياً.`;
+                            await this.notifier(user.telegramId, msg);
+                            
+                            // Send to source group if different
+                            if (trade.sourceChatId && trade.sourceChatId !== user.telegramId) {
+                                await this.notifier(trade.sourceChatId, msg);
+                            }
                         }
                     } else if (order.status === 'canceled' || order.status === 'expired') {
                         logger.info(`Limit order for ${trade.symbol} was canceled or expired.`);
@@ -65,7 +72,7 @@ export class PositionMonitor {
                         await trade.save();
                     }
                 } catch (err: any) {
-                    logger.error(`Error checking pending order ${trade.bingxOrderId}:`, err);
+                    logger.error(`Error checking pending order ${trade.bingxOrderId || trade.binanceOrderId}:`, err);
                 }
             }
 
