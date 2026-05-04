@@ -231,40 +231,12 @@ export class XTService implements IExchangeService {
     }
     async placeOrder(symbol: string, type: 'market' | 'limit', side: 'buy' | 'sell', amount: number, price?: number, params: any = {}) {
         try {
-            const placeParams = { ...params };
-            const stopLoss = placeParams.stopLoss;
-            const takeProfit = placeParams.takeProfit;
-            delete placeParams.stopLoss;
-            delete placeParams.takeProfit;
-
-            logger.info(`Placing Order: ${symbol} ${side} ${amount} with params: ${JSON.stringify(placeParams)}`);
-            const order = await this.exchange.createOrder(symbol, type, side, amount, price, placeParams);
-            logger.info(`Order placed: ${order.id} for ${symbol} ${side} ${amount} `);
-
-            if (stopLoss || takeProfit) {
-                const closeSide = side === 'buy' ? 'sell' : 'buy';
-                const positionSide = placeParams.positionSide || (side === 'buy' ? 'LONG' : 'SHORT');
-
-                if (stopLoss) {
-                    try {
-                        const slParams = { positionSide, stopLoss };
-                        await this.exchange.createOrder(symbol, 'market', closeSide, amount, undefined, slParams);
-                        logger.info(`✅ Stop Loss set at ${stopLoss} for ${symbol}`);
-                    } catch (e: any) {
-                        logger.error(`❌ Failed to set Stop Loss for ${symbol}: ${e.message}`);
-                    }
-                }
-                if (takeProfit) {
-                    try {
-                        const tpParams = { positionSide, takeProfit };
-                        await this.exchange.createOrder(symbol, 'market', closeSide, amount, undefined, tpParams);
-                        logger.info(`✅ Take Profit set at ${takeProfit} for ${symbol}`);
-                    } catch (e: any) {
-                        logger.error(`❌ Failed to set Take Profit for ${symbol}: ${e.message}`);
-                    }
-                }
-            }
-
+            // Pass all params (including stopLoss and takeProfit) directly to ccxt.
+            // CCXT's XT implementation handles stopLoss/takeProfit as native Attached Orders
+            // in the same API request — no need to create separate orders here.
+            logger.info(`Placing Order: ${symbol} ${side} ${amount} with params: ${JSON.stringify(params)}`);
+            const order = await this.exchange.createOrder(symbol, type, side, amount, price, params);
+            logger.info(`✅ Order placed: ${order.id} for ${symbol} ${side} ${amount}`);
             return order;
         } catch (error: any) {
             logger.error(`[XT] ❌ Error placing order for ${symbol}:`, error.message);
@@ -305,12 +277,14 @@ export class XTService implements IExchangeService {
     }
 
     /**
-     * Places Stop Loss and Take Profit orders on XT Futures.
+     * Places Stop Loss and/or Take Profit orders on XT Futures.
      *
-     * Based on testing:
-     *   - 'stop' type with explicit price works for SL on XT
-     *   - 'take_profit' type with explicit price works for TP on XT
-     *   - STOP_MARKET / TAKE_PROFIT_MARKET cause invalid_price errors on XT
+     * When skipFirstTp=true: SL and TP1 are skipped because they were already
+     * attached to the entry order via the stopLoss/takeProfit params in createOrder.
+     * Only TP2, TP3... are placed as separate trigger orders.
+     *
+     * When skipFirstTp=false (default/legacy): SL + all TPs are placed as separate orders.
+     * Used for limit orders filled via PositionMonitor that had no attached orders.
      */
     async placeSLTPOrders(
         symbol: string,
@@ -318,7 +292,8 @@ export class XTService implements IExchangeService {
         amount: number,
         stopLossPrice: number,
         takeProfitPrices: number[],
-        hedgeMode: boolean
+        hedgeMode: boolean,
+        skipFirstTp: boolean = false
     ): Promise<void> {
         const closeSide = direction === 'LONG' ? 'sell' : 'buy';
         const baseParams: any = hedgeMode
@@ -326,43 +301,52 @@ export class XTService implements IExchangeService {
             : { reduceOnly: true };
 
         // --- Stop Loss Order ---
-        try {
-            const cleanAmount = await this.amountToPrecision(symbol, amount);
-            if (cleanAmount > 0) {
-                const slParams = { ...baseParams, stopPrice: stopLossPrice };
-                // Use 'stop' (limit-stop) with explicit price — works reliably on XT
-                await this.exchange.createOrder(symbol, 'stop', closeSide, cleanAmount, stopLossPrice, slParams);
-                logger.info(`✅ [XT] Stop Loss placed at ${stopLossPrice.toFixed(6)} for ${symbol} (Qty: ${cleanAmount})`);
-            } else {
-                logger.error(`❌ [XT] Stop Loss amount too small after precision formatting for ${symbol}: ${amount}`);
+        // Skipped when skipFirstTp=true because SL was already attached to the entry order.
+        if (!skipFirstTp) {
+            try {
+                const cleanAmount = await this.amountToPrecision(symbol, amount);
+                if (cleanAmount > 0) {
+                    const slParams = { ...baseParams, stopPrice: stopLossPrice };
+                    await this.exchange.createOrder(symbol, 'stop', closeSide, cleanAmount, stopLossPrice, slParams);
+                    logger.info(`✅ [XT] Stop Loss placed at ${stopLossPrice.toFixed(6)} for ${symbol} (Qty: ${cleanAmount})`);
+                } else {
+                    logger.error(`❌ [XT] Stop Loss amount too small after precision formatting for ${symbol}: ${amount}`);
+                }
+            } catch (slErr: any) {
+                logger.error(`❌ [XT] Failed to place Stop Loss for ${symbol}: ${slErr.message}`);
             }
-        } catch (slErr: any) {
-            logger.error(`❌ [XT] Failed to place Stop Loss for ${symbol}: ${slErr.message}`);
+        } else {
+            logger.info(`ℹ️ [XT] SL skipped for ${symbol} — already attached to entry order.`);
         }
 
         // --- Take Profit Orders ---
-        if (takeProfitPrices.length === 0) return;
+        // When skipFirstTp=true: TP1 was attached; only place TP2, TP3...
+        // When skipFirstTp=false: place all TPs (legacy path for limit fills via PositionMonitor).
+        const tpPricesToPlace = skipFirstTp ? takeProfitPrices.slice(1) : takeProfitPrices;
+
+        if (tpPricesToPlace.length === 0) {
+            if (skipFirstTp) logger.info(`ℹ️ [XT] TP1 was attached. No additional targets to place for ${symbol}.`);
+            return;
+        }
 
         let remainingAmount = amount;
-        const numTargets = takeProfitPrices.length;
+        const numTargets = tpPricesToPlace.length;
 
         for (let i = 0; i < numTargets; i++) {
             if (remainingAmount <= 0) break;
 
-            const tpPrice = takeProfitPrices[i];
+            const tpPrice = tpPricesToPlace[i];
+            const tpLabel = skipFirstTp ? i + 2 : i + 1; // TP2, TP3... when TP1 was attached
 
             try {
-                // Determine portion: divide remaining by remaining targets
                 const rawPortion = remainingAmount / (numTargets - i);
                 let tpAmount = await this.amountToPrecision(symbol, rawPortion);
 
-                // If the precision makes it 0 (e.g. 0.5 contracts), and this is the last target, just use all remaining
-                // Or if it's not the last, we might have to floor it or let amountToPrecision handle it.
                 if (tpAmount <= 0) {
                     if (i === numTargets - 1) {
                         tpAmount = await this.amountToPrecision(symbol, remainingAmount);
                     } else {
-                        logger.warn(`[XT] Take Profit portion too small for ${symbol} target ${i + 1}, skipping this target.`);
+                        logger.warn(`[XT] Take Profit portion too small for ${symbol} TP${tpLabel}, skipping.`);
                         continue;
                     }
                 }
@@ -374,13 +358,12 @@ export class XTService implements IExchangeService {
                 if (tpAmount <= 0) continue;
 
                 const tpParams = { ...baseParams, stopPrice: tpPrice };
-                // Use 'take_profit' (limit-take-profit) with explicit price — works reliably on XT
                 await this.exchange.createOrder(symbol, 'take_profit', closeSide, tpAmount, tpPrice, tpParams);
-                logger.info(`✅ [XT] Take Profit placed at ${tpPrice.toFixed(6)} for ${symbol} (Qty: ${tpAmount})`);
+                logger.info(`✅ [XT] Take Profit ${tpLabel} placed at ${tpPrice.toFixed(6)} for ${symbol} (Qty: ${tpAmount})`);
 
                 remainingAmount -= tpAmount;
             } catch (tpErr: any) {
-                logger.error(`❌ [XT] Failed to place Take Profit at ${tpPrice.toFixed(6)} for ${symbol}: ${tpErr.message}`);
+                logger.error(`❌ [XT] Failed to place TP${tpLabel} at ${tpPrice.toFixed(6)} for ${symbol}: ${tpErr.message}`);
             }
         }
     }

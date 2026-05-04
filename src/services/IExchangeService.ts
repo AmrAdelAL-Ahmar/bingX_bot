@@ -92,7 +92,10 @@ export interface IExchangeService {
     getOpenOrders(symbol?: string): Promise<any[]>;
 
     /**
-     * Places Stop Loss and Take Profit orders after the main order has been executed.
+     * Places remaining Take Profit orders after the main order has been executed.
+     * When skipFirstTp is true, TP1 is skipped because it was already attached
+     * directly to the entry order as an Attached Order (stopLoss + takeProfit params).
+     * stopLossPrice is kept for legacy/PositionMonitor use but is not re-placed when skipFirstTp is true.
      */
     placeSLTPOrders(
         symbol: string,
@@ -100,6 +103,7 @@ export interface IExchangeService {
         amount: number,
         stopLossPrice: number,
         takeProfitPrices: number[],
-        hedgeMode: boolean
+        hedgeMode: boolean,
+        skipFirstTp?: boolean
     ): Promise<void>;
 }
