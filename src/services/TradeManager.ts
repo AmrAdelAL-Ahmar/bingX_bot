@@ -109,7 +109,7 @@ export class TradeManager {
 
                 // 1.5 Calculate SL/TP prices
                 let stopLossPrice = await this.exchange.priceToPrecision(signal.symbol, signal.stopLoss);
-                
+
                 // Use Volatility SL if enabled OR if HITLAR mode is enabled
                 if (user.volatilitySlEnabled || isHitlar) {
                     const percentage = isHitlar ? hitlar.volatilitySlPercentage : (user.volatilitySlPercentage || 5);
@@ -166,8 +166,11 @@ export class TradeManager {
                 let positionSizeUSDT = marginUsed * leverage;
 
                 // Calculate Contracts first to check sizes
-                const rawAmount = positionSizeUSDT / entryPrice;
-                let amountContracts = await this.exchange.amountToPrecision(signal.symbol, rawAmount);
+                const contractSize = await this.exchange.getContractSize(signal.symbol);
+                const rawAmount = positionSizeUSDT / entryPrice; // This is the number of coins
+                const rawContracts = rawAmount / contractSize; // This is the number of contracts
+                
+                let amountContracts = await this.exchange.amountToPrecision(signal.symbol, rawContracts);
                 const minAmount = await this.exchange.getMarketMinAmount(signal.symbol);
 
                 // Check min constraints immediately before SL check
@@ -247,7 +250,8 @@ export class TradeManager {
                     leverage = actualLeverage;
                     positionSizeUSDT = marginUsed * leverage;
                     const recalcRaw = positionSizeUSDT / entryPrice;
-                    amountContracts = await this.exchange.amountToPrecision(signal.symbol, recalcRaw);
+                    const recalcContracts = recalcRaw / contractSize;
+                    amountContracts = await this.exchange.amountToPrecision(signal.symbol, recalcContracts);
                     logger.warn(`Leverage adjusted to ${leverage}x → recalculated position: ${positionSizeUSDT.toFixed(4)} USDT, ${amountContracts} contracts`);
                 }
 
@@ -304,29 +308,32 @@ export class TradeManager {
                     ? `Limit order placed at ${entryPrice} on ${new Date().toISOString()} via Signal. Risk: ${riskPercentage}%, Lev: ${leverage}x. SL/TP pending fill.`
                     : `Opened trade at ${new Date().toISOString()} via Signal. Risk: ${riskPercentage}%, Lev: ${leverage}x`;
 
+                // XT sometimes returns status: undefined for newly placed orders
+                const isExplicitlyFilled = ['closed', 'filled', 'FILLED', 'done', 'DONE', 'full_fill'].includes(order?.status);
+                const isPendingLimit = resolvedOrderType === 'limit' && !isExplicitlyFilled;
+
                 const trade = new Trade({
                     userId: user._id,
                     symbol: signal.symbol,
                     direction: signal.direction,
-                    entryPrice: order.average || entryPrice,
+                    entryPrice: order?.average || entryPrice,
                     stopLoss: stopLossPrice,
                     targets: signal.targets.map(t => ({ price: t, hit: false })),
                     amount: positionSizeUSDT,
                     leverage: leverage,
-                    xtOrderId: order.id,
+                    xtOrderId: order?.id,
                     sourceChatId: sourceChatId,
-                    currentStatus: resolvedOrderType === 'limit' && order.status === 'open' ? 'PENDING' : 'OPEN',
+                    currentStatus: isPendingLimit ? 'PENDING' : 'OPEN',
                     logs: [tradeLog]
                 });
                 await trade.save();
 
-                logger.info(`✅ Trade successfully executed for ${signal.symbol}: ${order.id}`);
+                logger.info(`✅ Trade successfully executed for ${signal.symbol}: ${order?.id || 'Unknown ID'}`);
 
                 // 6.5 Place SL/TP orders on XT Futures
                 // For MARKET orders: place SL/TP immediately.
-                // For LIMIT orders: only place SL/TP if the order was filled immediately (status = 'closed').
-                const orderFilled = order.status === 'closed' || order.status === 'filled';
-                const shouldPlaceSlTp = resolvedOrderType === 'market' || orderFilled;
+                // For LIMIT orders: only place SL/TP if the order was filled immediately
+                const shouldPlaceSlTp = resolvedOrderType === 'market' || isExplicitlyFilled;
 
                 if (shouldPlaceSlTp) {
                     try {
@@ -376,7 +383,7 @@ export class TradeManager {
                     targets: targetsResult,
                     stopLoss: slResult,
                     orderType: resolvedOrderType,
-                    isPending: resolvedOrderType === 'limit' && order.status === 'open'
+                    isPending: isPendingLimit
                 };
 
             }

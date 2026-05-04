@@ -136,7 +136,7 @@ export const registerTradingHandlers = (bot: Telegraf, xtService: IExchangeServi
                 const posEntryPrice = parseFloat(pos.entryPrice);
                 msg += `سعر الدخول: ${formatPrice(posEntryPrice)}\n`;
 
-                const pnl = pos.unrealizedPnl !== undefined ? pos.unrealizedPnl :
+                let pnl = pos.unrealizedPnl !== undefined ? pos.unrealizedPnl :
                     (pos.info && pos.info.unrealizedProfit ? parseFloat(pos.info.unrealizedProfit) : 0);
 
                 let margin = pos.initialMargin !== undefined ? pos.initialMargin :
@@ -146,7 +146,22 @@ export const registerTradingHandlers = (bot: Telegraf, xtService: IExchangeServi
                     margin = Math.abs(pos.notional) / (pos.leverage || 10);
                 }
 
-                const roe = pos.percentage !== undefined ? pos.percentage : (margin > 0 ? (pnl / margin) * 100 : 0);
+                let roe = pos.percentage !== undefined ? pos.percentage : (margin > 0 ? (pnl / margin) * 100 : 0);
+
+                let markPrice = posEntryPrice;
+                try {
+                    const live = await xtService.getMarketPrice(pos.symbol);
+                    if (live > 0) markPrice = live;
+                } catch (e) {}
+
+                if (pnl === 0 || isNaN(pnl)) {
+                    const isLong = trade.direction === 'LONG';
+                    const diff = isLong ? (markPrice - posEntryPrice) : (posEntryPrice - markPrice);
+                    const leverage = pos.leverage || trade.leverage || 10;
+                    const pnlPercent = posEntryPrice > 0 ? (diff / posEntryPrice) * 100 * leverage : 0;
+                    pnl = margin * (pnlPercent / 100);
+                    roe = pnlPercent;
+                }
 
                 msg += `الربح/الخسارة العائمة: ${pnl >= 0 ? '🟢' : '🔴'} <b>${formatAmount(pnl)} USDT</b> (${roe.toFixed(2)}%)\n`;
                 msg += `النسبة من المحفظة: ${((margin / balance) * 100).toFixed(2)}%\n`;

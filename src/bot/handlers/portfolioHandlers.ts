@@ -62,12 +62,12 @@ export const registerPortfolioHandlers = (bot: Telegraf, xtService: IExchangeSer
             for (const pos of positions) {
                 if (parseFloat(pos.contracts) === 0) continue;
 
-                const pnl = pos.unrealizedPnl !== undefined && pos.unrealizedPnl !== null
+                let pnl = pos.unrealizedPnl !== undefined && pos.unrealizedPnl !== null
                     ? pos.unrealizedPnl
                     : (pos.info?.unrealizedPnl !== undefined ? parseFloat(pos.info.unrealizedPnl)
                     : (pos.info?.unrealizedProfit !== undefined ? parseFloat(pos.info.unrealizedProfit) : 0));
 
-                totalPnl += pnl;
+
 
                 let margin = pos.initialMargin !== undefined && pos.initialMargin !== null
                     ? pos.initialMargin
@@ -89,15 +89,29 @@ export const registerPortfolioHandlers = (bot: Telegraf, xtService: IExchangeSer
 
                 const emoji = pnl >= 0 ? '🟢' : '🔴';
                 const entryPrice = parseFloat(pos.entryPrice) || parseFloat(pos.info?.entryPrice) || 0;
-                // XT may return markPrice in info or as a separate field
-                const rawMarkPrice = pos.markPrice ?? pos.info?.markPrice ?? pos.info?.markValue ?? entryPrice;
-                const markPrice = parseFloat(rawMarkPrice) || entryPrice;
+                // Fetch live market price
+                let markPrice = entryPrice;
+                try {
+                    const live = await xtService.getMarketPrice(pos.symbol);
+                    if (live > 0) markPrice = live;
+                } catch (e) {}
+
                 const amountCoins = parseFloat(pos.contracts) || parseFloat(pos.info?.positionAmt) || 0;
                 const posSide = (pos.side || pos.info?.side || 'LONG').toString().toUpperCase();
 
                 const trade = openTrades.find(t => t.symbol === pos.symbol || pos.symbol.includes(t.symbol.split('/')[0]));
+                const leverage = pos.leverage || (trade ? trade.leverage : 10) || 10;
 
-                const leverage = pos.leverage || (trade ? trade.leverage : null) || 'N/A';
+                // Manual PnL recalculation to fix XT 0.00 issue
+                if (pnl === 0 || isNaN(pnl)) {
+                    const isLong = posSide === 'LONG';
+                    const diff = isLong ? (markPrice - entryPrice) : (entryPrice - markPrice);
+                    const pnlPercent = entryPrice > 0 ? (diff / entryPrice) * 100 * leverage : 0;
+                    pnl = margin * (pnlPercent / 100);
+                    roe = pnlPercent;
+                }
+
+                totalPnl += pnl;
                 msg += `<b>${pos.symbol}</b> (${posSide}) | الرافعة: <b>${leverage}x</b>\n` +
                     `الدخول: ${formatPrice(entryPrice)} ➡️ الحالي: ${formatPrice(markPrice)}\n` +
                     `المبلغ المستثمر (Margin): ${formatAmount(margin)} USDT (النسبة من الرصيد: ${balance > 0 ? ((margin / balance) * 100).toFixed(2) : 0}%)\n` +
