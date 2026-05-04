@@ -73,11 +73,11 @@ export class XTService implements IExchangeService {
         const cleanLeverage = Math.floor(leverage);
         try {
             await this.exchange.loadMarkets();
-            logger.info(`[XT] Attempting to set leverage: ${cleanLeverage}x for ${symbol}`);
-            await this.exchange.setLeverage(cleanLeverage, symbol);
-            logger.info(`✅ [XT] Leverage set to ${cleanLeverage}x for ${symbol}`);
+            logger.info(`[XT] Attempting to set leverage: ${cleanLeverage}x for ${symbol} (${side})`);
+            // XT requires positionSide argument — pass it explicitly
+            await this.exchange.setLeverage(cleanLeverage, symbol, { positionSide: side });
+            logger.info(`✅ [XT] Leverage set to ${cleanLeverage}x for ${symbol} (${side})`);
         } catch (error: any) {
-            // Some exchanges throw if leverage already set to same value — treat as success
             if (error.message && (
                 error.message.includes('same leverage') ||
                 error.message.includes('no need') ||
@@ -92,24 +92,27 @@ export class XTService implements IExchangeService {
     }
 
     async setMarginMode(symbol: string, mode: 'CROSS' | 'ISOLATED') {
-        try {
-            await this.exchange.loadMarkets();
-            const marginMode = mode.toLowerCase(); // XT uses lowercase: 'cross' or 'isolated'
-            logger.info(`[XT] Attempting to set margin mode: ${marginMode} for ${symbol}`);
-            await this.exchange.setMarginMode(marginMode, symbol);
-            logger.info(`✅ [XT] Margin mode set to ${marginMode} for ${symbol}`);
-        } catch (error: any) {
-            // Ignore "already set" errors
-            if (error.message && (
-                error.message.includes('already') ||
-                error.message.includes('no need') ||
-                error.message.includes('same')
-            )) {
-                logger.info(`ℹ️ [XT] Margin mode already set to ${mode} for ${symbol}`);
-                return;
+        // XT requires positionSide for setMarginMode — apply to both LONG and SHORT sides
+        await this.exchange.loadMarkets();
+        const marginMode = mode.toLowerCase(); // XT expects 'cross' or 'isolated'
+        for (const positionSide of ['LONG', 'SHORT']) {
+            try {
+                logger.info(`[XT] Setting margin mode: ${marginMode} for ${symbol} (${positionSide})`);
+                await this.exchange.setMarginMode(marginMode, symbol, { positionSide });
+                logger.info(`✅ [XT] Margin mode set to ${marginMode} for ${symbol} (${positionSide})`);
+            } catch (error: any) {
+                // Ignore "already set" errors — they are expected on 2nd call
+                if (error.message && (
+                    error.message.includes('already') ||
+                    error.message.includes('no need') ||
+                    error.message.includes('same')
+                )) {
+                    logger.info(`ℹ️ [XT] Margin mode already ${marginMode} for ${symbol} (${positionSide})`);
+                    continue;
+                }
+                // Not fatal — log and continue (some XT accounts have cross-only)
+                logger.warn(`⚠️ [XT] setMarginMode failed for ${symbol} (${positionSide}): ${error.message}`);
             }
-            logger.error(`❌ [XT] Failed to set margin mode for ${symbol}: ${error.message}`);
-            // Not fatal — continue without throwing
         }
     }
 
