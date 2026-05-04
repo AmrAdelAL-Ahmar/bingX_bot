@@ -2,6 +2,7 @@ import { IExchangeService } from './IExchangeService';
 import Trade from '../models/Trade';
 import User from '../models/User';
 import logger from '../utils/logger';
+import { formatPrice, formatAmount } from '../utils/formatters';
 
 export class PositionMonitor {
     private exchange: IExchangeService;
@@ -96,7 +97,7 @@ export class PositionMonitor {
                             await this.notifier(
                                 user.telegramId,
                                 `✅ <b>تم تنفيذ الأمر الحدي للعملة ${trade.symbol}!</b>\n` +
-                                `سعر الدخول الفعلي: <b>${trade.entryPrice.toFixed(6)}</b>\n` +
+                                `سعر الدخول الفعلي: <b>${formatPrice(trade.entryPrice)}</b>\n` +
                                 `تم وضع أوامر وقف الخسارة والأهداف بنجاح.`
                             );
                         }
@@ -203,7 +204,7 @@ export class PositionMonitor {
                                     logger.info(`SL warning triggered for ${trade.symbol}: ${lossPercent.toFixed(2)}% capital loss`);
                                     const msg = `⚠️🔔 <b>تحذير: اقتراب من وقف الخسارة!</b>\n\n` +
                                         `📉 الرمز: <b>${trade.symbol}</b> (${trade.direction})\n` +
-                                        `💸 الخسارة الحالية: <b>${pnl.toFixed(2)} USDT</b>\n` +
+                                        `💸 الخسارة الحالية: <b>${formatAmount(pnl)} USDT</b>\n` +
                                         `⚡ نسبة الخسارة من رأس المال: <b>${lossPercent.toFixed(2)}%</b>\n\n` +
                                         `🚨 تنبيه: الخسارة وصلت إلى 5% من رأس المال، وقف الخسارة قريب جداً!`;
                                     await this.notifier(telegramId, msg);
@@ -235,8 +236,8 @@ export class PositionMonitor {
                                         logger.info(`TP warning ${threshold}% triggered for ${trade.symbol}`);
                                         const msg = `🎯🔔 <b>تنبيه: اقتراب من الهدف!</b>\n\n` +
                                             `📈 الرمز: <b>${trade.symbol}</b> (${trade.direction})\n` +
-                                            `🏁 الهدف الأول: <b>${tp1}</b>\n` +
-                                            `📊 السعر الحالي: <b>${currentPrice.toFixed(4)}</b>\n` +
+                                            `🏁 الهدف الأول: <b>${formatPrice(tp1)}</b>\n` +
+                                            `📊 السعر الحالي: <b>${formatPrice(currentPrice)}</b>\n` +
                                             `✅ التقدم نحو الهدف: <b>${progressToTp.toFixed(1)}%</b>\n\n` +
                                             `🔔 لقد وصلت إلى <b>${threshold}%</b> من المسافة نحو الهدف!`;
                                         await this.notifier(telegramId, msg);
@@ -309,10 +310,10 @@ export class PositionMonitor {
 
                             const exitMsg = `${statusEmoji} <b>إغلاق صفقة: ${trade.symbol}</b>\n\n` +
                                 `📝 الحالة: <b>${statusLabel}</b>\n` +
-                                `💰 الربح/الخسارة: <b>${profitAmount.toFixed(2)} USDT (${pnlPercent.toFixed(2)}%)</b>\n` +
-                                `💵 مبلغ الدخول: <b>${margin.toFixed(2)} USDT</b> (${capitalPercentageStr} من رأس المال)\n` +
-                                `🏁 سعر الدخول: <b>${entry.toFixed(6)}</b>\n` +
-                                `🚪 سعر الإغلاق: <b>${currentPrice.toFixed(6)}</b>\n` +
+                                `💰 الربح/الخسارة: <b>${formatAmount(profitAmount)} USDT (${pnlPercent.toFixed(2)}%)</b>\n` +
+                                `💵 مبلغ الدخول: <b>${formatAmount(margin)} USDT</b> (${capitalPercentageStr} من رأس المال)\n` +
+                                `🏁 سعر الدخول: <b>${formatPrice(entry)}</b>\n` +
+                                `🚪 سعر الإغلاق: <b>${formatPrice(currentPrice)}</b>\n` +
                                 `⏱️ استمرت الصفقة: <b>${durationStr}</b>\n\n` +
                                 `🤖 نظام التداول الآلي`;
 

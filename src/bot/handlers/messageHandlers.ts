@@ -1,5 +1,6 @@
 import { Telegraf } from 'telegraf';
 import logger from '../../utils/logger';
+import { formatPrice, formatAmount } from '../../utils/formatters';
 import User from '../../models/User';
 import Trade from '../../models/Trade';
 import { getMainMenuKeyboard, getTraderSettingsKeyboard } from '../keyboards/baseKeyboards';
@@ -179,7 +180,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
 
                         let msg = `📊 <b>تقرير مخصص ليوم ${message}</b>\n\n` +
                                   `✅ إجمالي الصفقات المغلقة: <b>${trades.length}</b>\n` +
-                                  `💰 إجمالي مبلغ الربح/الخسارة: ${netPnl >= 0 ? '🟢' : '🔴'} <b>${netPnl.toFixed(2)} USDT</b>\n`;
+                                  `💰 إجمالي مبلغ الربح/الخسارة: ${netPnl >= 0 ? '🟢' : '🔴'} <b>${formatAmount(netPnl)} USDT</b>\n`;
                         
                         ctx.replyWithHTML(msg).catch(e => logger.error(`Failed to send custom report: ${e.message}`));
                     } else {
@@ -266,7 +267,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                         ctx.reply(`✅ تم إغلاق الصفقة (أو الصفقات) للعملة ${signal.symbol} بنجاح.`);
                     } else if (result) {
                         const orderTypeLabel = result.orderType === 'limit'
-                            ? `📌 حدي (Limit) عند ${result.entryPrice.toFixed(6)}`
+                            ? `📌 حدي (Limit) عند ${formatPrice(result.entryPrice)}`
                             : '⚡ سوق (Market)';
 
                         let successMsg = result.isPending
@@ -279,18 +280,18 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                             `الاتجاه: <b>${result.direction}</b>\n` +
                             `نوع التنفيذ: <b>${orderTypeLabel}</b>\n` +
                             `الرافعة المالية: <b>${result.leverage}x</b>\n` +
-                            `المبلغ المستثمر (Margin): <b>${result.margin.toFixed(6)} USDT</b> (${result.marginPercentage}% من رأس المال)\n` +
-                            `سعر الدخول: <b>${result.entryPrice.toFixed(6)}</b>\n\n`;
+                            `المبلغ المستثمر (Margin): <b>${formatAmount(result.margin)} USDT</b> (${result.marginPercentage}% من رأس المال)\n` +
+                            `سعر الدخول: <b>${formatPrice(result.entryPrice)}</b>\n\n`;
 
                         if (result.targets.length > 0) {
                             successMsg += `🎯 <b>الأهداف:</b>\n`;
                             result.targets.forEach((t, i) => {
-                                successMsg += `الهدف ${i + 1}: ${t.price.toFixed(6)} (+${t.pnlPercent.toFixed(6)}%)\n`;
+                                successMsg += `الهدف ${i + 1}: ${formatPrice(t.price)} (+${t.pnlPercent.toFixed(2)}%)\n`;
                             });
                             successMsg += '\n';
                         }
                         
-                        successMsg += `🛑 <b>وقف الخسارة:</b> ${result.stopLoss.price.toFixed(6)} (${result.stopLoss.pnlPercent.toFixed(6)}%)`;
+                        successMsg += `🛑 <b>وقف الخسارة:</b> ${formatPrice(result.stopLoss.price)} (${result.stopLoss.pnlPercent.toFixed(2)}%)`;
 
                         await ctx.replyWithHTML(successMsg);
 

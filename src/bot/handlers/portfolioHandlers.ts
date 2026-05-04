@@ -3,6 +3,7 @@ import logger from '../../utils/logger';
 import { IExchangeService } from '../../services/IExchangeService';
 import User from '../../models/User';
 import Trade from '../../models/Trade';
+import { formatPrice, formatAmount } from '../../utils/formatters';
 
 export const registerPortfolioHandlers = (bot: Telegraf, xtService: IExchangeService) => {
     
@@ -11,7 +12,7 @@ export const registerPortfolioHandlers = (bot: Telegraf, xtService: IExchangeSer
             const balance = await xtService.getBalance();
 
             let msg = `<b>💰 تفاصيل الحساب (XT):</b>\n\n`;
-            msg += `الرصيد المتاح (USDT): <b>${balance.toFixed(2)}</b>\n`;
+            msg += `الرصيد المتاح (USDT): <b>${formatAmount(balance)}</b>\n`;
 
             const positions = await xtService.getPositions();
             let totalPnl = 0;
@@ -24,7 +25,7 @@ export const registerPortfolioHandlers = (bot: Telegraf, xtService: IExchangeSer
                     totalPnl += pnl;
                 }
                 const pnlEmoji = totalPnl >= 0 ? '🟢' : '🔴';
-                msg += `الأرباح/الخسائر غير المحققة للصفقات المفتوحة: ${pnlEmoji} <b>${totalPnl.toFixed(2)} USDT</b>\n`;
+                msg += `الأرباح/الخسائر غير المحققة للصفقات المفتوحة: ${pnlEmoji} <b>${formatAmount(totalPnl)} USDT</b>\n`;
             } else {
                 msg += `لا يوجد صفقات مفتوحة حالياً.\n`;
             }
@@ -98,23 +99,23 @@ export const registerPortfolioHandlers = (bot: Telegraf, xtService: IExchangeSer
 
                 const leverage = pos.leverage || (trade ? trade.leverage : null) || 'N/A';
                 msg += `<b>${pos.symbol}</b> (${posSide}) | الرافعة: <b>${leverage}x</b>\n` +
-                    `الدخول: ${entryPrice.toFixed(4)} ➡️ الحالي: ${markPrice.toFixed(4)}\n` +
-                    `المبلغ المستثمر (Margin): ${margin.toFixed(4)} USDT (النسبة من الرصيد: ${balance > 0 ? ((margin / balance) * 100).toFixed(2) : 0}%)\n` +
-                    `الأرباح/الخسائر الحالية: ${emoji} ${pnl.toFixed(4)} USDT (${roe.toFixed(2)}%)\n`;
+                    `الدخول: ${formatPrice(entryPrice)} ➡️ الحالي: ${formatPrice(markPrice)}\n` +
+                    `المبلغ المستثمر (Margin): ${formatAmount(margin)} USDT (النسبة من الرصيد: ${balance > 0 ? ((margin / balance) * 100).toFixed(2) : 0}%)\n` +
+                    `الأرباح/الخسائر الحالية: ${emoji} ${formatAmount(pnl)} USDT (${roe.toFixed(2)}%)\n`;
 
                 if (trade) {
                     if (trade.targets && trade.targets.length > 0) {
                         const tpPrice = trade.targets[0].price;
                         const tpPnl = posSide === 'LONG' ? (tpPrice - entryPrice) * amountCoins : (entryPrice - tpPrice) * amountCoins;
                         const tpPercent = margin > 0 ? (tpPnl / margin) * 100 : 0;
-                        msg += `الهدف القادم: ${tpPrice} 🎯 (الربح المتوقع: ${tpPnl.toFixed(4)} USDT | ${tpPercent.toFixed(2)}%)\n`;
+                        msg += `الهدف القادم: ${formatPrice(tpPrice)} 🎯 (الربح المتوقع: ${formatAmount(tpPnl)} USDT | ${tpPercent.toFixed(2)}%)\n`;
                     }
 
                     if (trade.stopLoss) {
                         const slPrice = trade.stopLoss;
                         const slPnl = posSide === 'LONG' ? (slPrice - entryPrice) * amountCoins : (entryPrice - slPrice) * amountCoins;
                         const slPercent = margin > 0 ? (slPnl / margin) * 100 : 0;
-                        msg += `وقف الخسارة: ${slPrice} 🛑 (الخسارة المتوقعة: ${slPnl.toFixed(4)} USDT | ${slPercent.toFixed(2)}%)\n`;
+                        msg += `وقف الخسارة: ${formatPrice(slPrice)} 🛑 (الخسارة المتوقعة: ${formatAmount(slPnl)} USDT | ${slPercent.toFixed(2)}%)\n`;
                     }
                 }
 
@@ -122,10 +123,10 @@ export const registerPortfolioHandlers = (bot: Telegraf, xtService: IExchangeSer
             }
 
             const totalMarginPercent = balance > 0 ? ((totalMarginUsed / balance) * 100).toFixed(2) : '0.00';
-            msg += `\n<b>إجمالي المبالغ المستثمرة:</b> ${totalMarginUsed.toFixed(4)} USDT (${totalMarginPercent}% من الرصيد)\n`;
+            msg += `\n<b>إجمالي المبالغ المستثمرة:</b> ${formatAmount(totalMarginUsed)} USDT (${totalMarginPercent}% من الرصيد)\n`;
 
             const totalEmoji = totalPnl >= 0 ? '🟢' : '🔴';
-            msg += `<b>إجمالي الربح/الخسارة العائم: ${totalEmoji} ${totalPnl.toFixed(4)} USDT</b>`;
+            msg += `<b>إجمالي الربح/الخسارة العائم: ${totalEmoji} ${formatAmount(totalPnl)} USDT</b>`;
 
             ctx.replyWithHTML(msg).catch(e => logger.error(`Failed to send positions list: ${e.message}`));
         } catch (error) {
@@ -137,7 +138,7 @@ export const registerPortfolioHandlers = (bot: Telegraf, xtService: IExchangeSer
     bot.command('balance', async (ctx) => {
         try {
             const balance = await xtService.getBalance();
-            ctx.reply(`💰 رصيد XT Futures الحالي: ${balance.toFixed(2)} USDT`);
+            ctx.reply(`💰 رصيد XT Futures الحالي: ${formatAmount(balance)} USDT`);
         } catch (error) {
             ctx.reply('حدث خطأ أثناء جلب الرصيد من XT.');
         }

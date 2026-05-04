@@ -4,6 +4,7 @@ import { IExchangeService } from '../../services/IExchangeService';
 import User from '../../models/User';
 import Trade from '../../models/Trade';
 import { getDynamicSymbolsKeyboard, getMainMenuKeyboard } from '../keyboards/baseKeyboards';
+import { formatPrice, formatAmount } from '../../utils/formatters';
 
 export const registerTradingHandlers = (bot: Telegraf, xtService: IExchangeService) => {
 
@@ -44,9 +45,9 @@ export const registerTradingHandlers = (bot: Telegraf, xtService: IExchangeServi
 
             const pnlEmoji = totalPnl >= 0 ? '🟢 إجمالي أرباح' : '🔴 إجمالي خسارة';
             let confirmMsg = `⚠️ <b>تأكيد إغلاق جميع الصفقات (${activePosCount} صفقات) على XT</b>\n\n` +
-                `💰 <b>رأس المال المتاح (الرصيد):</b> ${balance.toFixed(2)} USDT\n` +
-                `${pnlEmoji} عائمة لهذه الصفقات: <b>${totalPnl.toFixed(2)} USDT</b>\n\n` +
-                `الرصيد المتوقع بعد الإغلاق: <b>${(balance + totalPnl).toFixed(2)} USDT</b>\n\n` +
+                `💰 <b>رأس المال المتاح (الرصيد):</b> ${formatAmount(balance)} USDT\n` +
+                `${pnlEmoji} عائمة لهذه الصفقات: <b>${formatAmount(totalPnl)} USDT</b>\n\n` +
+                `الرصيد المتوقع بعد الإغلاق: <b>${formatAmount(balance + totalPnl)} USDT</b>\n\n` +
                 `هل أنت متأكد من رغبتك في إغلاق جميع الصفقات بسعر السوق الحالي (Market)؟`;
 
             ctx.replyWithHTML(confirmMsg, {
@@ -133,7 +134,7 @@ export const registerTradingHandlers = (bot: Telegraf, xtService: IExchangeServi
 
             if (pos) {
                 const posEntryPrice = parseFloat(pos.entryPrice);
-                msg += `سعر الدخول: ${posEntryPrice.toFixed(4)}\n`;
+                msg += `سعر الدخول: ${formatPrice(posEntryPrice)}\n`;
 
                 const pnl = pos.unrealizedPnl !== undefined ? pos.unrealizedPnl :
                     (pos.info && pos.info.unrealizedProfit ? parseFloat(pos.info.unrealizedProfit) : 0);
@@ -147,7 +148,7 @@ export const registerTradingHandlers = (bot: Telegraf, xtService: IExchangeServi
 
                 const roe = pos.percentage !== undefined ? pos.percentage : (margin > 0 ? (pnl / margin) * 100 : 0);
 
-                msg += `الربح/الخسارة العائمة: ${pnl >= 0 ? '🟢' : '🔴'} <b>${pnl.toFixed(4)} USDT</b> (${roe.toFixed(2)}%)\n`;
+                msg += `الربح/الخسارة العائمة: ${pnl >= 0 ? '🟢' : '🔴'} <b>${formatAmount(pnl)} USDT</b> (${roe.toFixed(2)}%)\n`;
                 msg += `النسبة من المحفظة: ${((margin / balance) * 100).toFixed(2)}%\n`;
             } else {
                 msg += `الصفقة موجودة في النظام ولكن غير متصلة مؤقتاً بالمنصة.\n`;
