@@ -1,8 +1,9 @@
 
 import ccxt from 'ccxt';
 import logger from '../utils/logger';
+import { IExchangeService } from './IExchangeService';
 
-export class BinanceService {
+export class BinanceService implements IExchangeService {
     private exchange: any;
     private _isHedgeMode: boolean | null = null; // Cached position mode
 

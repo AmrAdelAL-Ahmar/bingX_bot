@@ -2,7 +2,7 @@ import { Telegraf } from 'telegraf';
 import dotenv from 'dotenv';
 import connectDB from './config/db';
 import logger from './utils/logger';
-import { BinanceService } from './services/BinanceService';
+import { XTService } from './services/XTService';
 import { TradeManager } from './services/TradeManager';
 import { SignalParser } from './services/SignalParser';
 import { ReportingService } from './services/ReportingService';
@@ -10,7 +10,7 @@ import { PositionMonitor } from './services/PositionMonitor';
 import { startHealthServer } from './server';
 import { ensureUser } from './bot/middlewares/userMiddleware';
 
-// Import newly extracted bot handlers
+// Import bot handlers
 import { registerMessageHandlers } from './bot/handlers/messageHandlers';
 import { registerPortfolioHandlers } from './bot/handlers/portfolioHandlers';
 import { registerReportHandlers } from './bot/handlers/reportHandlers';
@@ -19,13 +19,15 @@ import { registerSettingsHandlers } from './bot/handlers/settingsHandlers';
 
 dotenv.config();
 
-const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN_Binance || process.env.TELEGRAM_BOT_TOKEN || '');
-const binanceService = new BinanceService(process.env.Binance_API_KEY, process.env.Binance_SECRET_KEY);
-const tradeManager = new TradeManager(binanceService);
+const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN_XT || process.env.TELEGRAM_BOT_TOKEN || '');
+
+// XT Exchange Service — the only exchange used in this bot
+const xtService = new XTService(process.env.XT_API_KEY, process.env.XT_SECRET_KEY);
+const tradeManager = new TradeManager(xtService);
 const reportingService = new ReportingService(bot);
 
-// Initialize Monitor
-const positionMonitor = new PositionMonitor(binanceService, async (telegramId, msg) => {
+// Initialize Position Monitor
+const positionMonitor = new PositionMonitor(xtService, async (telegramId, msg) => {
     try {
         await bot.telegram.sendMessage(telegramId, msg, { parse_mode: 'HTML' });
         logger.info(`Notification sent successfully to ${telegramId}`);
@@ -38,16 +40,16 @@ const positionMonitor = new PositionMonitor(binanceService, async (telegramId, m
 bot.use(ensureUser);
 
 // Register Command Handlers
-registerPortfolioHandlers(bot, binanceService);
-registerReportHandlers(bot, binanceService);
-registerTradingHandlers(bot, binanceService);
+registerPortfolioHandlers(bot, xtService);
+registerReportHandlers(bot, xtService);
+registerTradingHandlers(bot, xtService);
 registerSettingsHandlers(bot);
 registerMessageHandlers(bot, tradeManager);
 
 const start = async () => {
     await connectDB();
 
-    // Start HTTP health check server for Render deployment
+    // Start HTTP health check server for deployment
     const port = parseInt(process.env.PORT || '3000');
     startHealthServer(port);
 
@@ -56,7 +58,7 @@ const start = async () => {
     logger.info('Position Monitor Started');
 
     bot.launch().then(() => {
-        logger.info('Telegram Bot Started Successfully');
+        logger.info('✅ XT Trading Bot Started Successfully');
         reportingService.init();
     }).catch((err) => {
         logger.error('Bot launch failed', err);

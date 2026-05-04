@@ -1,4 +1,4 @@
-import { BinanceService } from '../../services/BinanceService';
+import { IExchangeService } from '../../services/IExchangeService';
 
 // --- HELPER: GET MAIN MENU KEYBOARD ---
 export const getMainMenuKeyboard = (user: any) => {
@@ -163,8 +163,8 @@ export const buildAlertSettingsKeyboard = (user: any) => {
 };
 
 // --- HELPER TO GET ACTIVE SYMBOLS KEYBOARD ---
-export const getDynamicSymbolsKeyboard = async (binanceService: BinanceService) => {
-    const positions = await binanceService.getPositions();
+export const getDynamicSymbolsKeyboard = async (exchangeService: IExchangeService) => {
+    const positions = await exchangeService.getPositions();
     let keys: { text: string }[][] = [];
     if (positions && positions.length > 0) {
         for (const pos of positions) {

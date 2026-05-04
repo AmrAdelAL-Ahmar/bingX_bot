@@ -1,11 +1,11 @@
 import { Telegraf } from 'telegraf';
 import logger from '../../utils/logger';
-import { BinanceService } from '../../services/BinanceService';
+import { IExchangeService } from '../../services/IExchangeService';
 import User from '../../models/User';
 import Trade from '../../models/Trade';
 import { getDynamicSymbolsKeyboard, getMainMenuKeyboard } from '../keyboards/baseKeyboards';
 
-export const registerTradingHandlers = (bot: Telegraf, binanceService: BinanceService) => {
+export const registerTradingHandlers = (bot: Telegraf, xtService: IExchangeService) => {
 
     bot.hears('🛑 إلغاء كل الصفقات المفتوحة', async (ctx) => {
         try {
@@ -13,10 +13,10 @@ export const registerTradingHandlers = (bot: Telegraf, binanceService: BinanceSe
             const user = await User.findOne({ telegramId: ctx.from.id.toString() });
             if (!user) return;
 
-            ctx.reply('⏳ جاري حساب الأرباح والخسائر الحالية لمعرفة وضع الحساب على Binance...');
+            ctx.reply('⏳ جاري حساب الأرباح والخسائر الحالية لمعرفة وضع الحساب على XT...');
 
-            const balance = await binanceService.getBalance();
-            const positions = await binanceService.getPositions();
+            const balance = await xtService.getBalance();
+            const positions = await xtService.getPositions();
 
             if (!positions || positions.length === 0) {
                 ctx.reply('لا يوجد صفقات مفتوحة حالياً لإلغائها.', { reply_markup: getMainMenuKeyboard(user) });
@@ -39,16 +39,15 @@ export const registerTradingHandlers = (bot: Telegraf, binanceService: BinanceSe
                 return;
             }
 
-            // Set Bot State to AWAITING_CANCEL_ALL_CONFIRM
             user.botState = 'AWAITING_CANCEL_ALL_CONFIRM';
             await user.save();
 
             const pnlEmoji = totalPnl >= 0 ? '🟢 إجمالي أرباح' : '🔴 إجمالي خسارة';
-            let confirmMsg = `⚠️ <b>تأكيد إغلاق جميع الصفقات (${activePosCount} صفقات) على Binance</b>\n\n` +
+            let confirmMsg = `⚠️ <b>تأكيد إغلاق جميع الصفقات (${activePosCount} صفقات) على XT</b>\n\n` +
                 `💰 <b>رأس المال المتاح (الرصيد):</b> ${balance.toFixed(2)} USDT\n` +
                 `${pnlEmoji} عائمة لهذه الصفقات: <b>${totalPnl.toFixed(2)} USDT</b>\n\n` +
                 `الرصيد المتوقع بعد الإغلاق: <b>${(balance + totalPnl).toFixed(2)} USDT</b>\n\n` +
-                `هل أنت متأكد من رغبتك في إغلاق جميع الصفقات بسعر السوق الحالي (Market) المتوفر؟`;
+                `هل أنت متأكد من رغبتك في إغلاق جميع الصفقات بسعر السوق الحالي (Market)؟`;
 
             ctx.replyWithHTML(confirmMsg, {
                 reply_markup: {
@@ -62,7 +61,7 @@ export const registerTradingHandlers = (bot: Telegraf, binanceService: BinanceSe
 
         } catch (error) {
             logger.error(error);
-            ctx.reply('حدث خطأ أثناء محاولة جلب الصفقات المفتوحة من Binance.');
+            ctx.reply('حدث خطأ أثناء محاولة جلب الصفقات المفتوحة من XT.');
         }
     });
 
@@ -74,7 +73,7 @@ export const registerTradingHandlers = (bot: Telegraf, binanceService: BinanceSe
             user.botState = 'AWAITING_QUERY_SYMBOL';
             await user.save();
 
-            const activeKeys = await getDynamicSymbolsKeyboard(binanceService);
+            const activeKeys = await getDynamicSymbolsKeyboard(xtService);
 
             ctx.reply('🔍 اختر العملة من القائمة أدناه، أو قم بكتابة الرمز (مثال: BTC):', {
                 reply_markup: { keyboard: activeKeys, resize_keyboard: true, one_time_keyboard: true }
@@ -92,7 +91,7 @@ export const registerTradingHandlers = (bot: Telegraf, binanceService: BinanceSe
             user.botState = 'AWAITING_CANCEL_SYMBOL';
             await user.save();
 
-            const activeKeys = await getDynamicSymbolsKeyboard(binanceService);
+            const activeKeys = await getDynamicSymbolsKeyboard(xtService);
 
             ctx.reply('❌ اختر العملة التي تريد إلغاء صفقتها، أو قم بكتابتها (مثال: ETH):', {
                 reply_markup: { keyboard: activeKeys, resize_keyboard: true, one_time_keyboard: true }
@@ -109,57 +108,54 @@ export const registerTradingHandlers = (bot: Telegraf, binanceService: BinanceSe
                 ctx.reply('الرجاء كتابة اسم العملة. مثال: /status BTC');
                 return;
             }
-    
-            // Find trade
+
             const user = await User.findOne({ telegramId: ctx.from.id.toString() });
             if (!user) return;
-    
-            // Look for exact match or partial match in DB
+
             const trade = await Trade.findOne({
                 userId: user._id,
                 currentStatus: { $in: ['OPEN', 'TP1_HIT', 'TP2_HIT'] },
                 symbol: { $regex: input.toUpperCase() }
             }).sort({ entryTime: -1 });
-    
+
             if (!trade) {
                 ctx.reply(`لا يوجد صفقة مفتوحة للعملة ${input}`);
                 return;
             }
-    
-            // Fetch live PnL from Binance
-            const positions = await binanceService.getPositions(trade.symbol);
+
+            const positions = await xtService.getPositions(trade.symbol);
             const pos = positions.find((p: any) => p.symbol === trade.symbol);
-            const balance = await binanceService.getBalance();
-    
-            let msg = `📊 <b>Binance Status: ${trade.symbol}</b>\n` +
+            const balance = await xtService.getBalance();
+
+            let msg = `📊 <b>XT Status: ${trade.symbol}</b>\n` +
                 `النوع: ${trade.direction === 'LONG' ? 'شراء (LONG) 🟢' : 'بيع (SHORT) 🔴'}\n` +
                 `الرافعة: <b>${trade.leverage || 'N/A'}x</b>\n`;
-    
+
             if (pos) {
                 const posEntryPrice = parseFloat(pos.entryPrice);
                 msg += `سعر الدخول: ${posEntryPrice.toFixed(4)}\n`;
-    
+
                 const pnl = pos.unrealizedPnl !== undefined ? pos.unrealizedPnl :
                     (pos.info && pos.info.unrealizedProfit ? parseFloat(pos.info.unrealizedProfit) : 0);
-    
+
                 let margin = pos.initialMargin !== undefined ? pos.initialMargin :
                     (pos.info && pos.info.isolatedMargin ? parseFloat(pos.info.isolatedMargin) : 0);
-    
+
                 if (!margin && pos.notional) {
                     margin = Math.abs(pos.notional) / (pos.leverage || 10);
                 }
-    
+
                 const roe = pos.percentage !== undefined ? pos.percentage : (margin > 0 ? (pnl / margin) * 100 : 0);
-    
+
                 msg += `الربح/الخسارة العائمة: ${pnl >= 0 ? '🟢' : '🔴'} <b>${pnl.toFixed(4)} USDT</b> (${roe.toFixed(2)}%)\n`;
                 msg += `النسبة من المحفظة: ${((margin / balance) * 100).toFixed(2)}%\n`;
             } else {
                 msg += `الصفقة موجودة في النظام ولكن غير متصلة مؤقتاً بالمنصة.\n`;
             }
-    
+
             ctx.replyWithHTML(msg);
         } catch (error) {
-            ctx.reply('Error fetching status from Binance.');
+            ctx.reply('حدث خطأ أثناء الاستعلام عن الصفقة.');
         }
     });
 

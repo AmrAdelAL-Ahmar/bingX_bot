@@ -1,16 +1,16 @@
-import { BinanceService } from './BinanceService';
+import { IExchangeService } from './IExchangeService';
 import Trade from '../models/Trade';
 import User from '../models/User';
 import logger from '../utils/logger';
 
 export class PositionMonitor {
-    private binance: BinanceService;
+    private exchange: IExchangeService;
     private notifier: (telegramId: string, msg: string) => Promise<void>;
     private isRunning: boolean = false;
     private intervalId?: NodeJS.Timeout;
 
-    constructor(binance: BinanceService, notifier: (telegramId: string, msg: string) => Promise<void>) {
-        this.binance = binance;
+    constructor(exchange: IExchangeService, notifier: (telegramId: string, msg: string) => Promise<void>) {
+        this.exchange = exchange;
         this.notifier = notifier;
     }
 
@@ -39,27 +39,27 @@ export class PositionMonitor {
 
             // --- 1. Handle Pending (Limit) Orders ---
             for (const trade of pendingTrades) {
-                if (!trade.binanceOrderId) continue;
+                if (!trade.xtOrderId) continue;
 
                 try {
-                    const order = await this.binance.getOrder(trade.symbol, trade.binanceOrderId);
+                    const order = await this.exchange.getOrder(trade.symbol, trade.xtOrderId);
                     if (!order) continue;
 
                     if (order.status === 'closed' || order.status === 'filled') {
                         logger.info(`Limit order filled for ${trade.symbol}. Placing SL/TP now...`);
-                        
+
                         // Detect mode for SL/TP placement
-                        const hedgeMode = await this.binance.isHedgeMode();
-                        
+                        const hedgeMode = await this.exchange.isHedgeMode();
+
                         // Prepare SL/TP prices with precision
-                        const stopLossPrice = await this.binance.priceToPrecision(trade.symbol, trade.stopLoss);
-                        const takeProfitPrices = await Promise.all(trade.targets.map(t => this.binance.priceToPrecision(trade.symbol, t.price)));
-                        
+                        const stopLossPrice = await this.exchange.priceToPrecision(trade.symbol, trade.stopLoss);
+                        const takeProfitPrices = await Promise.all(trade.targets.map(t => this.exchange.priceToPrecision(trade.symbol, t.price)));
+
                         // Calculate amount Contracts (using the amount field which is positionSizeUSDT)
-                        const amountContracts = await this.binance.amountToPrecision(trade.symbol, trade.amount / trade.entryPrice);
+                        const amountContracts = await this.exchange.amountToPrecision(trade.symbol, trade.amount / trade.entryPrice);
 
                         // Place orders
-                        await this.binance.placeSLTPOrders(
+                        await this.exchange.placeSLTPOrders(
                             trade.symbol,
                             trade.direction,
                             amountContracts,
@@ -85,7 +85,7 @@ export class PositionMonitor {
                         await trade.save();
                     }
                 } catch (err: any) {
-                    logger.error(`Error checking pending order ${trade.binanceOrderId}:`, err);
+                    logger.error(`Error checking pending order ${trade.xtOrderId}:`, err);
                 }
             }
 
@@ -99,13 +99,13 @@ export class PositionMonitor {
             // Fetch balance for SL warning calculation (5% threshold)
             let totalBalance = 0;
             try {
-                totalBalance = await this.binance.getTotalEquity();
+                totalBalance = await this.exchange.getTotalEquity();
             } catch (e) {
                 logger.warn('Could not fetch balance for SL warning calculation.');
             }
 
             for (const symbol of symbols) {
-                const positions = await this.binance.getPositions(symbol);
+                const positions = await this.exchange.getPositions(symbol);
                 const tradesForSymbol = openTrades.filter(t => t.symbol === symbol);
 
                 for (const trade of tradesForSymbol) {
@@ -129,7 +129,7 @@ export class PositionMonitor {
                     if (matchingPos) {
                         // --- Position is still ACTIVE: check warnings ---
 
-                        const currentPrice: number = parseFloat(matchingPos.markPrice) || await this.binance.getMarketPrice(symbol);
+                        const currentPrice: number = parseFloat(matchingPos.markPrice) || await this.exchange.getMarketPrice(symbol);
                         const entry = trade.entryPrice;
 
                         // --- TP1 BreakEven Logic ---
@@ -145,9 +145,9 @@ export class PositionMonitor {
                                     // BinanceService should have setStopLoss implemented or we handle it here
                                     // For now, let's assume it's there
                                     // @ts-ignore
-                                    if (typeof this.binance.setStopLoss === 'function') {
+                                    if (typeof this.exchange.setStopLoss === 'function') {
                                         // @ts-ignore
-                                        await this.binance.setStopLoss(symbol, entry, trade.direction);
+                                        await this.exchange.setStopLoss(symbol, entry, trade.direction);
                                     }
                                     trade.isBreakEvenSet = true;
                                     trade.logs.push(`Auto-adjusted SL to BE at ${entry} after TP1 hit`);
@@ -232,7 +232,7 @@ export class PositionMonitor {
                         // --- Position is GONE (closed by SL/TP/manual) ---
                         logger.info(`Trade ${trade._id} (${trade.symbol}) is NO LONGER active on Binance. Closing in DB...`);
 
-                        const currentPrice = await this.binance.getMarketPrice(symbol);
+                        const currentPrice = await this.exchange.getMarketPrice(symbol);
                         const entry = trade.entryPrice;
                         const lev = trade.leverage || 10;
                         let pnlPercent = 0;
@@ -255,13 +255,13 @@ export class PositionMonitor {
                             const durationMs = closeTime.getTime() - trade.entryTime.getTime();
                             const durationMinutes = Math.floor(durationMs / 60000);
                             const durationHours = Math.floor(durationMinutes / 60);
-                            const durationStr = durationHours > 0 
+                            const durationStr = durationHours > 0
                                 ? `${durationHours} ساعة و ${durationMinutes % 60} دقيقة`
                                 : `${durationMinutes} دقيقة`;
 
                             const margin = trade.amount / lev;
                             const profitAmount = margin * (pnlPercent / 100);
-                            
+
                             // Calculate capital percentage
                             let capitalPercentageStr = 'N/A';
                             if (totalBalance > 0) {

@@ -12,7 +12,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
     bot.start(async (ctx) => {
         const user = await User.findOne({ telegramId: ctx.from.id.toString() });
         const welcomeMsg = `🤖 <b>مرحباً بك في بوت التداول الآلي!</b>\n\n` +
-            `أنا مساعدك الذكي لتنفيذ صفقات العملات الرقمية على منصة Binance بشكل آلي واحترافي.\n\n` +
+            `أنا مساعدك الذكي لتنفيذ صفقات العملات الرقمية على منصة XT بشكل آلي واحترافي.\n\n` +
             `🚀 <b>ماذا يمكنني أن أفعل لك؟</b>\n` +
             `• تنفيذ الصفقات فور استقبال الإشارات.\n` +
             `• إدارة المخاطر وحماية رأس المال.\n` +
@@ -272,7 +272,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                         let successMsg = result.isPending
                             ? `⏳ <b>تم وضع أمر حدي بنجاح — ينتظر التنفيذ!</b>
 💡 سيتم وضع الأهداف والاستوب تلقائياً عند تنفيذ الأمر.\n\n`
-                            : `✅ <b>تم تنفيذ الصفقة بنجاح على Binance!</b>\n\n`;
+                            : `✅ <b>تم تنفيذ الصفقة بنجاح على XT!</b>\n\n`;
 
                         successMsg +=
                             `الرمز: <b>${result.symbol}</b>\n` +

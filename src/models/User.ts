@@ -3,8 +3,8 @@ import mongoose, { Schema, Document } from 'mongoose';
 export interface IUser extends Document {
     telegramId: string;
     username?: string;
-    bingxApiKey?: string;
-    bingxSecretKey?: string;
+    xtApiKey?: string;
+    xtSecretKey?: string;
     riskPercentage: number; // e.g., 5 for 5%
     enforceMaxSlLoss?: boolean;
     botState?: string;
@@ -38,8 +38,8 @@ export interface IUser extends Document {
 const UserSchema: Schema = new Schema({
     telegramId: { type: String, required: true, unique: true },
     username: { type: String },
-    bingxApiKey: { type: String },
-    bingxSecretKey: { type: String },
+    xtApiKey: { type: String },
+    xtSecretKey: { type: String },
     riskPercentage: { type: Number, default: 3 }, // Default 3% risk
     enforceMaxSlLoss: { type: Boolean, default: null },
     botState: { type: String, default: null },

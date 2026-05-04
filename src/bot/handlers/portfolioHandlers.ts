@@ -1,19 +1,19 @@
 import { Telegraf } from 'telegraf';
 import logger from '../../utils/logger';
-import { BinanceService } from '../../services/BinanceService';
+import { IExchangeService } from '../../services/IExchangeService';
 import User from '../../models/User';
 import Trade from '../../models/Trade';
 
-export const registerPortfolioHandlers = (bot: Telegraf, binanceService: BinanceService) => {
+export const registerPortfolioHandlers = (bot: Telegraf, xtService: IExchangeService) => {
     
     bot.hears('💰 رصيدي وملخص الأرباح', async (ctx) => {
         try {
-            const balance = await binanceService.getBalance();
+            const balance = await xtService.getBalance();
 
-            let msg = `<b>💰 تفاصيل الحساب (Binance):</b>\n\n`;
+            let msg = `<b>💰 تفاصيل الحساب (XT):</b>\n\n`;
             msg += `الرصيد المتاح (USDT): <b>${balance.toFixed(2)}</b>\n`;
 
-            const positions = await binanceService.getPositions();
+            const positions = await xtService.getPositions();
             let totalPnl = 0;
 
             if (positions && positions.length > 0) {
@@ -31,7 +31,7 @@ export const registerPortfolioHandlers = (bot: Telegraf, binanceService: Binance
 
             ctx.replyWithHTML(msg).catch(e => logger.error(`Failed to send balance info: ${e.message}`));
         } catch (error) {
-            ctx.reply('حدث خطأ أثناء جلب الرصيد من Binance.').catch(e => logger.error(`Failed to send balance error: ${e.message}`));
+            ctx.reply('حدث خطأ أثناء جلب الرصيد من XT.').catch(e => logger.error(`Failed to send balance error: ${e.message}`));
         }
     });
 
@@ -41,8 +41,8 @@ export const registerPortfolioHandlers = (bot: Telegraf, binanceService: Binance
             const user = await User.findOne({ telegramId: ctx.from.id.toString() });
             if (!user) return;
 
-            const balance = await binanceService.getBalance();
-            const positions = await binanceService.getPositions();
+            const balance = await xtService.getBalance();
+            const positions = await xtService.getPositions();
 
             if (!positions || positions.length === 0) {
                 ctx.reply('لا يوجد صفقات مفتوحة حالياً.').catch(e => logger.error(`Failed to send no positions notice: ${e.message}`));
@@ -54,7 +54,7 @@ export const registerPortfolioHandlers = (bot: Telegraf, binanceService: Binance
                 currentStatus: { $in: ['OPEN', 'TP1_HIT', 'TP2_HIT'] }
             });
 
-            let msg = '<b>💼 صفقاتي المفتوحة (Binance Live) 🟢:</b>\n\n';
+            let msg = '<b>💼 صفقاتي المفتوحة (XT Live) 🟢:</b>\n\n';
             let totalPnl = 0;
             let totalMarginUsed = 0;
 
@@ -69,7 +69,6 @@ export const registerPortfolioHandlers = (bot: Telegraf, binanceService: Binance
                 let margin = pos.initialMargin !== undefined ? pos.initialMargin :
                     (pos.info && pos.info.isolatedMargin ? parseFloat(pos.info.isolatedMargin) : 0);
 
-                // Fallback for margin if not found directly
                 if (!margin && pos.notional) {
                     margin = Math.abs(pos.notional) / (pos.leverage || 10);
                 }
@@ -90,7 +89,6 @@ export const registerPortfolioHandlers = (bot: Telegraf, binanceService: Binance
                 const amountCoins = parseFloat(pos.contracts);
                 const posSide = pos.side.toUpperCase();
 
-                // Match trade in DB for TP/SL details
                 const trade = openTrades.find(t => t.symbol === pos.symbol || pos.symbol.includes(t.symbol.split('/')[0]));
 
                 const leverage = pos.leverage || (trade ? trade.leverage : null) || 'N/A';
@@ -100,7 +98,6 @@ export const registerPortfolioHandlers = (bot: Telegraf, binanceService: Binance
                     `الأرباح/الخسائر الحالية: ${emoji} ${pnl.toFixed(4)} USDT (${roe.toFixed(2)}%)\n`;
 
                 if (trade) {
-                    // Potential TP Profit
                     if (trade.targets && trade.targets.length > 0) {
                         const tpPrice = trade.targets[0].price;
                         const tpPnl = posSide === 'LONG' ? (tpPrice - entryPrice) * amountCoins : (entryPrice - tpPrice) * amountCoins;
@@ -108,7 +105,6 @@ export const registerPortfolioHandlers = (bot: Telegraf, binanceService: Binance
                         msg += `الهدف القادم: ${tpPrice} 🎯 (الربح المتوقع: ${tpPnl.toFixed(4)} USDT | ${tpPercent.toFixed(2)}%)\n`;
                     }
 
-                    // Potential SL Loss
                     if (trade.stopLoss) {
                         const slPrice = trade.stopLoss;
                         const slPnl = posSide === 'LONG' ? (slPrice - entryPrice) * amountCoins : (entryPrice - slPrice) * amountCoins;
@@ -128,17 +124,17 @@ export const registerPortfolioHandlers = (bot: Telegraf, binanceService: Binance
 
             ctx.replyWithHTML(msg).catch(e => logger.error(`Failed to send positions list: ${e.message}`));
         } catch (error) {
-            logger.error('Error in btn_positions_all:', error);
-            ctx.reply('Error fetching positions from Binance.').catch(e => logger.error(`Failed to send positions error: ${e.message}`));
+            logger.error('Error in positions handler:', error);
+            ctx.reply('حدث خطأ أثناء جلب الصفقات من XT.').catch(e => logger.error(`Failed to send positions error: ${e.message}`));
         }
     });
 
     bot.command('balance', async (ctx) => {
         try {
-            const balance = await binanceService.getBalance();
-            ctx.reply(`Current Binance Futures Balance: ${balance} USDT`);
+            const balance = await xtService.getBalance();
+            ctx.reply(`💰 رصيد XT Futures الحالي: ${balance.toFixed(2)} USDT`);
         } catch (error) {
-            ctx.reply('Error fetching balance from Binance.');
+            ctx.reply('حدث خطأ أثناء جلب الرصيد من XT.');
         }
     });
 
