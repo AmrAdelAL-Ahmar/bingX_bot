@@ -74,15 +74,14 @@ export class BinanceService implements IExchangeService {
         }
     }
 
-    async setLeverage(symbol: string, leverage: number, side: 'LONG' | 'SHORT' = 'LONG') {
+    async setLeverage(symbol: string, leverage: number, side: 'LONG' | 'SHORT' = 'LONG'): Promise<number> {
         const cleanLeverage = Math.floor(leverage);
-
         try {
             await this.exchange.loadMarkets();
             logger.info(`Attempting to set leverage: ${cleanLeverage}x for ${symbol}`);
-            // Binance unified setLeverage doesn't always need side, but we can pass it in params if needed
             await this.exchange.setLeverage(cleanLeverage, symbol);
             logger.info(`✅ Leverage set to ${cleanLeverage}x for ${symbol}`);
+            return cleanLeverage;
         } catch (error: any) {
             logger.error(`❌ Failed to set leverage for ${symbol}: ${error.message}`);
             throw error;
@@ -128,6 +127,18 @@ export class BinanceService implements IExchangeService {
         await this.exchange.loadMarkets();
         const market = this.exchange.market(symbol);
         return market?.limits?.amount?.min || 0;
+    }
+
+    async getMarketMinCost(symbol: string): Promise<number> {
+        await this.exchange.loadMarkets();
+        const market = this.exchange.market(symbol);
+        return market?.limits?.cost?.min || 5; // Binance minimum is typically 5 USDT
+    }
+
+    async getContractSize(symbol: string): Promise<number> {
+        await this.exchange.loadMarkets();
+        const market = this.exchange.market(symbol);
+        return market?.contractSize || 1;
     }
 
     async getBalance() {

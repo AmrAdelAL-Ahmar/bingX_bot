@@ -61,13 +61,16 @@ export const registerPortfolioHandlers = (bot: Telegraf, xtService: IExchangeSer
             for (const pos of positions) {
                 if (parseFloat(pos.contracts) === 0) continue;
 
-                const pnl = pos.unrealizedPnl !== undefined ? pos.unrealizedPnl :
-                    (pos.info && pos.info.unrealizedProfit ? parseFloat(pos.info.unrealizedProfit) : 0);
+                const pnl = pos.unrealizedPnl !== undefined && pos.unrealizedPnl !== null
+                    ? pos.unrealizedPnl
+                    : (pos.info?.unrealizedPnl !== undefined ? parseFloat(pos.info.unrealizedPnl)
+                    : (pos.info?.unrealizedProfit !== undefined ? parseFloat(pos.info.unrealizedProfit) : 0));
 
                 totalPnl += pnl;
 
-                let margin = pos.initialMargin !== undefined ? pos.initialMargin :
-                    (pos.info && pos.info.isolatedMargin ? parseFloat(pos.info.isolatedMargin) : 0);
+                let margin = pos.initialMargin !== undefined && pos.initialMargin !== null
+                    ? pos.initialMargin
+                    : (pos.info?.isolatedMargin ? parseFloat(pos.info.isolatedMargin) : 0);
 
                 if (!margin && pos.notional) {
                     margin = Math.abs(pos.notional) / (pos.leverage || 10);
@@ -79,15 +82,17 @@ export const registerPortfolioHandlers = (bot: Telegraf, xtService: IExchangeSer
                     if (margin && margin > 0) {
                         roe = (pnl / margin) * 100;
                     } else {
-                        roe = pos.info && pos.info.profitRate ? parseFloat(pos.info.profitRate) * 100 : 0;
+                        roe = pos.info?.profitRate ? parseFloat(pos.info.profitRate) * 100 : 0;
                     }
                 }
 
                 const emoji = pnl >= 0 ? '🟢' : '🔴';
-                const entryPrice = parseFloat(pos.entryPrice);
-                const markPrice = parseFloat(pos.markPrice);
-                const amountCoins = parseFloat(pos.contracts);
-                const posSide = pos.side.toUpperCase();
+                const entryPrice = parseFloat(pos.entryPrice) || parseFloat(pos.info?.entryPrice) || 0;
+                // XT may return markPrice in info or as a separate field
+                const rawMarkPrice = pos.markPrice ?? pos.info?.markPrice ?? pos.info?.markValue ?? entryPrice;
+                const markPrice = parseFloat(rawMarkPrice) || entryPrice;
+                const amountCoins = parseFloat(pos.contracts) || parseFloat(pos.info?.positionAmt) || 0;
+                const posSide = (pos.side || pos.info?.side || 'LONG').toString().toUpperCase();
 
                 const trade = openTrades.find(t => t.symbol === pos.symbol || pos.symbol.includes(t.symbol.split('/')[0]));
 

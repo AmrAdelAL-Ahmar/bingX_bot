@@ -69,26 +69,45 @@ export class XTService implements IExchangeService {
         }
     }
 
-    async setLeverage(symbol: string, leverage: number, side: 'LONG' | 'SHORT' = 'LONG') {
-        const cleanLeverage = Math.floor(leverage);
-        try {
-            await this.exchange.loadMarkets();
-            logger.info(`[XT] Attempting to set leverage: ${cleanLeverage}x for ${symbol} (${side})`);
-            // XT requires positionSide argument — pass it explicitly
-            await this.exchange.setLeverage(cleanLeverage, symbol, { positionSide: side });
-            logger.info(`✅ [XT] Leverage set to ${cleanLeverage}x for ${symbol} (${side})`);
-        } catch (error: any) {
-            if (error.message && (
-                error.message.includes('same leverage') ||
-                error.message.includes('no need') ||
-                error.message.includes('already')
-            )) {
-                logger.info(`ℹ️ [XT] Leverage already set to ${cleanLeverage}x for ${symbol}`);
-                return;
+    async setLeverage(symbol: string, leverage: number, side: 'LONG' | 'SHORT' = 'LONG'): Promise<number> {
+        const requestedLeverage = Math.floor(leverage);
+        // XT leverage tiers to try if requested value exceeds the allowed max for this pair
+        const fallbackTiers = [requestedLeverage, 20, 15, 10, 5, 3, 2, 1].filter(
+            (v, i, arr) => v <= requestedLeverage && arr.indexOf(v) === i
+        );
+
+        await this.exchange.loadMarkets();
+        for (const tryLeverage of fallbackTiers) {
+            try {
+                logger.info(`[XT] Attempting to set leverage: ${tryLeverage}x for ${symbol} (${side})`);
+                await this.exchange.setLeverage(tryLeverage, symbol, { positionSide: side });
+                if (tryLeverage < requestedLeverage) {
+                    logger.warn(`⚠️ [XT] Leverage capped: requested ${requestedLeverage}x → applied ${tryLeverage}x for ${symbol}`);
+                } else {
+                    logger.info(`✅ [XT] Leverage set to ${tryLeverage}x for ${symbol} (${side})`);
+                }
+                return tryLeverage;
+            } catch (error: any) {
+                if (error.message && (
+                    error.message.includes('same leverage') ||
+                    error.message.includes('no need') ||
+                    error.message.includes('already')
+                )) {
+                    logger.info(`ℹ️ [XT] Leverage already set to ${tryLeverage}x for ${symbol}`);
+                    return tryLeverage;
+                }
+                if (error.message && error.message.includes('exceed_max_leverage')) {
+                    logger.warn(`⚠️ [XT] ${tryLeverage}x exceeds max for ${symbol}, trying lower...`);
+                    continue; // try next tier
+                }
+                // Unexpected error
+                logger.error(`❌ [XT] Failed to set leverage for ${symbol}: ${error.message}`);
+                throw error;
             }
-            logger.error(`❌ [XT] Failed to set leverage for ${symbol}: ${error.message}`);
-            throw error;
         }
+        // If all tiers failed, default to 1x (shouldn't happen)
+        logger.error(`❌ [XT] All leverage tiers failed for ${symbol}. Defaulting to 1x.`);
+        return 1;
     }
 
     async setMarginMode(symbol: string, mode: 'CROSS' | 'ISOLATED') {
@@ -148,6 +167,29 @@ export class XTService implements IExchangeService {
         } catch (error: any) {
             logger.warn(`[XT] Could not get min amount for ${symbol}: ${error.message}`);
             return 0;
+        }
+    }
+
+    async getMarketMinCost(symbol: string): Promise<number> {
+        await this.exchange.loadMarkets();
+        try {
+            const market = this.exchange.market(symbol);
+            // XT enforces a minimum notional of 10 USDT per order
+            return market?.limits?.cost?.min || 10;
+        } catch (error: any) {
+            logger.warn(`[XT] Could not get min cost for ${symbol}: ${error.message}`);
+            return 10; // XT hard minimum
+        }
+    }
+
+    async getContractSize(symbol: string): Promise<number> {
+        await this.exchange.loadMarkets();
+        try {
+            const market = this.exchange.market(symbol);
+            return market?.contractSize || 1;
+        } catch (error: any) {
+            logger.warn(`[XT] Could not get contract size for ${symbol}: ${error.message}`);
+            return 1;
         }
     }
 
@@ -229,16 +271,12 @@ export class XTService implements IExchangeService {
     }
 
     /**
-     * Places Stop Loss and Take Profit orders on XT Futures after the main market order.
+     * Places Stop Loss and Take Profit orders on XT Futures.
      *
-     * XT supports:
-     *   - createStopMarketOrder for Stop Loss
-     *   - createTakeProfitOrder for Take Profit
-     *   OR via stopLoss/takeProfit params in createOrder (createOrderWithTakeProfitAndStopLoss)
-     *
-     * Strategy:
-     *   One-Way Mode: Use reduceOnly + stopPrice trigger
-     *   Hedge Mode:   Use positionSide + proportional amounts
+     * Based on testing:
+     *   - 'stop' type with explicit price works for SL on XT
+     *   - 'take_profit' type with explicit price works for TP on XT
+     *   - STOP_MARKET / TAKE_PROFIT_MARKET cause invalid_price errors on XT
      */
     async placeSLTPOrders(
         symbol: string,
@@ -249,82 +287,33 @@ export class XTService implements IExchangeService {
         hedgeMode: boolean
     ): Promise<void> {
         const closeSide = direction === 'LONG' ? 'sell' : 'buy';
-        const MIN_NOTIONAL = 5; // Minimum USDT notional (adjust if XT differs)
+        const baseParams: any = hedgeMode
+            ? { positionSide: direction }
+            : { reduceOnly: true };
 
         // --- Stop Loss Order ---
         try {
-            const slParams: any = { stopPrice: stopLossPrice };
-            if (hedgeMode) {
-                slParams.positionSide = direction; // LONG or SHORT
-            } else {
-                slParams.reduceOnly = true;
-            }
-
-            // Try STOP_MARKET first (supported by XT)
-            await this.exchange.createOrder(symbol, 'STOP_MARKET', closeSide, amount, undefined, slParams);
-            logger.info(`✅ [XT] Stop Loss order placed at ${stopLossPrice.toFixed(6)} for ${symbol}`);
+            const slParams = { ...baseParams, stopPrice: stopLossPrice };
+            // Use 'stop' (limit-stop) with explicit price — works reliably on XT
+            await this.exchange.createOrder(symbol, 'stop', closeSide, amount, stopLossPrice, slParams);
+            logger.info(`✅ [XT] Stop Loss placed at ${stopLossPrice.toFixed(6)} for ${symbol}`);
         } catch (slErr: any) {
             logger.error(`❌ [XT] Failed to place Stop Loss for ${symbol}: ${slErr.message}`);
-            // Fallback: try 'stop' type
-            try {
-                const slParamsFallback: any = { stopPrice: stopLossPrice, reduceOnly: !hedgeMode };
-                if (hedgeMode) slParamsFallback.positionSide = direction;
-                await this.exchange.createOrder(symbol, 'stop', closeSide, amount, stopLossPrice, slParamsFallback);
-                logger.info(`✅ [XT] Stop Loss (fallback) placed at ${stopLossPrice.toFixed(6)} for ${symbol}`);
-            } catch (fallbackErr: any) {
-                logger.error(`❌ [XT] Stop Loss fallback also failed for ${symbol}: ${fallbackErr.message}`);
-            }
         }
 
         // --- Take Profit Orders ---
         if (takeProfitPrices.length === 0) return;
 
-        if (!hedgeMode) {
-            // One-Way Mode: use reduceOnly TP orders
-            for (const tpPrice of takeProfitPrices) {
-                try {
-                    const tpParams: any = {
-                        stopPrice: tpPrice,
-                        reduceOnly: true,
-                    };
-                    await this.exchange.createOrder(symbol, 'TAKE_PROFIT_MARKET', closeSide, undefined, undefined, tpParams);
-                    logger.info(`✅ [XT] Take Profit placed at ${tpPrice.toFixed(6)} for ${symbol}`);
-                } catch (tpErr: any) {
-                    // Fallback: try take_profit type with explicit amount
-                    logger.warn(`[XT] TAKE_PROFIT_MARKET failed, trying fallback for TP at ${tpPrice}: ${tpErr.message}`);
-                    try {
-                        await this.exchange.createOrder(symbol, 'take_profit_market', closeSide, amount, undefined, {
-                            stopPrice: tpPrice,
-                            reduceOnly: true,
-                        });
-                        logger.info(`✅ [XT] Take Profit (fallback) placed at ${tpPrice.toFixed(6)} for ${symbol}`);
-                    } catch (fallbackErr: any) {
-                        logger.error(`❌ [XT] Failed to place Take Profit at ${tpPrice.toFixed(6)} for ${symbol}: ${fallbackErr.message}`);
-                    }
-                }
-            }
-        } else {
-            // Hedge Mode: proportional amounts
-            const portionSize = amount / takeProfitPrices.length;
-            for (const tpPrice of takeProfitPrices) {
-                try {
-                    const minAmountForNotional = MIN_NOTIONAL / tpPrice;
-                    const tpAmount = parseFloat(Math.max(portionSize, minAmountForNotional).toFixed(6));
-
-                    if (tpAmount > amount) {
-                        logger.warn(`⚠️ [XT] TP at ${tpPrice.toFixed(6)} skipped: required amount (${tpAmount}) exceeds total (${amount})`);
-                        continue;
-                    }
-
-                    const tpParams: any = {
-                        stopPrice: tpPrice,
-                        positionSide: direction,
-                    };
-                    await this.exchange.createOrder(symbol, 'TAKE_PROFIT_MARKET', closeSide, tpAmount, undefined, tpParams);
-                    logger.info(`✅ [XT] Take Profit placed at ${tpPrice.toFixed(6)} (${tpAmount} contracts) for ${symbol}`);
-                } catch (tpErr: any) {
-                    logger.error(`❌ [XT] Failed to place Hedge TP at ${tpPrice.toFixed(6)} for ${symbol}: ${tpErr.message}`);
-                }
+        const portionSize = amount / takeProfitPrices.length;
+        for (const tpPrice of takeProfitPrices) {
+            try {
+                const tpAmount = parseFloat(portionSize.toFixed(6));
+                const tpParams = { ...baseParams, stopPrice: tpPrice };
+                // Use 'take_profit' (limit-take-profit) with explicit price — works reliably on XT
+                await this.exchange.createOrder(symbol, 'take_profit', closeSide, tpAmount, tpPrice, tpParams);
+                logger.info(`✅ [XT] Take Profit placed at ${tpPrice.toFixed(6)} for ${symbol}`);
+            } catch (tpErr: any) {
+                logger.error(`❌ [XT] Failed to place Take Profit at ${tpPrice.toFixed(6)} for ${symbol}: ${tpErr.message}`);
             }
         }
     }

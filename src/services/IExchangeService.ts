@@ -11,8 +11,10 @@ export interface IExchangeService {
 
     /**
      * Sets leverage for a symbol.
+     * Returns the actual leverage that was successfully applied
+     * (may be lower than requested if the exchange caps it).
      */
-    setLeverage(symbol: string, leverage: number, side?: 'LONG' | 'SHORT'): Promise<void>;
+    setLeverage(symbol: string, leverage: number, side?: 'LONG' | 'SHORT'): Promise<number>;
 
     /**
      * Sets margin mode (CROSS or ISOLATED) for a symbol.
@@ -34,6 +36,17 @@ export interface IExchangeService {
      * Returns the minimum tradeable amount for a given symbol.
      */
     getMarketMinAmount(symbol: string): Promise<number>;
+
+    /**
+     * Returns the minimum order cost (notional value in USDT) for a given symbol.
+     * For example, XT requires a minimum of 10 USDT per order.
+     */
+    getMarketMinCost(symbol: string): Promise<number>;
+
+    /**
+     * Returns the contract size for a given symbol (usually 1 for USDT-M perpetuals).
+     */
+    getContractSize(symbol: string): Promise<number>;
 
     /**
      * Returns the free/available USDT balance in the Futures/Swap wallet.

@@ -181,6 +181,17 @@ export class TradeManager {
                     throw new Error(reason);
                 }
 
+                // Check minimum notional value (exchange minimum order cost in USDT)
+                // XT requires minimum 10 USDT per order
+                const minCost = await this.exchange.getMarketMinCost(signal.symbol);
+                const orderNotional = amountContracts * entryPrice;
+                if (orderNotional < minCost) {
+                    throw new Error(
+                        `❌ قيمة الصفقة المحسوبة (${orderNotional.toFixed(2)} USDT) أقل من الحد الأدنى المطلوب في المنصة (${minCost} USDT).\n` +
+                        `💡 يرجى زيادة رأس المال أو رفع نسبة المخاطرة.`
+                    );
+                }
+
                 let scaledBySL = false;
                 // 4.5 Maximum Stop Loss Capital Risk Limit Check (Max 6% Loss)
                 const shouldEnforceMaxSlLoss = isHitlar ? hitlar.capitalProtectionEnabled : (
@@ -227,9 +238,18 @@ export class TradeManager {
                     throw new Error(reason);
                 }
 
-                // 5. Set Leverage, Margin Mode, and Place Market Order
+                // 5. Set Margin Mode and Leverage — get actual leverage applied (may differ on XT)
                 await this.exchange.setMarginMode(signal.symbol, signal.marginMode || 'CROSS');
-                await this.exchange.setLeverage(signal.symbol, leverage, signal.direction);
+                const actualLeverage = await this.exchange.setLeverage(signal.symbol, leverage, signal.direction);
+
+                // If exchange capped the leverage (e.g. XT limits some coins), recalculate position size
+                if (actualLeverage !== leverage) {
+                    leverage = actualLeverage;
+                    positionSizeUSDT = marginUsed * leverage;
+                    const recalcRaw = positionSizeUSDT / entryPrice;
+                    amountContracts = await this.exchange.amountToPrecision(signal.symbol, recalcRaw);
+                    logger.warn(`Leverage adjusted to ${leverage}x → recalculated position: ${positionSizeUSDT.toFixed(4)} USDT, ${amountContracts} contracts`);
+                }
 
                 // Detect position mode ONCE before placing orders
                 const hedgeMode = await this.exchange.isHedgeMode();
