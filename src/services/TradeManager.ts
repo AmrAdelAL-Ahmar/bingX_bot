@@ -326,6 +326,30 @@ export class TradeManager {
                             executionPriceRetry,
                             retryParams
                         );
+                    } else if (err.message && err.message.includes('PositionSide')) {
+                        logger.warn(`Position mode mismatch detected. Retrying with flipped hedgeMode assumption...`);
+                        const retryParams: any = {};
+                        
+                        // Flip the assumption: if hedgeMode was true, we didn't send positionSide. 
+                        // Wait, if hedgeMode was true, we DID send positionSide. So we remove it.
+                        // If hedgeMode was false, we didn't send it, so we ADD it.
+                        if (!hedgeMode) {
+                            retryParams.positionSide = signal.direction;
+                        }
+                        
+                        retryParams.stopLossPrice = stopLossPrice;
+                        retryParams.takeProfitPrice = finalTpPrices[0];
+
+                        const executionPriceRetry = resolvedOrderType === 'limit' ? entryPrice : undefined;
+
+                        order = await this.bingx.placeOrder(
+                            signal.symbol,
+                            resolvedOrderType,
+                            signal.direction === 'LONG' ? 'buy' : 'sell',
+                            amountContracts,
+                            executionPriceRetry,
+                            retryParams
+                        );
                     } else {
                         throw err;
                     }

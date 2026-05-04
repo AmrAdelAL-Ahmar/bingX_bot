@@ -166,9 +166,8 @@ export class BingXService {
     }
 
     async isHedgeMode(): Promise<boolean> {
-        // BingX CCXT implementation for fetching position mode.
-        // Assuming One-Way mode for safety if not explicitly defined.
-        return false;
+        // BingX Futures accounts are usually in Hedge Mode by default.
+        return true;
     }
 
     async placeSLTPOrders(
