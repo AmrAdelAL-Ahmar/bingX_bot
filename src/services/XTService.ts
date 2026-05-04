@@ -229,18 +229,42 @@ export class XTService implements IExchangeService {
             throw error;
         }
     }
-    async placeOrder(
-        symbol: string,
-        type: 'market' | 'limit',
-        side: 'buy' | 'sell',
-        amount: number,
-        price?: number,
-        params: any = {}
-    ): Promise<any> {
+    async placeOrder(symbol: string, type: 'market' | 'limit', side: 'buy' | 'sell', amount: number, price?: number, params: any = {}) {
         try {
-            logger.info(`[XT] Placing Order: ${symbol} ${type.toUpperCase()} ${side.toUpperCase()} ${amount} ${price ? `@ ${price}` : ''} params: ${JSON.stringify(params)}`);
-            const order = await this.exchange.createOrder(symbol, type, side, amount, price, params);
-            logger.info(`[XT] ✅ Order placed: ${order.id} for ${symbol} ${side} ${amount}`);
+            const placeParams = { ...params };
+            const stopLoss = placeParams.stopLoss;
+            const takeProfit = placeParams.takeProfit;
+            delete placeParams.stopLoss;
+            delete placeParams.takeProfit;
+
+            logger.info(`Placing Order: ${symbol} ${side} ${amount} with params: ${JSON.stringify(placeParams)}`);
+            const order = await this.exchange.createOrder(symbol, type, side, amount, price, placeParams);
+            logger.info(`Order placed: ${order.id} for ${symbol} ${side} ${amount} `);
+
+            if (stopLoss || takeProfit) {
+                const closeSide = side === 'buy' ? 'sell' : 'buy';
+                const positionSide = placeParams.positionSide || (side === 'buy' ? 'LONG' : 'SHORT');
+
+                if (stopLoss) {
+                    try {
+                        const slParams = { positionSide, stopLoss };
+                        await this.exchange.createOrder(symbol, 'market', closeSide, amount, undefined, slParams);
+                        logger.info(`✅ Stop Loss set at ${stopLoss} for ${symbol}`);
+                    } catch (e: any) {
+                        logger.error(`❌ Failed to set Stop Loss for ${symbol}: ${e.message}`);
+                    }
+                }
+                if (takeProfit) {
+                    try {
+                        const tpParams = { positionSide, takeProfit };
+                        await this.exchange.createOrder(symbol, 'market', closeSide, amount, undefined, tpParams);
+                        logger.info(`✅ Take Profit set at ${takeProfit} for ${symbol}`);
+                    } catch (e: any) {
+                        logger.error(`❌ Failed to set Take Profit for ${symbol}: ${e.message}`);
+                    }
+                }
+            }
+
             return order;
         } catch (error: any) {
             logger.error(`[XT] ❌ Error placing order for ${symbol}:`, error.message);
