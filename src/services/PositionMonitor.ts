@@ -9,6 +9,7 @@ export class PositionMonitor {
     private notifier: (telegramId: string, msg: string) => Promise<void>;
     private isRunning: boolean = false;
     private intervalId?: NodeJS.Timeout;
+    private consecutiveMissingMap: Map<string, number> = new Map();
 
     constructor(exchange: IExchangeService, notifier: (telegramId: string, msg: string) => Promise<void>) {
         this.exchange = exchange;
@@ -165,6 +166,8 @@ export class PositionMonitor {
                     const telegramId: string | null = user?.telegramId || null;
 
                     if (matchingPos) {
+                        // Reset consecutive misses since position is found
+                        this.consecutiveMissingMap.delete(trade._id.toString());
                         // --- Position is still ACTIVE: check warnings ---
 
                         // Position still active — get current price from markPrice or market
@@ -271,8 +274,20 @@ export class PositionMonitor {
                         continue;
 
                     } else {
-                        // --- Position is GONE (closed by SL/TP/manual) ---
-                        logger.info(`Trade ${trade._id} (${trade.symbol}) is NO LONGER active on Binance. Closing in DB...`);
+                        // --- Position is GONE (potentially closed by SL/TP/manual) ---
+                        
+                        // Add a grace period of 3 consecutive misses before closing in DB
+                        const tradeIdStr = trade._id.toString();
+                        const missCount = (this.consecutiveMissingMap.get(tradeIdStr) || 0) + 1;
+                        this.consecutiveMissingMap.set(tradeIdStr, missCount);
+
+                        if (missCount < 3) {
+                            logger.info(`Trade ${trade._id} (${trade.symbol}) not found on XT (Miss ${missCount}/3). Waiting for next cycle...`);
+                            continue;
+                        }
+
+                        logger.info(`Trade ${trade._id} (${trade.symbol}) is NO LONGER active on XT after 3 checks. Closing in DB...`);
+                        this.consecutiveMissingMap.delete(tradeIdStr);
 
                         const currentPrice = await this.exchange.getMarketPrice(symbol);
                         const entry = trade.entryPrice;
