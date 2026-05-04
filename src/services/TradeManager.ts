@@ -265,16 +265,11 @@ export class TradeManager {
                         // Hedge Mode: positionSide is required (LONG or SHORT)
                         orderParams.positionSide = signal.direction;
                     }
-
-                    // --- Attached Orders: embed SL and TP1 directly into the entry order ---
-                    // CCXT passes these to XT's API as native attached orders in the same request.
-                    // This ensures SL and TP1 are active the moment the order is filled,
-                    // eliminating any latency window between fill and risk management placement.
-                    orderParams.stopLoss = stopLossPrice;
-                    if (takeProfitPrices.length > 0) {
-                        orderParams.takeProfit = takeProfitPrices[0]; // TP1 only
-                    }
-
+                    // NOTE: We do NOT attach stopLoss/takeProfit to the entry order.
+                    // XT validates attached SL/TP against the CURRENT market price (not the future
+                    // fill price), which causes `trigger_stop_price_more_than_entry_price` errors
+                    // and also reserves extra margin causing `more_than_available` errors.
+                    // SL/TP are placed as separate trigger orders after the entry order is confirmed.
                     const executionPrice = resolvedOrderType === 'limit' ? entryPrice : undefined;
 
                     order = await this.exchange.placeOrder(
@@ -286,7 +281,7 @@ export class TradeManager {
                         orderParams
                     );
 
-                    logger.info(`[Order Placed] Type: ${resolvedOrderType.toUpperCase()}, Price: ${executionPrice || 'MARKET'}, Qty: ${amountContracts} | Attached SL: ${stopLossPrice}, TP1: ${takeProfitPrices[0] ?? 'none'}`);
+                    logger.info(`[Order Placed] Type: ${resolvedOrderType.toUpperCase()}, Price: ${executionPrice || 'MARKET'}, Qty: ${amountContracts}`);
 
                 } catch (err: any) {
                     // Retry with 50% size if Insufficient Margin
@@ -314,8 +309,8 @@ export class TradeManager {
                 }
 
                 const tradeLog = resolvedOrderType === 'limit'
-                    ? `Limit order placed at ${entryPrice} on ${new Date().toISOString()} via Signal. Risk: ${riskPercentage}%, Lev: ${leverage}x. Attached: SL=${stopLossPrice}, TP1=${takeProfitPrices[0] ?? 'none'}.`
-                    : `Opened trade at ${new Date().toISOString()} via Signal. Risk: ${riskPercentage}%, Lev: ${leverage}x. Attached: SL=${stopLossPrice}, TP1=${takeProfitPrices[0] ?? 'none'}.`;
+                    ? `Limit order placed at ${entryPrice} on ${new Date().toISOString()} via Signal. Risk: ${riskPercentage}%, Lev: ${leverage}x. SL/TP pending fill.`
+                    : `Opened trade at ${new Date().toISOString()} via Signal. Risk: ${riskPercentage}%, Lev: ${leverage}x`;
 
                 // XT sometimes returns status: undefined for newly placed orders
                 const isExplicitlyFilled = ['closed', 'filled', 'FILLED', 'done', 'DONE', 'full_fill'].includes(order?.status);
@@ -339,15 +334,12 @@ export class TradeManager {
 
                 logger.info(`✅ Trade successfully executed for ${signal.symbol}: ${order?.id || 'Unknown ID'}`);
 
-                // 6.5 Place remaining TP orders (TP2, TP3...) as separate trigger orders.
-                // SL and TP1 were already attached to the entry order above.
-                // For MARKET orders: place remaining TPs immediately.
-                // For LIMIT orders: place remaining TPs only if already filled; otherwise
-                //   PositionMonitor handles them after the fill is detected.
-                const hasExtraTps = takeProfitPrices.length > 1;
-                const shouldPlaceExtraTps = hasExtraTps && (resolvedOrderType === 'market' || isExplicitlyFilled);
+                // 6.5 Place SL/TP orders on XT Futures as separate trigger orders.
+                // For MARKET orders: place SL/TP immediately after fill confirmation.
+                // For LIMIT orders: PositionMonitor watches for fill and places SL/TP then.
+                const shouldPlaceSlTp = resolvedOrderType === 'market' || isExplicitlyFilled;
 
-                if (shouldPlaceExtraTps) {
+                if (shouldPlaceSlTp) {
                     try {
                         await this.exchange.placeSLTPOrders(
                             signal.symbol,
@@ -355,14 +347,13 @@ export class TradeManager {
                             amountContracts,
                             stopLossPrice,
                             takeProfitPrices,
-                            hedgeMode,
-                            true // skipFirstTp — TP1 already attached
+                            hedgeMode
                         );
                     } catch (slTpErr: any) {
-                        logger.error(`⚠️ Main order placed but failed to set extra TPs: ${slTpErr.message}`);
+                        logger.error(`⚠️ Main order placed but failed to set SL/TP: ${slTpErr.message}`);
                     }
-                } else if (isPendingLimit && hasExtraTps) {
-                    logger.info(`⏳ [Limit Order] Extra TPs (TP2+) will be placed after order ${order.id} is filled.`);
+                } else {
+                    logger.info(`⏳ [Limit Order] SL/TP will be placed after order ${order.id} is filled. Current status: ${order.status}`);
                 }
 
                 // 7. Calculate PnL stats for reporting

@@ -80,7 +80,7 @@ export class PositionMonitor {
                     });
 
                     if (pos) {
-                        logger.info(`Limit order filled (detected via position) for ${trade.symbol}. Placing extra TPs (TP2+) if any...`);
+                        logger.info(`Limit order filled (detected via position) for ${trade.symbol}. Placing SL/TP now...`);
 
                         const contractSize = await this.exchange.getContractSize(trade.symbol);
                         const filledQty = parseFloat(pos.contracts);
@@ -100,22 +100,16 @@ export class PositionMonitor {
                             trade.targets.map(t => this.exchange.priceToPrecision(trade.symbol, t.price))
                         );
 
-                        // SL and TP1 were already attached to the original entry order.
-                        // Only place TP2, TP3... as separate orders (skipFirstTp=true).
-                        const hasExtraTps = takeProfitPrices.length > 1;
-                        if (hasExtraTps) {
-                            await this.exchange.placeSLTPOrders(
-                                trade.symbol,
-                                trade.direction,
-                                filledQty,
-                                stopLossPrice,
-                                takeProfitPrices,
-                                hedgeMode,
-                                true // skipFirstTp — SL and TP1 are already active as attached orders
-                            );
-                        } else {
-                            logger.info(`[PositionMonitor] Only 1 target for ${trade.symbol}, TP1 already attached. Nothing extra to place.`);
-                        }
+                        // Place SL + ALL TP orders as separate trigger orders.
+                        // (Attached orders approach was abandoned due to XT API validation issues)
+                        await this.exchange.placeSLTPOrders(
+                            trade.symbol,
+                            trade.direction,
+                            filledQty,
+                            stopLossPrice,
+                            takeProfitPrices,
+                            hedgeMode
+                        );
 
                         // Update trade status to OPEN
                         trade.currentStatus = 'OPEN';
