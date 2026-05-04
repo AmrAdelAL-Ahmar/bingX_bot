@@ -286,8 +286,14 @@ export class TradeManager {
                     }
                     
                     // Attach Stop Loss and Take Profit 1 directly to the main order
-                    orderParams.stopLossPrice = stopLossPrice;
-                    orderParams.takeProfitPrice = finalTpPrices[0];
+                    orderParams.stopLoss = {
+                        triggerPrice: stopLossPrice,
+                        type: 'STOP_MARKET'
+                    };
+                    orderParams.takeProfit = {
+                        triggerPrice: finalTpPrices[0],
+                        type: 'TAKE_PROFIT_MARKET'
+                    };
 
                     const executionPrice = resolvedOrderType === 'limit' ? entryPrice : undefined;
 
@@ -313,8 +319,14 @@ export class TradeManager {
                             retryParams.positionSide = signal.direction;
                         }
                         
-                        retryParams.stopLossPrice = stopLossPrice;
-                        retryParams.takeProfitPrice = finalTpPrices[0];
+                        retryParams.stopLoss = {
+                            triggerPrice: stopLossPrice,
+                            type: 'STOP_MARKET'
+                        };
+                        retryParams.takeProfit = {
+                            triggerPrice: finalTpPrices[0],
+                            type: 'TAKE_PROFIT_MARKET'
+                        };
 
                         const executionPriceRetry = resolvedOrderType === 'limit' ? entryPrice : undefined;
 
@@ -337,8 +349,14 @@ export class TradeManager {
                             retryParams.positionSide = signal.direction;
                         }
                         
-                        retryParams.stopLossPrice = stopLossPrice;
-                        retryParams.takeProfitPrice = finalTpPrices[0];
+                        retryParams.stopLoss = {
+                            triggerPrice: stopLossPrice,
+                            type: 'STOP_MARKET'
+                        };
+                        retryParams.takeProfit = {
+                            triggerPrice: finalTpPrices[0],
+                            type: 'TAKE_PROFIT_MARKET'
+                        };
 
                         const executionPriceRetry = resolvedOrderType === 'limit' ? entryPrice : undefined;
 
