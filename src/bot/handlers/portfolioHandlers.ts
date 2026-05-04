@@ -114,7 +114,17 @@ export const registerPortfolioHandlers = (bot: Telegraf, xtService: IExchangeSer
                 const amountCoins = rawContracts * contractSize;
                 const posSide = (pos.side || pos.info?.side || 'LONG').toString().toUpperCase();
 
-                const trade = openTrades.find(t => t.symbol === pos.symbol || pos.symbol.includes(t.symbol.split('/')[0]));
+                // Robust symbol matching to find the DB Trade record for the exchange Position
+                const trade = openTrades.find(t => {
+                    const dbSymbol = t.symbol.toUpperCase();
+                    const exSymbol = pos.symbol.toUpperCase();
+                    
+                    return exSymbol === dbSymbol || 
+                           exSymbol.replace(':USDT', '') === dbSymbol ||
+                           dbSymbol.replace(':USDT', '') === exSymbol ||
+                           exSymbol.includes(dbSymbol.split('/')[0]) ||
+                           dbSymbol.includes(exSymbol.split('/')[0]);
+                });
                 const leverage = pos.leverage || (trade ? trade.leverage : 10) || 10;
 
                 // Manual PnL recalculation to fix XT 0.00 issue
