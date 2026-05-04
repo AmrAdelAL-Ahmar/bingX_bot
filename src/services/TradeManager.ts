@@ -1,4 +1,4 @@
-import { BinanceService } from './BinanceService';
+import { BingXService } from './BingXService';
 import { ParsedSignal } from './SignalParser';
 import Trade, { ITrade } from '../models/Trade';
 import User from '../models/User';
@@ -22,10 +22,10 @@ export interface TradeResult {
 }
 
 export class TradeManager {
-    private binance: BinanceService;
+    private bingx: BingXService;
 
-    constructor(binanceService: BinanceService) {
-        this.binance = binanceService;
+    constructor(BingXService: BingXService) {
+        this.bingx = BingXService;
     }
 
     async executeSignal(signal: ParsedSignal, userId: string, sourceChatId?: string): Promise<TradeResult | undefined> {
@@ -37,7 +37,7 @@ export class TradeManager {
             }
 
             // 1. Calculate Position Size
-            const balance = await this.binance.getBalance();
+            const balance = await this.bingx.getBalance();
             logger.info(`Available Balance: ${balance} USDT`);
 
             if (!balance || balance <= 0) {
@@ -72,7 +72,7 @@ export class TradeManager {
                 const userOrderMode: 'market' | 'limit' = isHitlar ? hitlar.orderMode : (user.orderMode || 'market');
 
                 // Fetch current market price (needed for both modes)
-                const currentMarketPrice = await this.binance.getMarketPrice(signal.symbol);
+                const currentMarketPrice = await this.bingx.getMarketPrice(signal.symbol);
 
                 let entryPrice: number;
                 let resolvedOrderType: 'market' | 'limit' = 'market'; // final resolved type
@@ -91,7 +91,7 @@ export class TradeManager {
                         entryPrice = currentMarketPrice;
                         resolvedOrderType = 'market';
                     } else {
-                        entryPrice = await this.binance.priceToPrecision(signal.symbol, rawEntry);
+                        entryPrice = await this.bingx.priceToPrecision(signal.symbol, rawEntry);
                         resolvedOrderType = 'limit';
                         logger.info(`[Limit Order] Using entry price: ${entryPrice} for ${signal.symbol}`);
                     }
@@ -99,7 +99,7 @@ export class TradeManager {
                     // Market mode or no entry price in signal
                     if (signal.entry && signal.entry.length > 0) {
                         // Use signal entry for position sizing calculations only
-                        entryPrice = await this.binance.priceToPrecision(signal.symbol, signal.entry[0]);
+                        entryPrice = await this.bingx.priceToPrecision(signal.symbol, signal.entry[0]);
                     } else {
                         entryPrice = currentMarketPrice;
                         logger.info(`No entry price provided for ${signal.symbol}. Using market price: ${entryPrice}`);
@@ -145,8 +145,8 @@ export class TradeManager {
                 }
 
                 // Final precision check
-                stopLossPrice = await this.binance.priceToPrecision(signal.symbol, stopLossPrice);
-                const finalTpPrices = await Promise.all(takeProfitPrices.map(t => this.binance.priceToPrecision(signal.symbol, t)));
+                stopLossPrice = await this.bingx.priceToPrecision(signal.symbol, stopLossPrice);
+                const finalTpPrices = await Promise.all(takeProfitPrices.map(t => this.bingx.priceToPrecision(signal.symbol, t)));
 
                 // 2. Position Sizing & Risk Caps
                 let riskPercentage = isHitlar ? hitlar.riskPercentage : (signal.risk || user.riskPercentage || 2);
@@ -165,7 +165,7 @@ export class TradeManager {
                 let marginUsed = balance * (riskPercentage / 100);
 
                 // 2.5 Total Exposure Limit check (Max 10%)
-                const positions = await this.binance.getPositions();
+                const positions = await this.bingx.getPositions();
                 let totalMarginUsed = 0;
                 for (const pos of positions) {
                     const posMargin = pos.initialMargin || (pos.notional ? Math.abs(pos.notional) / (pos.leverage || 1) : 0);
@@ -192,8 +192,8 @@ export class TradeManager {
 
                 // Calculate Contracts first to check sizes
                 const rawAmount = positionSizeUSDT / entryPrice;
-                let amountContracts = await this.binance.amountToPrecision(signal.symbol, rawAmount);
-                const minAmount = await this.binance.getMarketMinAmount(signal.symbol);
+                let amountContracts = await this.bingx.amountToPrecision(signal.symbol, rawAmount);
+                const minAmount = await this.bingx.getMarketMinAmount(signal.symbol);
 
                 // Check min constraints immediately before SL check
                 if (amountContracts === 0 || amountContracts < minAmount) {
@@ -213,7 +213,7 @@ export class TradeManager {
                     positionSizeUSDT = MIN_NOTIONAL;
                     // Recalculate contracts based on new notional
                     const adjustedRawAmount = positionSizeUSDT / entryPrice;
-                    amountContracts = await this.binance.amountToPrecision(signal.symbol, adjustedRawAmount);
+                    amountContracts = await this.bingx.amountToPrecision(signal.symbol, adjustedRawAmount);
                 }
 
                 let scaledBySL = false;
@@ -239,7 +239,7 @@ export class TradeManager {
                     if (projectedLoss > maxAllowedSLLoss) {
                         // How many max coins can we afford to lose?
                         const maxSafeContracts = maxAllowedSLLoss / lossPerCoin;
-                        const precisionSafeContracts = await this.binance.amountToPrecision(signal.symbol, maxSafeContracts);
+                        const precisionSafeContracts = await this.bingx.amountToPrecision(signal.symbol, maxSafeContracts);
 
                         logger.warn(`Projected SL loss (${projectedLoss.toFixed(2)} USDT) exceeds ${(maxSlRisk * 100).toFixed(1)}% of capital (${maxAllowedSLLoss.toFixed(2)} USDT). Scaling down position to ${precisionSafeContracts} contracts.`);
 
@@ -263,9 +263,9 @@ export class TradeManager {
                 }
 
                 // 5. Set Leverage, Margin Mode, and Place Market Order
-                await this.binance.setMarginMode(signal.symbol, signal.marginMode || 'CROSS');
+                await this.bingx.setMarginMode(signal.symbol, signal.marginMode || 'CROSS');
                 try {
-                    await this.binance.setLeverage(signal.symbol, leverage, signal.direction);
+                    await this.bingx.setLeverage(signal.symbol, leverage, signal.direction);
                 } catch (levErr: any) {
                     if (user.errorMitigationEnabled) {
                         logger.warn(`Failed to set leverage to ${leverage}x for ${signal.symbol}: ${levErr.message}. Continuing with existing leverage.`);
@@ -275,7 +275,7 @@ export class TradeManager {
                 }
 
                 // Detect position mode ONCE before placing orders
-                const hedgeMode = await this.binance.isHedgeMode();
+                const hedgeMode = await this.bingx.isHedgeMode();
 
                 let order: any;
                 try {
@@ -287,7 +287,7 @@ export class TradeManager {
                     // Note: SL/TP are placed as separate orders after execution
                     const executionPrice = resolvedOrderType === 'limit' ? entryPrice : undefined;
 
-                    order = await this.binance.placeOrder(
+                    order = await this.bingx.placeOrder(
                         signal.symbol,
                         resolvedOrderType,
                         signal.direction === 'LONG' ? 'buy' : 'sell',
@@ -304,13 +304,13 @@ export class TradeManager {
                         logger.warn(`Insufficient margin for full size. Retrying with 50% size...`);
                         const reducedAmount = amountContracts * 0.5;
                         const retryParams: any = {};
-                        const hedgeModeRetry = await this.binance.isHedgeMode();
+                        const hedgeModeRetry = await this.bingx.isHedgeMode();
                         if (hedgeModeRetry) {
                             retryParams.positionSide = signal.direction;
                         }
                         const executionPriceRetry = resolvedOrderType === 'limit' ? entryPrice : undefined;
 
-                        order = await this.binance.placeOrder(
+                        order = await this.bingx.placeOrder(
                             signal.symbol,
                             resolvedOrderType,
                             signal.direction === 'LONG' ? 'buy' : 'sell',
@@ -356,7 +356,7 @@ export class TradeManager {
                         // Filter targets if single TP mode is active
                         const finalTargets = user.tpExecutionMode === 'single' ? [finalTpPrices[0]] : finalTpPrices;
                         
-                        await this.binance.placeSLTPOrders(
+                        await this.bingx.placeSLTPOrders(
                             signal.symbol,
                             signal.direction!,
                             amountContracts,
@@ -420,7 +420,7 @@ export class TradeManager {
             const user = await User.findById(userId);
             if (!user) throw new Error('User not found');
 
-            const positions = await this.binance.getPositions();
+            const positions = await this.bingx.getPositions();
             if (!positions || positions.length === 0) {
                 return 0; // No positions to close
             }
@@ -430,14 +430,14 @@ export class TradeManager {
 
                 try {
                     const side = pos.side.toLowerCase() === 'long' ? 'sell' : 'buy';
-                    const hedgeMode = await this.binance.isHedgeMode();
+                    const hedgeMode = await this.bingx.isHedgeMode();
                     const closeParams: any = {};
                     if (hedgeMode) {
                         closeParams.positionSide = pos.side.toUpperCase();
                     } else {
                         closeParams.reduceOnly = true;
                     }
-                    await this.binance.placeOrder(
+                    await this.bingx.placeOrder(
                         pos.symbol,
                         'market',
                         side,
@@ -471,7 +471,7 @@ export class TradeManager {
             if (!user) throw new Error('User not found');
 
             const matchedSymbol = symbol.includes('USDT') ? symbol.toUpperCase() : `${symbol.toUpperCase()}/USDT:USDT`;
-            const positions = await this.binance.getPositions(matchedSymbol);
+            const positions = await this.bingx.getPositions(matchedSymbol);
 
             // Filter out empty
             const activePos = positions.filter((p: any) => parseFloat(p.contracts) > 0);
@@ -484,14 +484,14 @@ export class TradeManager {
             for (const pos of activePos) {
                 const side = pos.side.toLowerCase() === 'long' ? 'sell' : 'buy';
                 const amount = parseFloat(pos.contracts);
-                const hedgeMode = await this.binance.isHedgeMode();
+                const hedgeMode = await this.bingx.isHedgeMode();
                 const closeParams: any = {};
                 if (hedgeMode) {
                     closeParams.positionSide = pos.side.toUpperCase();
                 } else {
                     closeParams.reduceOnly = true;
                 }
-                await this.binance.placeOrder(
+                await this.bingx.placeOrder(
                     pos.symbol,
                     'market',
                     side,

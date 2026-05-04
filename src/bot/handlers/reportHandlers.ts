@@ -1,12 +1,12 @@
 import { Telegraf } from 'telegraf';
 import logger from '../../utils/logger';
-import { BinanceService } from '../../services/BinanceService';
+import { BingXService } from '../../services/BingXService';
 import User from '../../models/User';
 import Trade from '../../models/Trade';
 import { generateReportStr } from '../utils/views';
 import { getMainMenuKeyboard, getReportsKeyboard } from '../keyboards/baseKeyboards';
 
-export const registerReportHandlers = (bot: Telegraf, binanceService: BinanceService) => {
+export const registerReportHandlers = (bot: Telegraf, BingXService: BingXService) => {
     
     const handleReport = async (ctx: any, title: string, getQuery: () => any) => {
         try {
@@ -23,7 +23,7 @@ export const registerReportHandlers = (bot: Telegraf, binanceService: BinanceSer
                 ...query
             }).sort({ closeTime: 1 });
     
-            const currentEquity = await binanceService.getTotalEquity();
+            const currentEquity = await BingXService.getTotalEquity();
     
             const msg = generateReportStr(trades, title, currentEquity);
             if (msg.length > 4000) {

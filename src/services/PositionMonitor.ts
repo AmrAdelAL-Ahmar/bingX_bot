@@ -1,16 +1,16 @@
-import { BinanceService } from './BinanceService';
+import { BingXService } from './BingXService';
 import Trade from '../models/Trade';
 import User from '../models/User';
 import logger from '../utils/logger';
 
 export class PositionMonitor {
-    private binance: BinanceService;
+    private bingx: BingXService;
     private notifier: (telegramId: string, msg: string) => Promise<void>;
     private isRunning: boolean = false;
     private intervalId?: NodeJS.Timeout;
 
-    constructor(binance: BinanceService, notifier: (telegramId: string, msg: string) => Promise<void>) {
-        this.binance = binance;
+    constructor(bingx: BingXService, notifier: (telegramId: string, msg: string) => Promise<void>) {
+        this.bingx = bingx;
         this.notifier = notifier;
     }
 
@@ -39,27 +39,27 @@ export class PositionMonitor {
 
             // --- 1. Handle Pending (Limit) Orders ---
             for (const trade of pendingTrades) {
-                if (!trade.binanceOrderId) continue;
+                if (!trade.bingxOrderId) continue;
 
                 try {
-                    const order = await this.binance.getOrder(trade.symbol, trade.binanceOrderId);
+                    const order = await this.bingx.getOrder(trade.symbol, trade.bingxOrderId);
                     if (!order) continue;
 
                     if (order.status === 'closed' || order.status === 'filled') {
                         logger.info(`Limit order filled for ${trade.symbol}. Placing SL/TP now...`);
                         
                         // Detect mode for SL/TP placement
-                        const hedgeMode = await this.binance.isHedgeMode();
+                        const hedgeMode = await this.bingx.isHedgeMode();
                         
                         // Prepare SL/TP prices with precision
-                        const stopLossPrice = await this.binance.priceToPrecision(trade.symbol, trade.stopLoss);
-                        const takeProfitPrices = await Promise.all(trade.targets.map(t => this.binance.priceToPrecision(trade.symbol, t.price)));
+                        const stopLossPrice = await this.bingx.priceToPrecision(trade.symbol, trade.stopLoss);
+                        const takeProfitPrices = await Promise.all(trade.targets.map(t => this.bingx.priceToPrecision(trade.symbol, t.price)));
                         
                         // Calculate amount Contracts (using the amount field which is positionSizeUSDT)
-                        const amountContracts = await this.binance.amountToPrecision(trade.symbol, trade.amount / trade.entryPrice);
+                        const amountContracts = await this.bingx.amountToPrecision(trade.symbol, trade.amount / trade.entryPrice);
 
                         // Place orders
-                        await this.binance.placeSLTPOrders(
+                        await this.bingx.placeSLTPOrders(
                             trade.symbol,
                             trade.direction,
                             amountContracts,
@@ -85,7 +85,7 @@ export class PositionMonitor {
                         await trade.save();
                     }
                 } catch (err: any) {
-                    logger.error(`Error checking pending order ${trade.binanceOrderId}:`, err);
+                    logger.error(`Error checking pending order ${trade.bingxOrderId}:`, err);
                 }
             }
 
@@ -99,13 +99,13 @@ export class PositionMonitor {
             // Fetch balance for SL warning calculation (5% threshold)
             let totalBalance = 0;
             try {
-                totalBalance = await this.binance.getTotalEquity();
+                totalBalance = await this.bingx.getTotalEquity();
             } catch (e) {
                 logger.warn('Could not fetch balance for SL warning calculation.');
             }
 
             for (const symbol of symbols) {
-                const positions = await this.binance.getPositions(symbol);
+                const positions = await this.bingx.getPositions(symbol);
                 const tradesForSymbol = openTrades.filter(t => t.symbol === symbol);
 
                 for (const trade of tradesForSymbol) {
@@ -129,7 +129,7 @@ export class PositionMonitor {
                     if (matchingPos) {
                         // --- Position is still ACTIVE: check warnings ---
 
-                        const currentPrice: number = parseFloat(matchingPos.markPrice) || await this.binance.getMarketPrice(symbol);
+                        const currentPrice: number = parseFloat(matchingPos.markPrice) || await this.bingx.getMarketPrice(symbol);
                         const entry = trade.entryPrice;
 
                         // --- TP1 BreakEven Logic ---
@@ -142,7 +142,7 @@ export class PositionMonitor {
                             if (tp1Hit) {
                                 logger.info(`TP1 hit for ${trade.symbol}. Moving SL to Break-Even (${entry})`);
                                 try {
-                                    await this.binance.setStopLoss(symbol, entry, trade.direction);
+                                    await this.bingx.setStopLoss(symbol, entry, trade.direction);
                                     trade.isBreakEvenSet = true;
                                     trade.logs.push(`Auto-adjusted SL to BE at ${entry} after TP1 hit`);
                                     await trade.save();
@@ -224,9 +224,9 @@ export class PositionMonitor {
 
                     } else {
                         // --- Position is GONE (closed by SL/TP/manual) ---
-                        logger.info(`Trade ${trade._id} (${trade.symbol}) is NO LONGER active on Binance. Closing in DB...`);
+                        logger.info(`Trade ${trade._id} (${trade.symbol}) is NO LONGER active on bingx. Closing in DB...`);
 
-                        const currentPrice = await this.binance.getMarketPrice(symbol);
+                        const currentPrice = await this.bingx.getMarketPrice(symbol);
                         const entry = trade.entryPrice;
                         const lev = trade.leverage || 10;
                         let pnlPercent = 0;

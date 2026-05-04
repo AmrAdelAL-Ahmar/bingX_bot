@@ -164,4 +164,74 @@ export class BingXService {
             throw error;
         }
     }
+
+    async isHedgeMode(): Promise<boolean> {
+        // BingX CCXT implementation for fetching position mode.
+        // Assuming One-Way mode for safety if not explicitly defined.
+        return false;
+    }
+
+    async placeSLTPOrders(
+        symbol: string,
+        direction: 'LONG' | 'SHORT',
+        amount: number,
+        stopLossPrice: number,
+        takeProfitPrices: number[],
+        hedgeMode: boolean,
+        tpProfitSplits?: number[]
+    ) {
+        const closeSide = direction === 'LONG' ? 'sell' : 'buy';
+
+        // --- Stop Loss Order ---
+        try {
+            const slParams: any = { stopPrice: stopLossPrice, type: 'STOP' };
+            if (hedgeMode) {
+                slParams.positionSide = direction;
+            } else {
+                slParams.reduceOnly = true;
+            }
+            await this.exchange.createOrder(symbol, 'STOP', closeSide, amount, undefined, slParams);
+            logger.info(`✅ Stop Loss order placed at ${stopLossPrice.toFixed(6)} for ${symbol}`);
+        } catch (err: any) {
+            logger.error(`❌ Failed to place Stop Loss for ${symbol}: ${err.message}`);
+        }
+
+        // --- Take Profit Orders ---
+        if (takeProfitPrices.length === 0) return;
+
+        let remainingAmount = amount;
+        for (let i = 0; i < takeProfitPrices.length; i++) {
+            const tpPrice = takeProfitPrices[i];
+            const isLastTP = i === takeProfitPrices.length - 1;
+
+            let portionSize = amount / takeProfitPrices.length;
+            if (tpProfitSplits && tpProfitSplits.length > i) {
+                portionSize = amount * (tpProfitSplits[i] / 100);
+            }
+
+            try {
+                const tpParams: any = {
+                    stopPrice: tpPrice,
+                    type: 'TAKE_PROFIT'
+                };
+
+                if (hedgeMode) {
+                    tpParams.positionSide = direction;
+                } else {
+                    tpParams.reduceOnly = true;
+                }
+
+                let tpAmount = isLastTP ? remainingAmount : portionSize;
+                tpAmount = await this.amountToPrecision(symbol, tpAmount);
+
+                if (tpAmount <= 0) continue;
+
+                await this.exchange.createOrder(symbol, 'TAKE_PROFIT', closeSide, tpAmount, undefined, tpParams);
+                remainingAmount -= tpAmount;
+                logger.info(`✅ Take Profit order placed at ${tpPrice.toFixed(6)} (${tpAmount} contracts) for ${symbol}`);
+            } catch (err: any) {
+                logger.error(`❌ Failed to place Take Profit at ${tpPrice.toFixed(6)} for ${symbol}: ${err.message}`);
+            }
+        }
+    }
 }
