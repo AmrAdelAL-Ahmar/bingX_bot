@@ -93,7 +93,8 @@ export interface IExchangeService {
 
     /**
      * Places Stop Loss and Take Profit orders after the main order has been executed.
-     * All orders are placed as separate trigger orders on the exchange.
+     * When skipFirstTp is true, TP1 and SL are skipped because they were already attached
+     * directly to the entry order (Attached Orders).
      */
     placeSLTPOrders(
         symbol: string,
@@ -101,6 +102,7 @@ export interface IExchangeService {
         amount: number,
         stopLossPrice: number,
         takeProfitPrices: number[],
-        hedgeMode: boolean
+        hedgeMode: boolean,
+        skipFirstTp?: boolean
     ): Promise<void>;
 }

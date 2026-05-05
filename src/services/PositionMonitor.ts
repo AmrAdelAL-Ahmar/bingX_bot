@@ -100,15 +100,16 @@ export class PositionMonitor {
                             trade.targets.map(t => this.exchange.priceToPrecision(trade.symbol, t.price))
                         );
 
-                        // Place SL + ALL TP orders as separate trigger orders.
-                        // (Attached orders approach was abandoned due to XT API validation issues)
+                        // Place remaining TP orders (TP2, TP3...) as separate trigger orders.
+                        // SL and TP1 were already attached to the original entry order.
                         await this.exchange.placeSLTPOrders(
                             trade.symbol,
                             trade.direction,
                             filledQty,
                             stopLossPrice,
                             takeProfitPrices,
-                            hedgeMode
+                            hedgeMode,
+                            true // skipFirstTp — SL and TP1 are already active as attached orders
                         );
 
                         // Update trade status to OPEN
