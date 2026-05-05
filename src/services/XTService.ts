@@ -231,14 +231,73 @@ export class XTService implements IExchangeService {
     }
     async placeOrder(symbol: string, type: 'market' | 'limit', side: 'buy' | 'sell', amount: number, price?: number, params: any = {}) {
         try {
-            // Standard order placement. SL/TP will be placed separately
-            // as per XT's API design for 'open positions'.
-            logger.info(`[XT] Placing Order: ${symbol} ${side} ${amount} with params: ${JSON.stringify(params)}`);
+            await this.exchange.loadMarkets();
+            const market = this.exchange.market(symbol);
+
+            // Detect if we want to use Atomic Attached Orders (Entry + SL + TP in one request).
+            // We use 'triggerStopPrice' and 'triggerProfitPrice' which match XT API exactly
+            // and are used by us to trigger this custom direct-call logic to bypass CCXT branching.
+            if (params.triggerStopPrice !== undefined || params.triggerProfitPrice !== undefined) {
+                logger.info(`[XT] 🚀 Placing ATOMIC Attached Order for ${symbol} (SL: ${params.triggerStopPrice}, TP1: ${params.triggerProfitPrice})`);
+
+                const request: any = {
+                    symbol: market.id,
+                    origQty: this.exchange.amountToPrecision(symbol, amount),
+                    orderSide: side.toUpperCase(),
+                    orderType: type.toUpperCase(),
+                    timeInForce: params.timeInForce || 'GTC'
+                };
+
+                if (type === 'limit' && price !== undefined) {
+                    request.price = this.exchange.priceToPrecision(symbol, price);
+                }
+
+                // Handle Position Side (Hedge or One-Way)
+                const reduceOnly = params.reduceOnly || false;
+                if (side === 'buy') {
+                    request.positionSide = reduceOnly ? 'SHORT' : 'LONG';
+                } else {
+                    request.positionSide = reduceOnly ? 'LONG' : 'SHORT';
+                }
+                
+                // Allow explicit override if provided in params
+                if (params.positionSide) request.positionSide = params.positionSide;
+
+                // Attach SL/TP using XT's native keys
+                if (params.triggerStopPrice !== undefined) {
+                    request.triggerStopPrice = this.exchange.priceToPrecision(symbol, params.triggerStopPrice);
+                    request.stopLossPriceType = params.triggerPriceType || 'LATEST_PRICE';
+                }
+                if (params.triggerProfitPrice !== undefined) {
+                    request.triggerProfitPrice = this.exchange.priceToPrecision(symbol, params.triggerProfitPrice);
+                    request.takeProfitPriceType = params.triggerPriceType || 'LATEST_PRICE';
+                }
+
+                // Call the private API directly to bypass CCXT's branching logic in createOrder
+                let response: any;
+                try {
+                    if (market.linear) {
+                        response = await (this.exchange as any).privateLinearPostFutureTradeV1OrderCreate(request);
+                    } else {
+                        response = await (this.exchange as any).privateInversePostFutureTradeV1OrderCreate(request);
+                    }
+                    
+                    const order = this.exchange.parseOrder(response, market);
+                    logger.info(`✅ [XT] Atomic Order placed successfully: ${order.id}`);
+                    return order;
+                } catch (apiErr: any) {
+                    logger.error(`[XT] ❌ Direct API call failed: ${apiErr.message}`);
+                    throw apiErr;
+                }
+            }
+
+            // Fallback to standard CCXT createOrder for regular orders
+            logger.info(`Placing Order: ${symbol} ${side} ${amount} with params: ${JSON.stringify(params)}`);
             const order = await this.exchange.createOrder(symbol, type, side, amount, price, params);
-            logger.info(`✅ [XT] Order placed: ${order.id} for ${symbol}`);
+            logger.info(`✅ Order placed: ${order.id} for ${symbol} ${side} ${amount}`);
             return order;
         } catch (error: any) {
-            logger.error(`[XT] ❌ Error placing order for ${symbol}: ${error.message}`);
+            logger.error(`[XT] ❌ Error placing order for ${symbol}:`, error.message);
             throw error;
         }
     }
@@ -305,9 +364,8 @@ export class XTService implements IExchangeService {
             try {
                 const cleanAmount = await this.amountToPrecision(symbol, amount);
                 if (cleanAmount > 0) {
-                    const slParams = { ...baseParams, stopLoss: stopLossPrice };
-                    // Using stopLoss key in params triggers CCXT's branch to XT's 'create-profit' endpoint
-                    await this.exchange.createOrder(symbol, 'market', closeSide, cleanAmount, undefined, slParams);
+                    const slParams = { ...baseParams, stopPrice: stopLossPrice };
+                    await this.exchange.createOrder(symbol, 'stop', closeSide, cleanAmount, stopLossPrice, slParams);
                     logger.info(`✅ [XT] Stop Loss placed at ${stopLossPrice.toFixed(6)} for ${symbol} (Qty: ${cleanAmount})`);
                 } else {
                     logger.error(`❌ [XT] Stop Loss amount too small after precision formatting for ${symbol}: ${amount}`);
@@ -357,9 +415,8 @@ export class XTService implements IExchangeService {
 
                 if (tpAmount <= 0) continue;
 
-                const tpParams = { ...baseParams, takeProfit: tpPrice };
-                // Using takeProfit key in params triggers CCXT's branch to XT's 'create-profit' endpoint
-                await this.exchange.createOrder(symbol, 'market', closeSide, tpAmount, undefined, tpParams);
+                const tpParams = { ...baseParams, stopPrice: tpPrice };
+                await this.exchange.createOrder(symbol, 'take_profit', closeSide, tpAmount, tpPrice, tpParams);
                 logger.info(`✅ [XT] Take Profit ${tpLabel} placed at ${tpPrice.toFixed(6)} for ${symbol} (Qty: ${tpAmount})`);
 
                 remainingAmount -= tpAmount;

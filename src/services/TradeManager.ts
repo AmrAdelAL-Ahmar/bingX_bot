@@ -264,6 +264,17 @@ export class TradeManager {
                     if (hedgeMode) {
                         orderParams.positionSide = signal.direction;
                     }
+                    
+                    // Native Attached Orders for XT:
+                    // Using 'triggerStopPrice' and 'triggerProfitPrice' triggers the custom logic
+                    // in XTService.placeOrder to call the private API directly, ensuring Entry+SL+TP1
+                    // are sent in a single atomic request.
+                    if (stopLossPrice) {
+                        orderParams.triggerStopPrice = stopLossPrice;
+                    }
+                    if (takeProfitPrices.length > 0) {
+                        orderParams.triggerProfitPrice = takeProfitPrices[0];
+                    }
 
                     const executionPrice = resolvedOrderType === 'limit' ? entryPrice : undefined;
 
@@ -276,7 +287,7 @@ export class TradeManager {
                         orderParams
                     );
 
-                    logger.info(`[Order Placed] Type: ${resolvedOrderType.toUpperCase()}, Price: ${executionPrice || 'MARKET'}, Qty: ${amountContracts}`);
+                    logger.info(`[Order Placed] Type: ${resolvedOrderType.toUpperCase()}, Price: ${executionPrice || 'MARKET'}, Qty: ${amountContracts} | Attached SL: ${stopLossPrice}, TP1: ${takeProfitPrices[0] ?? 'none'}`);
 
                 } catch (err: any) {
                     // Retry with 50% size if Insufficient Margin
@@ -344,7 +355,7 @@ export class TradeManager {
                             stopLossPrice,
                             takeProfitPrices,
                             hedgeMode,
-                            false // skipFirstTp = false: Place SL and TP1 as separate orders
+                            true // skipFirstTp — SL and TP1 already attached
                         );
                     } catch (slTpErr: any) {
                         logger.error(`⚠️ Main order placed but failed to set extra TPs: ${slTpErr.message}`);

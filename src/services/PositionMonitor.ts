@@ -109,7 +109,7 @@ export class PositionMonitor {
                             stopLossPrice,
                             takeProfitPrices,
                             hedgeMode,
-                            false // skipFirstTp = false: Place SL and TP1 as separate orders
+                            true // skipFirstTp — SL and TP1 are already active as attached orders
                         );
 
                         // Update trade status to OPEN
