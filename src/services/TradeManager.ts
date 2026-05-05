@@ -262,17 +262,18 @@ export class TradeManager {
                 try {
                     const orderParams: any = {};
                     if (hedgeMode) {
-                        // Hedge Mode: positionSide is required (LONG or SHORT)
                         orderParams.positionSide = signal.direction;
                     }
-
-                    // --- Native Attached Orders for XT ---
-                    // Using 'stopLossPrice' and 'takeProfitPrice' keys bypasses CCXT's
-                    // unified 'stopLoss' hijacking (which would otherwise split the calls)
-                    // and sends them directly to XT's v1/order/create endpoint in one request.
-                    orderParams.stopLossPrice = stopLossPrice;
+                    
+                    // Native Attached Orders for XT:
+                    // Using 'triggerStopPrice' and 'triggerProfitPrice' triggers the custom logic
+                    // in XTService.placeOrder to call the private API directly, ensuring Entry+SL+TP1
+                    // are sent in a single atomic request.
+                    if (stopLossPrice) {
+                        orderParams.triggerStopPrice = stopLossPrice;
+                    }
                     if (takeProfitPrices.length > 0) {
-                        orderParams.takeProfitPrice = takeProfitPrices[0];
+                        orderParams.triggerProfitPrice = takeProfitPrices[0];
                     }
 
                     const executionPrice = resolvedOrderType === 'limit' ? entryPrice : undefined;
