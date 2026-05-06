@@ -279,12 +279,7 @@ export class TradeManager {
 
                 let order: any;
                 try {
-                    // const orderParams: any = {};
-                    const orderParams: any = {
-                        stopLossPrice: stopLossPrice,
-                        takeProfitPrice: finalTpPrices[0]
-                    };
-
+                    const orderParams: any = {};
                     if (hedgeMode) {
                         // Hedge Mode: positionSide is required (LONG or SHORT)
                         orderParams.positionSide = signal.direction;
@@ -318,12 +313,7 @@ export class TradeManager {
                     if (err.message && err.message.includes('Insufficient margin')) {
                         logger.warn(`Insufficient margin for full size. Retrying with 50% size...`);
                         const reducedAmount = amountContracts * 0.5;
-
-                        // const retryParams: any = {};
-                        const retryParams: any = {
-                            stopLossPrice: stopLossPrice,
-                            takeProfitPrice: finalTpPrices[0]
-                        };
+                        const retryParams: any = {};
                         const hedgeModeRetry = await this.bingx.isHedgeMode();
                         if (hedgeModeRetry) {
                             retryParams.positionSide = signal.direction;
@@ -350,11 +340,8 @@ export class TradeManager {
                         );
                     } else if (err.message && err.message.includes('PositionSide')) {
                         logger.warn(`Position mode mismatch detected. Retrying with flipped hedgeMode assumption...`);
-                        // const retryParams: any = {};
-                        const retryParams: any = {
-                            stopLossPrice: stopLossPrice,
-                            takeProfitPrice: finalTpPrices[0]
-                        };
+                        const retryParams: any = {};
+
                         // Flip the assumption: if hedgeMode was true, we didn't send positionSide. 
                         // Wait, if hedgeMode was true, we DID send positionSide. So we remove it.
                         // If hedgeMode was false, we didn't send it, so we ADD it.

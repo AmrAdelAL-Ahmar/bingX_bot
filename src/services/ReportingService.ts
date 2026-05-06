@@ -62,8 +62,8 @@ export class ReportingService {
 Period: ${startTime.toLocaleDateString()} - ${now.toLocaleDateString()}
 
 Total Trades: ${trades.length}
-Win Rate: ${winRate.toFixed(1)}%
-Total PnL: ${totalPnL.toFixed(2)} USDT
+Win Rate: ${winRate.toFixed(2)}%
+Total PnL: ${totalPnL.toFixed(3)} USDT
 
 Keep it up! 🚀
             `;
