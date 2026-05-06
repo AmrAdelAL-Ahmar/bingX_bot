@@ -14,7 +14,7 @@ export class PositionMonitor {
         this.notifier = notifier;
     }
 
-    start(intervalMs: number = 30000) { // Check every 30s
+    start(intervalMs: number = 10000) { // Check every 30s
         if (this.isRunning) return;
         this.isRunning = true;
         logger.info('Starting Position Monitor...');
@@ -48,7 +48,7 @@ export class PositionMonitor {
 
                     if (order.status === 'closed' || order.status === 'filled') {
                         logger.info(`Limit order filled for ${trade.symbol}. SL/TP were already attached.`);
-                        
+
                         // Update trade status to OPEN
                         trade.currentStatus = 'OPEN';
                         trade.logs.push(`Limit order filled at ${new Date().toISOString()}`);
@@ -59,7 +59,7 @@ export class PositionMonitor {
                         if (user?.telegramId) {
                             const msg = `✅ <b>تم تنفيذ الأمر الحدي للعملة ${trade.symbol}!</b>\nلقد تم تفعيل صفقتك المعلقة وتم ربط أوامر الوقف والهدف تلقائياً.`;
                             await this.notifier(user.telegramId, msg);
-                            
+
                             // Send to source group if different
                             if (trade.sourceChatId && trade.sourceChatId !== user.telegramId) {
                                 await this.notifier(trade.sourceChatId, msg);
@@ -236,13 +236,13 @@ export class PositionMonitor {
                             const durationMs = closeTime.getTime() - trade.entryTime.getTime();
                             const durationMinutes = Math.floor(durationMs / 60000);
                             const durationHours = Math.floor(durationMinutes / 60);
-                            const durationStr = durationHours > 0 
+                            const durationStr = durationHours > 0
                                 ? `${durationHours} ساعة و ${durationMinutes % 60} دقيقة`
                                 : `${durationMinutes} دقيقة`;
 
                             const margin = trade.amount / lev;
                             const profitAmount = margin * (pnlPercent / 100);
-                            
+
                             // Calculate capital percentage
                             let capitalPercentageStr = 'N/A';
                             if (totalBalance > 0) {

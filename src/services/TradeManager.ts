@@ -279,7 +279,12 @@ export class TradeManager {
 
                 let order: any;
                 try {
-                    const orderParams: any = {};
+                    // const orderParams: any = {};
+                    const orderParams: any = {
+                        stopLossPrice: stopLossPrice,
+                        takeProfitPrice: finalTpPrices[0]
+                    };
+
                     if (hedgeMode) {
                         // Hedge Mode: positionSide is required (LONG or SHORT)
                         orderParams.positionSide = signal.direction;
@@ -313,7 +318,12 @@ export class TradeManager {
                     if (err.message && err.message.includes('Insufficient margin')) {
                         logger.warn(`Insufficient margin for full size. Retrying with 50% size...`);
                         const reducedAmount = amountContracts * 0.5;
-                        const retryParams: any = {};
+
+                        // const retryParams: any = {};
+                        const retryParams: any = {
+                            stopLossPrice: stopLossPrice,
+                            takeProfitPrice: finalTpPrices[0]
+                        };
                         const hedgeModeRetry = await this.bingx.isHedgeMode();
                         if (hedgeModeRetry) {
                             retryParams.positionSide = signal.direction;
@@ -340,8 +350,11 @@ export class TradeManager {
                         );
                     } else if (err.message && err.message.includes('PositionSide')) {
                         logger.warn(`Position mode mismatch detected. Retrying with flipped hedgeMode assumption...`);
-                        const retryParams: any = {};
-
+                        // const retryParams: any = {};
+                        const retryParams: any = {
+                            stopLossPrice: stopLossPrice,
+                            takeProfitPrice: finalTpPrices[0]
+                        };
                         // Flip the assumption: if hedgeMode was true, we didn't send positionSide. 
                         // Wait, if hedgeMode was true, we DID send positionSide. So we remove it.
                         // If hedgeMode was false, we didn't send it, so we ADD it.
@@ -480,10 +493,10 @@ export class TradeManager {
                     closedCount++;
 
                     // Optimistically update the database
-                    await Trade.updateMany(
-                        { userId: user._id, symbol: pos.symbol, currentStatus: 'OPEN' },
-                        { currentStatus: 'CLOSED_MANUAL', closeTime: new Date() } // We'll use CLOSED_MANUAL
-                    );
+                    // await Trade.updateMany(
+                    //     { userId: user._id, symbol: pos.symbol, currentStatus: 'OPEN' },
+                    //     { currentStatus: 'CLOSED_MANUAL', closeTime: new Date() } // We'll use CLOSED_MANUAL
+                    // );
 
                 } catch (err: any) {
                     logger.error(`Failed to close position ${pos.symbol}: ${err.message}`);
@@ -533,10 +546,10 @@ export class TradeManager {
                 logger.info(`✅ Successfully closed ${pos.side} position for ${pos.symbol} via 'Close Specific'`);
 
                 // Optimistically update DB
-                await Trade.updateMany(
-                    { userId: user._id, symbol: pos.symbol, currentStatus: 'OPEN' },
-                    { currentStatus: 'CLOSED_MANUAL', closeTime: new Date() }
-                );
+                // await Trade.updateMany(
+                //     { userId: user._id, symbol: pos.symbol, currentStatus: 'OPEN' },
+                //     { currentStatus: 'CLOSED_MANUAL', closeTime: new Date() }
+                // );
             }
             return true;
         } catch (error: any) {
