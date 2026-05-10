@@ -2,7 +2,7 @@ import { Telegraf } from 'telegraf';
 import logger from '../../utils/logger';
 import User from '../../models/User';
 import Trade from '../../models/Trade';
-import { getMainMenuKeyboard, getTraderSettingsKeyboard, getAlgoVersionKeyboard, getAnalysisActionKeyboard, getAnalysisSettingsKeyboard, getTFSelectionKeyboard, getLimitSelectionKeyboard, getRSISelectionKeyboard, getAlgoGuideSelectionKeyboard } from '../keyboards/baseKeyboards';
+import { getMainMenuKeyboard, getTraderSettingsKeyboard, getAlgoVersionKeyboard, getAnalysisActionKeyboard, getAnalysisSettingsKeyboard, getTFSelectionKeyboard, getLimitSelectionKeyboard, getRSISelectionKeyboard } from '../keyboards/baseKeyboards';
 import { AnalysisService } from '../../services/AnalysisService';
 import { BingXService } from '../../services/BingXService';
 import { BacktestService } from '../../services/BacktestService';
@@ -422,12 +422,6 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                 });
             }
 
-            if (message === '📖 دليل الخوارزميات') {
-                return ctx.reply('اختر الإصدار الذي تريد فهم كيفية عمله والمعادلات التي يستخدمها:', {
-                    reply_markup: getAlgoGuideSelectionKeyboard()
-                });
-            }
-
             // 2. Default: Attempt to parse signal
             const signal = SignalParser.parse(message);
             if (signal) {
@@ -617,35 +611,6 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
             }
         } catch (error) {
             logger.error('Error updating RSI threshold:', error);
-        }
-    });
-
-    bot.action(/^guide_v(\d)$/, async (ctx) => {
-        try {
-            const version = `V${ctx.match[1]}`;
-            const guide = analysisService.getAlgorithmGuide(version);
-            await ctx.replyWithHTML(guide);
-        } catch (error) {
-            logger.error('Error showing guide:', error);
-        }
-    });
-
-    bot.action(/^dt_(sc|sw)_(.+)$/, async (ctx) => {
-        try {
-            const [_, type, s] = ctx.match;
-            const symbol = `${s}/USDT:USDT`;
-            const user = await User.findOne({ telegramId: ctx.from!.id.toString() });
-            
-            // Re-run analysis briefly to get the results for the details
-            const result = await analysisService.analyze(symbol, 'V4', {
-                quickTF: user?.analysisSettings?.scalpTF,
-                longTF: user?.analysisSettings?.swingTF
-            });
-            
-            const details = analysisService.getTradeDetails(result);
-            await ctx.replyWithHTML(details);
-        } catch (error) {
-            logger.error('Error showing trade details:', error);
         }
     });
 };

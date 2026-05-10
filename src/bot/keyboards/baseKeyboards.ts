@@ -310,7 +310,7 @@ export const getAlgoVersionKeyboard = () => {
             [{ text: 'الخوارزمية V1 (الأساسي)' }, { text: 'الخوارزمية V2 (الكمي - Quant)' }],
             [{ text: 'الخوارزمية V3 (المصفوفة)' }, { text: 'الخوارزمية V4 (ثنائي الاتجاه)' }],
             [{ text: 'الخوارزمية V5 (تنبؤي AI) 🔮' }, { text: 'رجوع للقائمة الرئيسية 🔙' }],
-            [{ text: '⚙️ إعدادات المحلل الذكي' }, { text: '📖 دليل الخوارزميات' }]
+            [{ text: '⚙️ إعدادات المحلل الذكي' }]
         ],
         resize_keyboard: true,
         is_persistent: true
@@ -382,20 +382,6 @@ export const getRSISelectionKeyboard = () => {
     };
 };
 
-export const getAlgoGuideSelectionKeyboard = () => {
-    return {
-        inline_keyboard: [
-            [
-                { text: 'شرح V1 (الذهبية)', callback_data: 'guide_v1' },
-                { text: 'شرح V4 (المصفوفة)', callback_data: 'guide_v4' }
-            ],
-            [
-                { text: 'شرح V5 (التنبؤي)', callback_data: 'guide_v5' }
-            ]
-        ]
-    };
-};
-
 // --- ANALYSIS REPORT ACTION KEYBOARD (INLINE) ---
 export const getAnalysisActionKeyboard = (symbol: string, type: 'scalp' | 'swing', data: any) => {
     // data contains entry, tp, sl, direction, tp2
@@ -419,8 +405,7 @@ export const getAnalysisActionKeyboard = (symbol: string, type: 'scalp' | 'swing
                 { text: 'نسخ إشارة الصفقة 📋', callback_data: copyData }
             ],
             [
-                { text: 'اختبار (Backtest) ⏱️', callback_data: btData },
-                { text: 'تفاصيل التحليل 🔍', callback_data: `dt_${type === 'scalp' ? 'sc' : 'sw'}_${s}` }
+                { text: 'اختبار الاستراتيجية (Backtest) ⏱️', callback_data: btData }
             ]
         ]
     };
