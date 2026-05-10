@@ -17,6 +17,7 @@ export interface AnalysisResult {
     levels: TechnicalLevels;
     indicators: IndicatorData;
     structure?: string;
+    options: { quickTF: string, longTF: string, limit: number };
 }
 
 export interface TradeRecommendation {
@@ -167,42 +168,43 @@ export class AnalysisService {
 
         let result: AnalysisResult;
         switch (version) {
-            case 'V1': result = this.analyzeProbabilityV1(symbol, currentPrice, isAboveVWAP, lastRSI, indicators, levels, matrix, structure); break;
-            default: result = this.analyzeProbabilityV1(symbol, currentPrice, isAboveVWAP, lastRSI, indicators, levels, matrix, structure);
+            case 'V1': result = this.analyzeProbabilityEngine(symbol, currentPrice, isAboveVWAP, lastRSI, indicators, levels, matrix, structure, lastATR); break;
+            default: result = this.analyzeProbabilityEngine(symbol, currentPrice, isAboveVWAP, lastRSI, indicators, levels, matrix, structure, lastATR);
         }
 
-        return { ...result, levels, indicators, structure };
+        return { ...result, levels, indicators, structure, options: { quickTF, longTF, limit } };
     }
 
-    private analyzeProbabilityV1(symbol: string, cp: number, vwap: boolean, rsi: number, ind: IndicatorData, levels: TechnicalLevels, m: MatrixResult, struct: string): AnalysisResult {
-        let score = 0; // Positive for Long, Negative for Short
+    private analyzeProbabilityEngine(symbol: string, cp: number, vwap: boolean, rsi: number, ind: IndicatorData, levels: TechnicalLevels, m: MatrixResult, struct: string, atr: number): AnalysisResult {
+        let score = 0;
         
-        // 1. Trend (VWAP & Matrix)
+        // --- SCORE CALCULATION ---
         score += vwap ? 25 : -25;
         score += (m.percentage - 50) * 0.8;
-
-        // 2. Momentum (RSI & CCI & WilliamsR)
         if (rsi < 35) score += 15; else if (rsi > 65) score -= 15;
-        if (ind.cci < -100) score += 10; else if (ind.cci > 100) score -= 10;
-        if (ind.williamsR < -80) score += 10; else if (ind.williamsR > -20) score -= 10;
-
-        // 3. Structure
-        if (struct.includes("صاعد") || struct.includes("BOS")) score += 20;
-        else if (struct.includes("هابط")) score -= 20;
-
-        // 4. Price vs Levels
-        if (cp <= levels.fib618 * 1.01) score += 15;
-        else if (cp >= levels.fib618 * 0.99 && !vwap) score -= 15;
+        if (ind.cci < -100) score += 15; else if (ind.cci > 100) score -= 15;
+        if (struct.includes("صاعد")) score += 20; else if (struct.includes("هابط")) score -= 20;
+        if (cp <= levels.fib618 * 1.005) score += 15; else if (cp >= levels.fib382 * 0.995) score -= 15;
 
         const absScore = Math.abs(score);
-        const winRate = Math.min(50 + (absScore * 0.5), 94);
+        const winRate = Math.min(50 + (absScore * 0.6), 96);
         const type = score >= 0 ? 'LONG' : 'SHORT';
-        
+
+        // --- SCALP RECOMMENDATION ---
+        let scalpTp = 0;
+        if (type === 'LONG') {
+            scalpTp = Math.max(levels.ma7, levels.r1, cp + (atr * 1.5));
+            if (scalpTp <= cp) scalpTp = cp + (atr * 2); // Guaranteed positive target
+        } else {
+            scalpTp = Math.min(levels.ma7, levels.s1, cp - (atr * 1.5));
+            if (scalpTp >= cp) scalpTp = cp - (atr * 2);
+        }
+
         const scalp: TradeRecommendation = {
             status: `${type === 'LONG' ? '🟢 احتمالية صعود' : '🔴 احتمالية هبوط'} (${winRate.toFixed(1)}%)`,
             type,
             entry: cp,
-            tp: type === 'LONG' ? levels.ma7 : cp - (levels.ma7 - cp),
+            tp: scalpTp,
             sl: type === 'LONG' ? cp * 0.995 : cp * 1.005,
             timeEstimate: 20,
             winRate,
@@ -210,7 +212,20 @@ export class AnalysisService {
             confidenceScore: score
         };
 
-        return { symbol, currentPrice: cp, isUptrend: score > 0, quickRSI: rsi, volumeStatus: 'high', quickATR: 0, scalp, swing: scalp, levels, indicators: ind, structure: struct };
+        // --- SWING RECOMMENDATION ---
+        let swingTp = type === 'LONG' ? levels.fibTarget : cp - (levels.fibTarget - cp);
+        const swing: TradeRecommendation = {
+            status: `${type === 'LONG' ? '🌊 موجة صاعدة' : '🌊 موجة هابطة'} (${(winRate * 0.9).toFixed(1)}%)`,
+            type,
+            entry: cp,
+            tp: swingTp,
+            sl: type === 'LONG' ? cp * 0.97 : cp * 1.03,
+            timeEstimate: 1440,
+            winRate: winRate * 0.9,
+            reverseProb: 100 - (winRate * 0.9)
+        };
+
+        return { symbol, currentPrice: cp, isUptrend: score > 0, quickRSI: rsi, volumeStatus: 'high', quickATR: atr, scalp, swing, levels, indicators: ind, structure: struct, options: {} as any };
     }
 
     private detectMarketStructure(ohlcv: any[]): string {
@@ -261,14 +276,14 @@ export class AnalysisService {
     }
 
     formatReport(res: AnalysisResult, v: string): string {
-        const { scalp, swing, matrix, indicators, structure, levels } = res;
-        const winRate = scalp.winRate;
-        const statusIcon = winRate >= 80 ? '🔥' : winRate >= 65 ? '✅' : '⚠️';
+        const { scalp, swing, matrix, indicators, structure, levels, options } = res;
+        const statusIcon = scalp.winRate >= 80 ? '🔥' : scalp.winRate >= 65 ? '✅' : '⚠️';
 
         let r = `💎 **المحلل الاحتمالي | ${res.symbol}** 💎\n` +
-                `💵 السعر: **$${res.currentPrice.toFixed(3)}** | **${v}**\n\n` +
+                `💵 السعر: **$${res.currentPrice.toFixed(3)}** | **${v}**\n` +
+                `📊 الإعدادات: **Limit:${options.limit}** | TF:**${options.quickTF}/${options.longTF}**\n\n` +
                 `🎯 **النتيجة المتوقعة:** ${scalp.status} ${statusIcon}\n` +
-                `📈 نسبة النجاح: **${winRate.toFixed(1)}%**\n` +
+                `📈 نسبة النجاح: **${scalp.winRate.toFixed(1)}%**\n` +
                 `📉 نسبة المخاطرة: **${scalp.reverseProb.toFixed(1)}%**\n\n` +
                 `🏛 **هيكل السوق:** **${structure || 'عرضي'}**\n` +
                 `📊 **حالة المؤشرات:**\n` +
@@ -277,10 +292,13 @@ export class AnalysisService {
 
         if (matrix) r += `📈 **المصفوفة (MTF):** **${matrix.percentage.toFixed(0)}%** | ${matrix.decision}\n\n`;
 
-        r += `⚡ **التوصية اللحظية:**\n` +
-             `✅ **النوع:** ${scalp.type}\n` +
-             `🎯 الهدف: **${scalp.tp.toFixed(4)}**\n` +
-             `🛑 الوقف: **${scalp.sl.toFixed(4)}**\n\n`;
+        r += `⚡ **السكالبينج (Scalp):**\n` +
+             `✅ **النوع:** ${scalp.type} | 🎯 الهدف: **${scalp.tp.toFixed(4)}**\n` +
+             `🛑 الوقف: **${scalp.sl.toFixed(4)}** | ⏱️ الوقت: ${scalp.timeEstimate}د\n\n`;
+
+        r += `🌊 **السوينج (Swing):**\n` +
+             `✅ **النوع:** ${swing.type} | 🎯 الهدف: **${swing.tp.toFixed(4)}**\n` +
+             `🛑 الوقف: **${swing.sl.toFixed(4)}** | 📈 الدقة: ${swing.winRate.toFixed(1)}%\n\n`;
 
         r += `🛠 **المستويات:** R1:${levels.r1.toFixed(3)} | S1:${levels.s1.toFixed(3)} | Fib:${levels.fib618.toFixed(3)}`;
         return r;
