@@ -2,7 +2,7 @@ import { Telegraf } from 'telegraf';
 import logger from '../../utils/logger';
 import User from '../../models/User';
 import Trade from '../../models/Trade';
-import { getMainMenuKeyboard, getTraderSettingsKeyboard, getAlgoVersionKeyboard, getAnalysisActionKeyboard, getAnalysisSettingsKeyboard, getTFSelectionKeyboard, getLimitSelectionKeyboard } from '../keyboards/baseKeyboards';
+import { getMainMenuKeyboard, getTraderSettingsKeyboard, getAlgoVersionKeyboard, getAnalysisActionKeyboard, getAnalysisSettingsKeyboard, getTFSelectionKeyboard, getLimitSelectionKeyboard, getRSISelectionKeyboard } from '../keyboards/baseKeyboards';
 import { AnalysisService } from '../../services/AnalysisService';
 import { BingXService } from '../../services/BingXService';
 import { BacktestService } from '../../services/BacktestService';
@@ -346,7 +346,8 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                     const result = await analysisService.analyze(symbol, version, {
                         quickTF: user.analysisSettings?.scalpTF,
                         longTF: user.analysisSettings?.swingTF,
-                        limit: user.analysisSettings?.candleLimit
+                        limit: user.analysisSettings?.candleLimit,
+                        rsiThreshold: user.analysisSettings?.rsiThreshold
                     });
                     const report = analysisService.formatReport(result, version);
 
@@ -412,6 +413,12 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
             if (message === '📊 عدد الشمعات (Limit)') {
                 return ctx.reply('اختر عدد الشمعات التاريخية لتحليلها:', {
                     reply_markup: getLimitSelectionKeyboard()
+                });
+            }
+
+            if (message === '📉 مؤشر RSI Threshold') {
+                return ctx.reply('اختر قيمة RSI المفضلة (قيمة أقل = شروط دخول أقسى، قيمة أعلى = دخول أسرع):', {
+                    reply_markup: getRSISelectionKeyboard()
                 });
             }
 
@@ -589,6 +596,21 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
             }
         } catch (error) {
             logger.error('Error updating candle limit:', error);
+        }
+    });
+
+    bot.action(/^rsi_(\d+)$/, async (ctx) => {
+        try {
+            const rsi = parseInt(ctx.match[1]);
+            const user = await User.findOne({ telegramId: ctx.from!.id.toString() });
+            if (user) {
+                user.analysisSettings.rsiThreshold = rsi;
+                await user.save();
+                await ctx.answerCbQuery(`✅ تم تحديد RSI Threshold: ${rsi}`);
+                await ctx.editMessageText(`✅ تم تحديث قيمة RSI للدخول بنجاح إلى: **${rsi}**`, { parse_mode: 'Markdown' });
+            }
+        } catch (error) {
+            logger.error('Error updating RSI threshold:', error);
         }
     });
 };

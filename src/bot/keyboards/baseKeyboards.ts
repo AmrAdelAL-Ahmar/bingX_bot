@@ -321,7 +321,7 @@ export const getAnalysisSettingsKeyboard = () => {
     return {
         keyboard: [
             [{ text: '⏱️ فريم السكالبينج' }, { text: '🌊 فريم السوينج' }],
-            [{ text: '📊 عدد الشمعات (Limit)' }],
+            [{ text: '📊 عدد الشمعات (Limit)' }, { text: '📉 مؤشر RSI Threshold' }],
             [{ text: 'رجوع للقائمة الرئيسية 🔙' }]
         ],
         resize_keyboard: true
@@ -360,6 +360,23 @@ export const getLimitSelectionKeyboard = () => {
             [
                 { text: '300 شمعة', callback_data: 'limit_300' },
                 { text: '500 شمعة', callback_data: 'limit_500' }
+            ]
+        ]
+    };
+};
+
+export const getRSISelectionKeyboard = () => {
+    return {
+        inline_keyboard: [
+            [
+                { text: '20 (صارم جداً)', callback_data: 'rsi_20' },
+                { text: '25', callback_data: 'rsi_25' },
+                { text: '30 (قياسي)', callback_data: 'rsi_30' }
+            ],
+            [
+                { text: '35', callback_data: 'rsi_35' },
+                { text: '40', callback_data: 'rsi_40' },
+                { text: '50 (حساس جداً)', callback_data: 'rsi_50' }
             ]
         ]
     };

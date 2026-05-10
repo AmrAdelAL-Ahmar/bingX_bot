@@ -44,6 +44,7 @@ export interface IUser extends Document {
         scalpTF: string;
         swingTF: string;
         candleLimit: number;
+        rsiThreshold: number;
     };
 }
 
@@ -90,6 +91,7 @@ const UserSchema: Schema = new Schema({
         scalpTF: { type: String, default: '5m' },
         swingTF: { type: String, default: '1h' },
         candleLimit: { type: Number, default: 200 },
+        rsiThreshold: { type: Number, default: 30 },
     },
 });
 
