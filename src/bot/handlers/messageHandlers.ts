@@ -2,13 +2,17 @@ import { Telegraf } from 'telegraf';
 import logger from '../../utils/logger';
 import User from '../../models/User';
 import Trade from '../../models/Trade';
-import { getMainMenuKeyboard, getTraderSettingsKeyboard } from '../keyboards/baseKeyboards';
+import { getMainMenuKeyboard, getTraderSettingsKeyboard, getAlgoVersionKeyboard, getAnalysisActionKeyboard } from '../keyboards/baseKeyboards';
+import { AnalysisService } from '../../services/AnalysisService';
+import { BingXService } from '../../services/BingXService';
 
 import { SignalParser } from '../../services/SignalParser';
 import { TradeManager } from '../../services/TradeManager';
 import { sendTelegramMessage } from '../../utils/telegram';
 
 export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManager) => {
+    const bingxService = new BingXService(); // For analysis, we don't need user-specific keys unless trading
+    const analysisService = new AnalysisService(bingxService);
 
     bot.start(async (ctx) => {
         const user = await User.findOne({ telegramId: ctx.from.id.toString() });
@@ -278,6 +282,84 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                 }
             }
 
+            // --- SMART ANALYSIS FLOW ---
+            if (message === '📊 التحليل الذكي (V1/V2)') {
+                return ctx.reply('الرجاء اختيار إصدار خوارزمية التحليل التي تود استخدامها:', {
+                    reply_markup: getAlgoVersionKeyboard()
+                });
+            }
+
+            if (message === 'الخوارزمية V1 (الأساسي)') {
+                user.botState = 'AWAITING_ANALYSIS_SYMBOL_V1';
+                await user.save();
+                return ctx.reply('يرجى إرسال رمز العملة للتحليل باستخدام V1 (مثال: BTC):', {
+                    reply_markup: { keyboard: [[{ text: 'إلغاء ❌' }]], resize_keyboard: true }
+                });
+            }
+
+            if (message === 'الخوارزمية V2 (الكمي - Quant)') {
+                user.botState = 'AWAITING_ANALYSIS_SYMBOL_V2';
+                await user.save();
+                return ctx.reply('يرجى إرسال رمز العملة للتحليل باستخدام V2 (مثال: BTC):', {
+                    reply_markup: { keyboard: [[{ text: 'إلغاء ❌' }]], resize_keyboard: true }
+                });
+            }
+
+            if (user.botState === 'AWAITING_ANALYSIS_SYMBOL_V1' || user.botState === 'AWAITING_ANALYSIS_SYMBOL_V2') {
+                if (message === 'إلغاء ❌' || message === 'رجوع للقائمة الرئيسية 🔙') {
+                    user.botState = 'NONE';
+                    await user.save();
+                    return ctx.reply('تم الإلغاء.', { reply_markup: getMainMenuKeyboard(user) });
+                }
+
+                const version = user.botState === 'AWAITING_ANALYSIS_SYMBOL_V1' ? 'V1' : 'V2';
+                const symbol = message.toUpperCase();
+                ctx.reply(`⏳ جاري تحليل ${symbol} باستخدام ${version}...`);
+
+                try {
+                    const result = await analysisService.analyze(symbol, version);
+                    const report = analysisService.formatReport(result, version);
+
+                    // Send the report
+                    await ctx.replyWithHTML(report);
+
+                    // Send buttons for Scalp
+                    if (result.scalp.type !== 'NONE') {
+                        await ctx.reply(`⚡ **إجراءات سريعة لصفقة Scalp:**`, {
+                            reply_markup: getAnalysisActionKeyboard(symbol, 'scalp', {
+                                direction: result.scalp.type,
+                                entry: result.scalp.entry,
+                                tp: result.scalp.tp,
+                                sl: result.scalp.sl
+                            })
+                        });
+                    }
+
+                    // Send buttons for Swing
+                    if (result.swing.type !== 'NONE') {
+                        await ctx.reply(`🌊 **إجراءات لصفقة Swing:**`, {
+                            reply_markup: getAnalysisActionKeyboard(symbol, 'swing', {
+                                direction: result.swing.type,
+                                entry: result.swing.entry,
+                                tp: result.swing.tp,
+                                sl: result.swing.sl
+                            })
+                        });
+                    }
+
+                    user.botState = 'NONE';
+                    await user.save();
+                    return ctx.reply('يمكنك الآن تنفيذ الصفقة أو نسخ الإشارة من الأزرار أعلاه.', { reply_markup: getMainMenuKeyboard(user) });
+
+                } catch (error: any) {
+                    logger.error(`Analysis failed for ${symbol}:`, error);
+                    ctx.reply(`❌ فشل التحليل: ${error.message}`, { reply_markup: getMainMenuKeyboard(user) });
+                    user.botState = 'NONE';
+                    await user.save();
+                    return;
+                }
+            }
+
             // 2. Default: Attempt to parse signal
             const signal = SignalParser.parse(message);
             if (signal) {
@@ -334,6 +416,61 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
         } catch (error) {
             logger.error('Error in general message handler:', error);
             ctx.reply('حدث خطأ غير متوقع.');
+        }
+    });
+
+    // --- CALLBACK HANDLERS FOR ANALYSIS ACTIONS ---
+    bot.action(/^cp_(sc|sw)_(.+)$/, async (ctx) => {
+        try {
+            const [_, type, rest] = ctx.match;
+            const [s, d, e, t1, sl, t2] = rest.split('_');
+
+            const targets = [parseFloat(t1)];
+            if (t2 && t2 !== '0') targets.push(parseFloat(t2));
+
+            const signalText = analysisService.formatSignalText(
+                `${s}/USDT:USDT`,
+                d === 'L' ? 'LONG' : 'SHORT',
+                parseFloat(e),
+                targets,
+                parseFloat(sl)
+            );
+
+            await ctx.replyWithMarkdown(signalText);
+            await ctx.answerCbQuery('تم إنشاء نموذج الإشارة ✅');
+        } catch (error: any) {
+            logger.error('Error in copy signal action:', error);
+            await ctx.answerCbQuery('❌ حدث خطأ أثناء إنشاء الإشارة');
+        }
+    });
+
+    bot.action(/^ex_(sc|sw)_(.+)$/, async (ctx) => {
+        try {
+            const [_, type, rest] = ctx.match;
+            const [s, d, e, t1, sl, t2] = rest.split('_');
+            const telegramId = ctx.from!.id.toString();
+            const user = await User.findOne({ telegramId });
+
+            if (!user) return ctx.answerCbQuery('لم يتم العثور على المستخدم');
+
+            const targets = [parseFloat(t1)];
+            if (t2 && t2 !== '0') targets.push(parseFloat(t2));
+
+            const signal = {
+                type: 'TRADE',
+                symbol: `${s}/USDT:USDT`,
+                direction: d === 'L' ? 'LONG' : 'SHORT',
+                entry: [parseFloat(e)],
+                targets: targets,
+                stopLoss: parseFloat(sl)
+            };
+
+            ctx.answerCbQuery('⏳ جاري تنفيذ الصفقة...');
+            await tradeManager.executeSignal(signal as any, user._id.toString(), ctx.chat!.id.toString());
+            
+        } catch (error: any) {
+            logger.error('Error in execute trade action:', error);
+            await ctx.answerCbQuery(`❌ فشل التنفيذ: ${error.message}`);
         }
     });
 };

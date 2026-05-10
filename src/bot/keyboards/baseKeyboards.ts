@@ -17,6 +17,9 @@ export const getMainMenuKeyboard = (user: any) => {
                 { text: '❌ إلغاء صفقة محددة' }
             ],
             [
+                { text: '📊 التحليل الذكي (V1/V2)' }
+            ],
+            [
                 { text: '🛑 إلغاء كل الصفقات المفتوحة' }
             ],
             [
@@ -295,6 +298,43 @@ export const buildStrategySettingsKeyboard = (user: any) => {
             ],
             [
                 { text: '✅ إغلاق', callback_data: 'strat_close' }
+            ]
+        ]
+    };
+};
+
+// --- ALGO VERSION SELECTION KEYBOARD ---
+export const getAlgoVersionKeyboard = () => {
+    return {
+        keyboard: [
+            [{ text: 'الخوارزمية V1 (الأساسي)' }, { text: 'الخوارزمية V2 (الكمي - Quant)' }],
+            [{ text: 'رجوع للقائمة الرئيسية 🔙' }]
+        ],
+        resize_keyboard: true,
+        is_persistent: true
+    };
+};
+
+// --- ANALYSIS REPORT ACTION KEYBOARD (INLINE) ---
+export const getAnalysisActionKeyboard = (symbol: string, type: 'scalp' | 'swing', data: any) => {
+    // data contains entry, tp, sl, direction, tp2
+    const s = symbol.split('/')[0]; // Use short symbol BTC instead of BTC/USDT:USDT
+    const d = data.direction === 'LONG' ? 'L' : 'S';
+    const e = data.entry.toFixed(4);
+    const t1 = data.tp.toFixed(4);
+    const sl = data.sl.toFixed(4);
+    const t2 = data.tp2 ? data.tp2.toFixed(4) : '0';
+
+    const callbackData = `ex_${type === 'scalp' ? 'sc' : 'sw'}_${s}_${d}_${e}_${t1}_${sl}_${t2}`;
+    const copyData = `cp_${type === 'scalp' ? 'sc' : 'sw'}_${s}_${d}_${e}_${t1}_${sl}_${t2}`;
+
+    return {
+        inline_keyboard: [
+            [
+                { text: `تنفيذ صفقة ${type === 'scalp' ? 'Scalp ⚡' : 'Swing 🌊'}`, callback_data: callbackData }
+            ],
+            [
+                { text: 'نسخ إشارة الصفقة 📋', callback_data: copyData }
             ]
         ]
     };

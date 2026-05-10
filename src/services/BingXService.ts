@@ -106,6 +106,24 @@ export class BingXService {
         }
     }
 
+    async fetchOHLCV(symbol: string, timeframe: string, limit: number = 100) {
+        try {
+            await this.exchange.loadMarkets();
+            const ohlcv = await this.exchange.fetchOHLCV(symbol, timeframe, undefined, limit);
+            return ohlcv.map((candle: any) => ({
+                timestamp: candle[0],
+                open: candle[1],
+                high: candle[2],
+                low: candle[3],
+                close: candle[4],
+                volume: candle[5]
+            }));
+        } catch (error) {
+            logger.error(`Error fetching OHLCV for ${symbol} (${timeframe}): `, error);
+            throw error;
+        }
+    }
+
     /*
      * Place an order
      * @param symbol e.g., 'BTC/USDT:USDT'
