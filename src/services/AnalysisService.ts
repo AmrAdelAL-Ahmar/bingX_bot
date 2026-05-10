@@ -1,4 +1,4 @@
-import { RSI, SMA, ATR, VWAP, MACD, BollingerBands, StochasticRSI, CCI, WilliamsR } from 'technicalindicators';
+import { RSI, SMA, ATR, VWAP, MACD, BollingerBands, StochasticRSI, CCI, WilliamsR, MFI } from 'technicalindicators';
 import logger from '../utils/logger';
 import { BingXService } from './BingXService';
 
@@ -67,6 +67,7 @@ export interface IndicatorData {
     stochRsi: number;
     cci: number;
     williamsR: number;
+    mfi?: number;
 }
 
 const TF_WEIGHTS: Record<string, number> = {
@@ -100,7 +101,7 @@ export class AnalysisService {
         const dailyOHLCV = mtfOHLCV['1d'];
         const currentPrice = quickOHLCV[quickOHLCV.length - 1].close;
 
-        const quickCloses = quickOHLCV.map(c => c.close), quickHighs = quickOHLCV.map(c => c.high), quickLows = quickOHLCV.map(c => c.low);
+        const quickCloses = quickOHLCV.map(c => c.close), quickHighs = quickOHLCV.map(c => c.high), quickLows = quickOHLCV.map(c => c.low), quickVolumes = quickOHLCV.map(c => c.volume);
         
         const macdArr = MACD.calculate({ values: quickCloses, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false });
         const lastMACD = macdArr[macdArr.length - 1];
@@ -110,6 +111,7 @@ export class AnalysisService {
         const atrArr = ATR.calculate({ period: 14, high: quickHighs, low: quickLows, close: quickCloses });
         const cciArr = CCI.calculate({ period: 20, high: quickHighs, low: quickLows, close: quickCloses });
         const wRArr = WilliamsR.calculate({ period: 14, high: quickHighs, low: quickLows, close: quickCloses });
+        const mfiArr = MFI.calculate({ period: 14, high: quickHighs, low: quickLows, close: quickCloses, volume: quickVolumes });
         const stochRsiArr = StochasticRSI.calculate({ values: quickCloses, rsiPeriod: 14, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 });
 
         const lastATR = atrArr[atrArr.length - 1];
@@ -118,7 +120,8 @@ export class AnalysisService {
             bb: BollingerBands.calculate({ period: 20, values: quickCloses, stdDev: 2 }).slice(-1)[0], 
             stochRsi: stochRsiArr.slice(-1)[0]?.k || 50,
             cci: cciArr.slice(-1)[0] || 0,
-            williamsR: wRArr.slice(-1)[0] || -50
+            williamsR: wRArr.slice(-1)[0] || -50,
+            mfi: mfiArr.slice(-1)[0] || 50
         };
 
         const longCloses = mtfOHLCV[longTF].map(c => c.close);
@@ -139,32 +142,73 @@ export class AnalysisService {
         const vwap = this.calculateVWAP(dailyOHLCV);
         const structure = this.detectMarketStructure(mtfOHLCV['1h']);
 
-        // --- ENGINES ---
+        // --- ENGINES ROUTING ---
         let result: AnalysisResult;
-        if (version === 'V3') {
-            result = this.analyzeMatrixMaster(symbol, currentPrice, matrix, indicators, levels, structure, lastATR, vwap);
-        } else {
-            result = this.analyzeProbabilityEngine(symbol, currentPrice, currentPrice > vwap, rsiArr.slice(-1)[0], indicators, levels, matrix, structure, lastATR);
+        switch(version) {
+            case 'V2': result = this.analyzeQuantV2(symbol, currentPrice, indicators, levels, matrix, structure, lastATR); break;
+            case 'V3': result = this.analyzeMatrixMaster(symbol, currentPrice, matrix, indicators, levels, structure, lastATR, vwap); break;
+            case 'V4': result = this.analyzeScalpProV4(symbol, currentPrice, indicators, levels, matrix, structure, lastATR); break;
+            case 'V5': result = this.analyzePredictiveV5(symbol, currentPrice, quickOHLCV, indicators, levels, matrix, structure, lastATR); break;
+            default: result = this.analyzeProbabilityEngine(symbol, currentPrice, currentPrice > vwap, rsiArr.slice(-1)[0], indicators, levels, matrix, structure, lastATR);
         }
 
         return { ...result, levels, indicators, structure, options: { quickTF, longTF, limit } };
     }
 
-    private analyzeMatrixMaster(symbol: string, cp: number, m: MatrixResult, ind: IndicatorData, l: TechnicalLevels, struct: string, atr: number, vwapPrice: number): AnalysisResult {
-        // V3 focuses on Matrix Confluence (The Big Picture)
-        const type = m.percentage >= 50 ? 'LONG' : 'SHORT';
-        const winRate = Math.min(m.percentage + 10, 98);
+    private analyzeQuantV2(symbol: string, cp: number, ind: IndicatorData, l: TechnicalLevels, m: MatrixResult, struct: string, atr: number): AnalysisResult {
+        // V2 focuses on Money Flow and Volume
+        const mfi = ind.mfi || 50;
+        const type = mfi < 30 ? 'LONG' : mfi > 70 ? 'SHORT' : (m.percentage >= 50 ? 'LONG' : 'SHORT');
+        const winRate = Math.min(60 + Math.abs(mfi - 50) * 0.8, 92);
         
-        // Dynamic ATR-based Stop Loss (Preventing stop outs)
-        const slDistance = Math.max(atr * 3, cp * 0.01); // 3x ATR or 1% minimum
-        const sl = type === 'LONG' ? cp - slDistance : cp + slDistance;
-        const tp = type === 'LONG' ? cp + (slDistance * 1.5) : cp - (slDistance * 1.5);
+        const slDistance = atr * 3;
+        const scalp: TradeRecommendation = {
+            status: `📊 V2 QUANT (${type}) - MFI: ${mfi.toFixed(0)}`,
+            type, entry: cp, tp: type === 'LONG' ? cp + (slDistance * 1.5) : cp - (slDistance * 1.5), sl: type === 'LONG' ? cp - slDistance : cp + slDistance,
+            timeEstimate: 60, winRate, reverseProb: 100 - winRate
+        };
+        return { symbol, currentPrice: cp, isUptrend: mfi < 50, quickRSI: 50, volumeStatus: 'high', quickATR: atr, scalp, swing: scalp, levels: l, indicators: ind, structure: struct, options: {} as any };
+    }
+
+    private analyzeScalpProV4(symbol: string, cp: number, ind: IndicatorData, l: TechnicalLevels, m: MatrixResult, struct: string, atr: number): AnalysisResult {
+        // V4 focuses on Volatility and Momentum
+        const isLong = cp <= ind.bb.lower || ind.cci < -100;
+        const isShort = cp >= ind.bb.upper || ind.cci > 100;
+        const type = isLong ? 'LONG' : 'SHORT';
+        const winRate = Math.min(65 + (Math.abs(ind.cci)/10), 94);
+
+        const slDistance = atr * 2;
+        const scalp: TradeRecommendation = {
+            status: `⚡ V4 SCALP PRO (${type}) - BB/CCI Confluence`,
+            type, entry: cp, tp: type === 'LONG' ? ind.bb.middle : ind.bb.middle, sl: type === 'LONG' ? cp - slDistance : cp + slDistance,
+            timeEstimate: 15, winRate, reverseProb: 100 - winRate
+        };
+        return { symbol, currentPrice: cp, isUptrend: ind.cci > 0, quickRSI: 50, volumeStatus: 'high', quickATR: atr, scalp, swing: scalp, levels: l, indicators: ind, structure: struct, options: {} as any };
+    }
+
+    private analyzePredictiveV5(symbol: string, cp: number, ohlcv: any[], ind: IndicatorData, l: TechnicalLevels, m: MatrixResult, struct: string, atr: number): AnalysisResult {
+        // V5 focuses on Statistical AI Prediction
+        const pred = this.predictNextPriceLinear(ohlcv, 20);
+        const type = pred.predictedPrice > cp ? 'LONG' : 'SHORT';
+        const winRate = Math.min(70 + (pred.confidence * 0.1), 96);
 
         const scalp: TradeRecommendation = {
-            status: `🏛 V3 MATRIX ${type} ${m.decision}`,
-            type, entry: cp, tp, sl, timeEstimate: 45, winRate, reverseProb: 100 - winRate, confidenceScore: m.percentage
+            status: `🔮 V5 PREDICTIVE AI - Expected: $${pred.predictedPrice.toFixed(2)}`,
+            type, entry: cp, tp: pred.predictedPrice, sl: type === 'LONG' ? cp - (atr * 4) : cp + (atr * 4),
+            timeEstimate: 30, winRate, reverseProb: 100 - winRate
         };
+        return { symbol, currentPrice: cp, isUptrend: type === 'LONG', quickRSI: 50, volumeStatus: 'high', quickATR: atr, scalp, swing: scalp, levels: l, indicators: ind, structure: struct, options: {} as any, prediction: pred };
+    }
 
+    private analyzeMatrixMaster(symbol: string, cp: number, m: MatrixResult, ind: IndicatorData, l: TechnicalLevels, struct: string, atr: number, vwapPrice: number): AnalysisResult {
+        const type = m.percentage >= 50 ? 'LONG' : 'SHORT';
+        const winRate = Math.min(m.percentage + 10, 98);
+        const slDistance = Math.max(atr * 3, cp * 0.01);
+        const scalp: TradeRecommendation = {
+            status: `🏛 V3 MATRIX ${type} ${m.decision}`,
+            type, entry: cp, tp: type === 'LONG' ? cp + (slDistance * 2) : cp - (slDistance * 2), sl: type === 'LONG' ? cp - slDistance : cp + slDistance,
+            timeEstimate: 120, winRate, reverseProb: 100 - winRate, confidenceScore: m.percentage
+        };
         return { symbol, currentPrice: cp, isUptrend: cp > vwapPrice, quickRSI: 50, volumeStatus: 'high', quickATR: atr, scalp, swing: scalp, levels: l, indicators: ind, structure: struct, options: {} as any };
     }
 
@@ -173,37 +217,15 @@ export class AnalysisService {
         score += vwap ? 25 : -25;
         score += (m.percentage - 50) * 0.8;
         if (rsi < 35) score += 15; else if (rsi > 65) score -= 15;
-        if (ind.cci < -100) score += 15; else if (ind.cci > 100) score -= 15;
-        if (struct.includes("صاعد")) score += 20; else if (struct.includes("هابط")) score -= 20;
-
-        const absScore = Math.abs(score);
-        const winRate = Math.min(50 + (absScore * 0.6), 96);
+        const winRate = Math.min(50 + (Math.abs(score) * 0.6), 96);
         const type = score >= 0 ? 'LONG' : 'SHORT';
-
-        // Dynamic ATR-based Stop Loss
-        const slDistance = Math.max(atr * 2.5, cp * 0.008); 
-        const sl = type === 'LONG' ? cp - slDistance : cp + slDistance;
-        
-        let tp = 0;
-        if (type === 'LONG') {
-            tp = Math.max(levels.ma7, levels.r1, cp + (atr * 2));
-            if (tp <= cp) tp = cp + (atr * 3);
-        } else {
-            tp = Math.min(levels.ma7, levels.s1, cp - (atr * 2));
-            if (tp >= cp) tp = cp - (atr * 3);
-        }
-
+        const slDistance = atr * 2.5;
         const scalp: TradeRecommendation = {
             status: `${type === 'LONG' ? '🟢 احتمالية صعود' : '🔴 احتمالية هبوط'} (${winRate.toFixed(1)}%)`,
-            type, entry: cp, tp, sl, timeEstimate: 20, winRate, reverseProb: 100 - winRate, confidenceScore: score
+            type, entry: cp, tp: type === 'LONG' ? Math.max(levels.ma7, cp + atr * 2) : Math.min(levels.ma7, cp - atr * 2), sl: type === 'LONG' ? cp - slDistance : cp + slDistance,
+            timeEstimate: 20, winRate, reverseProb: 100 - winRate, confidenceScore: score
         };
-
-        const swing: TradeRecommendation = {
-            status: `${type === 'LONG' ? '🌊 موجة صاعدة' : '🌊 موجة هابطة'}`,
-            type, entry: cp, tp: type === 'LONG' ? levels.fibTarget : cp - (levels.fibTarget-cp), sl: type === 'LONG' ? cp * 0.96 : cp * 1.04, timeEstimate: 1440, winRate: winRate * 0.85, reverseProb: 100 - (winRate * 0.85)
-        };
-
-        return { symbol, currentPrice: cp, isUptrend: score > 0, quickRSI: rsi, volumeStatus: 'high', quickATR: atr, scalp, swing, levels, indicators: ind, structure: struct, options: {} as any };
+        return { symbol, currentPrice: cp, isUptrend: score > 0, quickRSI: rsi, volumeStatus: 'high', quickATR: atr, scalp, swing: scalp, levels, indicators: ind, structure: struct, options: {} as any };
     }
 
     private detectMarketStructure(ohlcv: any[]): string {
@@ -240,8 +262,21 @@ export class AnalysisService {
         return { score: totalScore, percentage, decision, details };
     }
 
+    private predictNextPriceLinear(pastCandles: any[], period: number = 20): PredictionResult {
+        let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+        const n = Math.min(period, pastCandles.length);
+        const recent = pastCandles.slice(-n);
+        for (let i = 0; i < n; i++) {
+            const x = i + 1, y = recent[i].close;
+            sumX += x; sumY += y; sumXY += (x * y); sumXX += (x * x);
+        }
+        const m = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+        const b = (sumY - m * sumX) / n;
+        return { predictedPrice: (m * (n + 1)) + b, trendDirection: m > 0 ? 'UP' : 'DOWN', slope: m, confidence: Math.abs(m) * 1000 };
+    }
+
     formatReport(res: AnalysisResult, v: string): string {
-        const { scalp, swing, matrix, indicators, structure, levels, options } = res;
+        const { scalp, swing, matrix, indicators, structure, levels, options, prediction } = res;
         const statusIcon = scalp.winRate >= 80 ? '🔥' : scalp.winRate >= 65 ? '✅' : '⚠️';
 
         let r = `💎 **المحلل الاحتمالي | ${res.symbol}** 💎\n` +
@@ -249,21 +284,20 @@ export class AnalysisService {
                 `📊 الإعدادات: **Limit:${options.limit}** | TF:**${options.quickTF}/${options.longTF}**\n\n` +
                 `🎯 **النتيجة المتوقعة:** ${scalp.status} ${statusIcon}\n` +
                 `📈 نسبة النجاح: **${scalp.winRate.toFixed(1)}%**\n` +
-                `📉 نسبة المخاطرة: **${scalp.reverseProb.toFixed(1)}%**\n\n` +
-                `🏛 **هيكل السوق:** **${structure || 'عرضي'}**\n` +
-                `📊 **حالة المؤشرات:**\n` +
-                `- RSI: **${res.quickRSI.toFixed(1)}** | CCI: **${indicators.cci.toFixed(0)}**\n` +
-                `- Stoch: **${indicators.stochRsi.toFixed(1)}** | Williams%R: **${indicators.williamsR.toFixed(1)}**\n\n`;
+                `📉 نسبة المخاطرة: **${scalp.reverseProb.toFixed(1)}%**\n\n`;
+
+        if (prediction) r += `🔮 **التوقع الإحصائي:** **$${prediction.predictedPrice.toFixed(2)}** (${prediction.trendDirection})\n\n`;
+
+        r += `🏛 **هيكل السوق:** **${structure || 'عرضي'}**\n` +
+             `📊 **حالة المؤشرات:**\n` +
+             `- RSI: **${res.quickRSI.toFixed(1)}** | CCI: **${indicators.cci.toFixed(0)}**\n` +
+             `- MFI: **${indicators.mfi?.toFixed(1)}** | Williams%R: **${indicators.williamsR.toFixed(1)}**\n\n`;
 
         if (matrix) r += `📈 **المصفوفة (MTF):** **${matrix.percentage.toFixed(0)}%** | ${matrix.decision}\n${matrix.details}\n\n`;
 
-        r += `⚡ **السكالبينج (Scalp):**\n` +
+        r += `⚡ **التوصية اللحظية:**\n` +
              `✅ **النوع:** ${scalp.type} | 🎯 الهدف: **${scalp.tp.toFixed(4)}**\n` +
              `🛑 الوقف: **${scalp.sl.toFixed(4)}** | ⏱️ الوقت: ${scalp.timeEstimate}د\n\n`;
-
-        r += `🌊 **السوينج (Swing):**\n` +
-             `✅ **النوع:** ${swing.type} | 🎯 الهدف: **${swing.tp.toFixed(4)}**\n` +
-             `🛑 الوقف: **${swing.sl.toFixed(4)}** | 📈 الدقة: ${swing.winRate.toFixed(1)}%\n\n`;
 
         r += `🛠 **المستويات:** R1:${levels.r1.toFixed(3)} | S1:${levels.s1.toFixed(3)} | Fib:${levels.fib618.toFixed(3)}`;
         return r;
@@ -278,14 +312,14 @@ export class AnalysisService {
     }
 
     getAlgorithmExplanation(v: string): string {
-        return "📘 **نظام الاحتمالات المتطور:** يقوم بدمج 10 مؤشرات فنية وإعطاء وزن نسبي لكل منها لتحديد الاتجاه الأرجح ونسبة نجاحه.";
+        return "📘 **نظام التداول المتعدد الاستراتيجيات:** يضم 5 محركات تحليل مختلفة (كمي، مصفوفي، مضاربي، وتنبؤي) لتغطية كافة ظروف السوق.";
     }
 
     generateEducationalDetails(res: AnalysisResult): string {
         return `🔍 **تفاصيل الاحتمالات لـ ${res.symbol}:**\n\n` +
-               `- مجموع النقاط الفنية: ${res.scalp.confidenceScore?.toFixed(1)}\n` +
                `- قوة الزخم: ${Math.abs(res.quickRSI - 50).toFixed(1)}\n` +
+               `- سيولة السوق (MFI): ${res.indicators.mfi?.toFixed(1)}\n` +
                `- توافق المصفوفة: ${res.matrix?.percentage.toFixed(0)}%\n\n` +
-               `تم حساب نسبة النجاح ${res.scalp.winRate.toFixed(1)}% بناءً على التقاء هذه المؤشرات.`;
+               `تم حساب نسبة النجاح ${res.scalp.winRate.toFixed(1)}% بناءً على المحرك المختار.`;
     }
 }
