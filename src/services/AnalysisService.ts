@@ -86,17 +86,11 @@ export class AnalysisService {
         const limit = options.limit || 200;
         const rsiThreshold = options.rsiThreshold || 30;
 
-        // Fetch Data for Matrix (7 Timeframes)
         const matrixTFs = ['1m', '3m', '5m', '15m', '1h', '4h', '1d'];
         const mtfOHLCV: Record<string, any[]> = {};
         
-        try {
-            for (const tf of matrixTFs) {
-                mtfOHLCV[tf] = await this.bingxService.fetchOHLCV(symbol, tf, Math.max(limit, 200));
-            }
-        } catch (error) {
-            logger.error(`Error fetching OHLCV for ${symbol}:`, error);
-            throw new Error(`فشل في جلب البيانات من المنصة. تأكد من صحة الرمز: ${symbol}`);
+        for (const tf of matrixTFs) {
+            mtfOHLCV[tf] = await this.bingxService.fetchOHLCV(symbol, tf, Math.max(limit, 200));
         }
 
         const quickOHLCV = mtfOHLCV[quickTF];
@@ -104,49 +98,38 @@ export class AnalysisService {
         const dailyOHLCV = mtfOHLCV['1d'];
 
         if (!quickOHLCV || quickOHLCV.length < 50) {
-            throw new Error(`بيانات غير كافية لتحليل ${symbol}. يرجى المحاولة لاحقاً.`);
+            throw new Error(`بيانات غير كافية لتحليل ${symbol}.`);
         }
 
         const currentPrice = quickOHLCV[quickOHLCV.length - 1].close;
         const quickCloses = quickOHLCV.map(c => c.close);
         const quickHighs = quickOHLCV.map(c => c.high);
         const quickLows = quickOHLCV.map(c => c.low);
-        const quickVolumes = quickOHLCV.map(c => c.volume);
         const longCloses = longOHLCV.map(c => c.close);
 
-        // --- Technical Indicators ---
+        // Indicators
         const ma99Arr = SMA.calculate({ period: 99, values: longCloses });
         const lastMA99 = ma99Arr[ma99Arr.length - 1] || currentPrice;
         
         const rsiArr = RSI.calculate({ period: 14, values: quickCloses });
-        const lastRSI = rsiArr[rsiArr.length - 1];
+        const lastRSI = rsiArr[rsiArr.length - 1] || 50;
 
         const bbArr = BollingerBands.calculate({ period: 20, stdDev: 2, values: quickCloses });
-        const lastBB = bbArr[bbArr.length - 1] || { upper: 0, lower: 0, middle: 0 };
+        const lastBB = bbArr[bbArr.length - 1] || { upper: currentPrice, lower: currentPrice, middle: currentPrice };
 
-        const macdArr = MACD.calculate({ 
-            fastPeriod: 12, 
-            slowPeriod: 26, 
-            signalPeriod: 9, 
-            values: quickCloses,
-            SimpleMAOscillator: false, 
-            SimpleMASignal: false 
-        });
+        const macdArr = MACD.calculate({ fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, values: quickCloses, SimpleMAOscillator: false, SimpleMASignal: false });
         const lastMACD = macdArr[macdArr.length - 1] || { MACD: 0, signal: 0, histogram: 0 };
 
         const stochArr = StochasticRSI.calculate({ kPeriod: 3, dPeriod: 3, rsiPeriod: 14, stochasticPeriod: 14, values: quickCloses });
         const lastStoch = stochArr[stochArr.length - 1] || { k: 50, d: 50, stochRSI: 50 };
 
         const atrArr = ATR.calculate({ period: 14, high: quickHighs, low: quickLows, close: quickCloses });
-        const lastATR = atrArr[atrArr.length - 1];
+        const lastATR = atrArr[atrArr.length - 1] || 0;
 
         const ma7Arr = SMA.calculate({ period: 7, values: quickCloses });
-        const lastMA7 = ma7Arr[ma7Arr.length - 1];
+        const lastMA7 = ma7Arr[ma7Arr.length - 1] || currentPrice;
 
-        const mavolArr = SMA.calculate({ period: 14, values: quickVolumes });
-        const lastMAVOL = mavolArr[mavolArr.length - 1];
-
-        // Fibonacci & Pivots
+        // Levels
         const longHigh = Math.max(...longCloses.slice(-100));
         const longLow = Math.min(...longCloses.slice(-100));
         const fib618 = longHigh - (longHigh - longLow) * 0.618;
@@ -168,14 +151,11 @@ export class AnalysisService {
         const vwap = this.calculateVWAP(dailyOHLCV);
         const matrix = this.calculateMatrix(mtfOHLCV);
 
-        // Routing
-        let result: any;
         const params = { symbol, currentPrice, lastRSI, lastATR, lastMA7, lastMA99, levels, lastBB, lastMACD, lastStoch, vwap, matrix, rsiThreshold, quickOHLCV };
         
+        let result: any;
         switch (version) {
             case 'V1': result = this.runV1(params); break;
-            case 'V2': result = this.runV2(params, quickVolumes[quickVolumes.length-1], lastMAVOL); break;
-            case 'V3': result = this.runV3(params); break;
             case 'V4': result = this.runV4(params); break;
             case 'V5': result = this.runV5(params); break;
             default: result = this.runV1(params);
@@ -184,78 +164,54 @@ export class AnalysisService {
         return { ...result, levels, indicators: { macd: lastMACD, stochRSI: lastStoch } };
     }
 
-    private runV1(p: any): AnalysisResult {
+    private runV1(p: any): any {
         let scalp = this.getDefaultRecommendation();
         const isUptrend = p.currentPrice > p.lastMA99;
-
         if (isUptrend && p.lastRSI < p.rsiThreshold && p.currentPrice <= (p.levels.fib618 * 1.005)) {
-            scalp = {
-                status: "🟢 شراء (V1 Gold)", type: 'LONG', entry: p.currentPrice, tp: p.lastMA7, sl: p.currentPrice * 0.995,
-                winRate: 75, timeEstimate: 30, reverseProb: 20
-            };
+            scalp = { status: "🟢 شراء (V1 Gold)", type: 'LONG', entry: p.currentPrice, tp: p.lastMA7, sl: p.currentPrice * 0.995, winRate: 75, timeEstimate: 30, reverseProb: 20 };
         } else {
-            scalp.rejectionReason = !isUptrend ? "الاتجاه العام هابط" : p.lastRSI >= p.rsiThreshold ? "RSI غير مشبع" : "السعر بعيد عن دعم فيبوناتشي";
+            scalp.rejectionReason = !isUptrend ? "الاتجاه هابط" : p.lastRSI >= p.rsiThreshold ? "RSI مرتفع" : "السعر بعيد عن الدعم";
         }
-
         return { ...p, isUptrend, scalp, swing: this.getDefaultRecommendation() };
     }
 
-    private runV4(p: any): AnalysisResult {
+    private runV4(p: any): any {
         let scalp = this.getDefaultRecommendation();
         const isAboveVWAP = p.currentPrice > p.vwap;
         const matrixBullish = p.matrix.percentage >= 55;
         const matrixBearish = p.matrix.percentage <= 45;
 
-        // Enhanced Bi-directional logic with Bollinger & MACD
         if (matrixBullish && isAboveVWAP && p.lastRSI < p.rsiThreshold && p.currentPrice <= p.levels.bb.lower) {
-            scalp = {
-                status: "🟢 شراء (V4 Matrix+BB)", type: 'LONG', entry: p.currentPrice, tp: p.levels.bb.middle, sl: p.currentPrice * 0.992,
-                winRate: 85, timeEstimate: 20, reverseProb: 15
-            };
-        } 
-        else if (matrixBearish && !isAboveVWAP && p.lastRSI > (100 - p.rsiThreshold) && p.currentPrice >= p.levels.bb.upper) {
-            scalp = {
-                status: "🔴 بيع (V4 Matrix+BB)", type: 'SHORT', entry: p.currentPrice, tp: p.levels.bb.middle, sl: p.currentPrice * 1.008,
-                winRate: 85, timeEstimate: 20, reverseProb: 15
-            };
+            scalp = { status: "🟢 شراء (V4 Matrix)", type: 'LONG', entry: p.currentPrice, tp: p.levels.bb.middle, sl: p.currentPrice * 0.992, winRate: 85, timeEstimate: 20, reverseProb: 15 };
+        } else if (matrixBearish && !isAboveVWAP && p.lastRSI > (100 - p.rsiThreshold) && p.currentPrice >= p.levels.bb.upper) {
+            scalp = { status: "🔴 بيع (V4 Matrix)", type: 'SHORT', entry: p.currentPrice, tp: p.levels.bb.middle, sl: p.currentPrice * 1.008, winRate: 85, timeEstimate: 20, reverseProb: 15 };
         } else {
-            scalp.rejectionReason = "تضارب بين قوة المصفوفة ومكان السعر بالنسبة لنطاقات بولينجر";
+            scalp.rejectionReason = "تضارب المؤشرات أو السعر داخل النطاق المتوسط";
         }
-
         return { ...p, isUptrend: p.currentPrice > p.lastMA99, isAboveVWAP, scalp, swing: this.getDefaultRecommendation() };
     }
 
-    private runV5(p: any): AnalysisResult {
+    private runV5(p: any): any {
         const v4 = this.runV4(p);
         const prediction = this.predictNextPriceLinear(p.quickOHLCV);
-        
         if (v4.scalp.type !== 'NONE') {
             const agrees = (v4.scalp.type === 'LONG' && prediction.trendDirection === 'UP') || (v4.scalp.type === 'SHORT' && prediction.trendDirection === 'DOWN');
-            if (agrees) {
-                v4.scalp.status += " + 🔮 تنبؤ مؤكد";
-                v4.scalp.winRate = 92;
-            } else {
-                v4.scalp.rejectionReason = "الذكاء التنبؤي لا يتفق مع التحليل الفني اللحظي";
-                v4.scalp.type = 'NONE';
-            }
+            if (agrees) { v4.scalp.status += " + 🔮 تنبؤ مؤكد"; v4.scalp.winRate = 92; }
+            else { v4.scalp.rejectionReason = "تضارب مع التنبؤ الإحصائي"; v4.scalp.type = 'NONE'; }
         }
         return { ...v4, prediction };
     }
 
-    private runV2(p: any, vol: number, mavol: number): any { return this.runV1(p); } // Placeholder
-    private runV3(p: any): any { return this.runV1(p); } // Placeholder
-
     private calculateVWAP(ohlcv: any[]): number {
         const input = { high: ohlcv.map(c => c.high), low: ohlcv.map(c => c.low), close: ohlcv.map(c => c.close), volume: ohlcv.map(c => c.volume) };
         const vwapValues = VWAP.calculate(input);
-        return vwapValues[vwapValues.length - 1];
+        return vwapValues[vwapValues.length - 1] || ohlcv[ohlcv.length-1].close;
     }
 
     private calculateMatrix(mtfOHLCV: Record<string, any[]>): MatrixResult {
-        let totalScore = 0;
-        let maxPossibleScore = 0;
-        let details = "";
+        let totalScore = 0, maxPossibleScore = 0, details = "";
         for (const [tf, data] of Object.entries(mtfOHLCV)) {
+            if (!data || data.length < 50) continue;
             const lastClose = data[data.length-1].close;
             const maArr = SMA.calculate({ period: 50, values: data.map(c => c.close) });
             const lastMA = maArr[maArr.length-1] || lastClose;
@@ -270,16 +226,15 @@ export class AnalysisService {
     }
 
     private predictNextPriceLinear(pastCandles: any[]): PredictionResult {
-        const period = 20;
-        const n = Math.min(period, pastCandles.length);
+        const n = Math.min(20, pastCandles.length);
         const recent = pastCandles.slice(-n);
         let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
         for (let i = 0; i < n; i++) {
             const x = i + 1; const y = recent[i].close;
             sumX += x; sumY += y; sumXY += x * y; sumXX += x * x;
         }
-        const m = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
-        const b = (sumY - m * sumX) / n;
+        const m = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX) || 0;
+        const b = (sumY - m * sumX) / n || recent[n-1].close;
         return { predictedPrice: m * (n + 1) + b, trendDirection: m > 0 ? 'UP' : 'DOWN', slope: m, confidence: Math.abs(m) * 100 };
     }
 
@@ -293,61 +248,48 @@ export class AnalysisService {
             `💵 السعر: **$${result.currentPrice.toFixed(2)}**\n\n`;
 
         if (matrix) {
-            report += `📊 **المصفوفة الشاملة (7 فريمات):**\n` +
+            report += `📊 **المصفوفة (7 فريمات):**\n` +
                 `${matrix.details} |\n` +
                 `🎯 القوة: **${matrix.percentage.toFixed(0)}%** | **${matrix.decision}**\n\n`;
         }
 
         report += `⚙️ **الحالة الفنية:**\n` +
-            `- VWAP: ${isAboveVWAP ? '✅ فوق (إيجابي)' : '⚠️ تحت (سلبي)'}\n` +
-            `- RSI: ${result.quickRSI.toFixed(1)} | MACD: ${indicators.macd.histogram > 0 ? '🟢' : '🔴'}\n` +
-            `- Stoch: ${indicators.stochRSI.k.toFixed(0)}/${indicators.stochRSI.d.toFixed(0)}\n\n`;
+            `- VWAP: ${isAboveVWAP ? '✅ فوق' : '⚠️ تحت'}\n` +
+            `- RSI: ${(result.quickRSI || 0).toFixed(1)} | MACD: ${(indicators?.macd?.histogram || 0) > 0 ? '🟢' : '🔴'}\n\n`;
 
         report += `🛠 **أهم المستويات:**\n` +
-            `- 🔴 مقاومة (Upper BB): $${levels.bb.upper.toFixed(2)}\n` +
-            `- 🟢 دعم (Lower BB): $${levels.bb.lower.toFixed(2)}\n\n`;
+            `- 🔴 مقاومة (BB): $${(levels?.bb?.upper || 0).toFixed(2)}\n` +
+            `- 🟢 دعم (BB): $${(levels?.bb?.lower || 0).toFixed(2)}\n\n`;
 
         report += `⚡ **التحليل اللحظي (Scalp):**\n`;
         if (scalp.type !== 'NONE') {
             report += `✅ **إشارة ${scalp.type}:** ${scalp.status}\n` +
                 `> دخول: ${scalp.entry.toFixed(4)} | هدف: ${scalp.tp.toFixed(4)}\n` +
-                `> 🎯 الدقة: ${scalp.winRate}% | ⏱️ الوقت: ${scalp.timeEstimate}د\n` +
-                `> 🔄 احتمالية الانعكاس: ${scalp.reverseProb}%\n\n`;
+                `> 🎯 الدقة: ${scalp.winRate}% | 🔄 الانعكاس: ${scalp.reverseProb}%\n\n`;
         } else {
             report += `❌ **السبب:** ${scalp.rejectionReason || 'عدم توافق المؤشرات'}\n\n`;
         }
 
         if (prediction) {
-            report += `🔮 **الذكاء التنبؤي:** يتوقع سعر **$${prediction.predictedPrice.toFixed(2)}** (${prediction.trendDirection === 'UP' ? '📈' : '📉'})\n`;
+            report += `🔮 **التنبؤ:** **$${prediction.predictedPrice.toFixed(2)}** (${prediction.trendDirection === 'UP' ? '📈' : '📉'})\n`;
         }
-
         return report;
     }
 
     getAlgorithmGuide(version: string): string {
         const guides: Record<string, string> = {
-            'V1': "📘 **V1 (الأساسي):** يعتمد على المتوسط MA99 لفلترة الاتجاه و RSI30 للدخول عند القيعان مع دعم فيبوناتشي 0.618. الهدف هو MA7 والوقف 0.5%.",
-            'V4': "📘 **V4 (المصفوفة + بولينجر):** يحلل 7 فريمات (المصفوفة) ويشترط أن يكون السعر عند أطراف Bollinger Bands مع توافق VWAP. يدعم Long و Short.",
-            'V5': "📘 **V5 (الذكاء التنبؤي):** يدمج V4 مع معادلة الانحدار الخطي (Linear Regression) للتنبؤ بسعر الشمعة القادمة. لا يدخل إلا إذا اتفق التنبؤ مع التحليل الفني."
+            'V1': "📘 **V1:** تعتمد على MA99 و RSI30 و Fib 0.618.",
+            'V4': "📘 **V4:** تعتمد على 7 فريمات و Bollinger Bands و VWAP.",
+            'V5': "📘 **V5:** تدمج V4 مع التنبؤ الإحصائي Linear Regression."
         };
-        return guides[version] || "دليل الإصدار غير متوفر.";
+        return guides[version] || "دليل غير متوفر.";
     }
 
     getTradeDetails(result: AnalysisResult): string {
-        return `🔍 **تفاصيل الحسابات الفنية:**\n\n` +
-            `1. **كيف تم حساب الهدف؟** تم استخدام متوسط MA7 للحركات السريعة و Middle BB للحركات المتوازنة.\n` +
-            `2. **لماذا تم الرفض/القبول؟** البوت يجمع بين السيولة (VWAP) والاتجاه (Matrix) والزخم (Stochastic RSI). أي تضارب بينها يلغي الصفقة فوراً.\n` +
-            `3. **المعادلة المستخدمة:** يعتمد السكالبينج على معادلة تذبذب النطاق (Mean Reversion) باستخدام Bollinger Bands.`;
+        return `🔍 **تفاصيل الحسابات:**\n\n1. الأهداف محسوبة بناءً على Bollinger Bands و MA7.\n2. يتم الرفض عند تضارب الفريمات الكبيرة مع اللحظية.`;
     }
 
     formatSignalText(symbol: string, type: 'LONG' | 'SHORT', entry: number, targets: number[], sl: number, leverage: number = 25): string {
-        return `\`${symbol}\`\n\n` +
-            `${type === 'LONG' ? '🔼LONG' : '🔽SHORT'}  X${leverage}  \n\n` +
-            `▶️ENTER PRICE(سعر الدخول):\n` +
-            `${entry.toFixed(6)}\n\n` +
-            `▶️TARGET  PRICES(الاهداف):\n` +
-            `${targets.map(t => t.toFixed(6)).join('\n')}\n\n` +
-            `▶️STOP LOSE(الاستوب)\n` +
-            `${sl.toFixed(6)}`;
+        return `\`${symbol}\`\n\n${type === 'LONG' ? '🔼LONG' : '🔽SHORT'} X${leverage}\n\n▶️ENTRY PRICE:\n${entry.toFixed(6)}\n\n▶️TARGETS:\n${targets.map(t => t.toFixed(6)).join('\n')}\n\n▶️STOP LOSS:\n${sl.toFixed(6)}`;
     }
 }
