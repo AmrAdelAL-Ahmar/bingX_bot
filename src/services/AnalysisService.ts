@@ -137,6 +137,9 @@ export class AnalysisService {
         const vwap = this.calculateVWAP(dailyOHLCV);
         const isAboveVWAP = currentPrice > vwap;
 
+        const ma7Arr = SMA.calculate({ period: 7, values: quickCloses });
+        const lastMA7 = ma7Arr[ma7Arr.length - 1];
+
         // Matrix (MTF)
         const matrix = this.calculateMatrix(mtfOHLCV);
 
@@ -144,7 +147,7 @@ export class AnalysisService {
         let result: AnalysisResult;
         switch (version) {
             case 'V1':
-                result = this.analyzeV1(symbol, currentPrice, isUptrend, lastRSI, s1, fib618, fib1618, lastATR);
+                result = this.analyzeV1(symbol, currentPrice, isUptrend, lastRSI, s1, fib618, fib1618, lastATR, lastMA7);
                 break;
             case 'V2':
                 result = this.analyzeV2(symbol, currentPrice, currentVolume, lastMAVOL, isUptrend, lastRSI, s1, fib618, fib1618, lastATR);
@@ -159,7 +162,7 @@ export class AnalysisService {
                 result = this.analyzeV5(symbol, currentPrice, quickOHLCV, isAboveVWAP, matrix, lastRSI, s1, r1, fib618, fib1618, lastATR, lastMA99);
                 break;
             default:
-                result = this.analyzeV1(symbol, currentPrice, isUptrend, lastRSI, s1, fib618, fib1618, lastATR);
+                result = this.analyzeV1(symbol, currentPrice, isUptrend, lastRSI, s1, fib618, fib1618, lastATR, lastMA7);
         }
 
         return { ...result, levels };
@@ -231,20 +234,21 @@ export class AnalysisService {
         };
     }
 
-    private analyzeV1(symbol: string, currentPrice: number, isUptrend: boolean, rsi: number, s1: number, fib618: number, fibTarget: number, atr: number): AnalysisResult {
+    private analyzeV1(symbol: string, currentPrice: number, isUptrend: boolean, rsi: number, s1: number, fib618: number, fibTarget: number, atr: number, ma7: number): AnalysisResult {
         let scalp: TradeRecommendation = this.getDefaultRecommendation();
         let swing: TradeRecommendation = this.getDefaultRecommendation();
 
-        if (rsi < 30 && currentPrice <= s1) {
+        // Scalp Logic V1 (As requested: Trend + RSI + Fib + MA7 Target)
+        if (isUptrend && rsi < 30 && currentPrice <= (fib618 * 1.005)) {
             scalp = {
-                status: "🟢 فرصة شراء (Scalp V1)",
+                status: "🟢 إشارة شراء (Scalp V1 - الثالوث الذهبي)",
                 type: 'LONG',
                 entry: currentPrice,
-                tp: currentPrice + (atr * 2),
-                sl: currentPrice - (atr * 1.5),
+                tp: ma7, // Target is MA7
+                sl: currentPrice * 0.995, // Stop Loss 0.5%
                 timeEstimate: 30,
-                winRate: 70,
-                reverseProb: 30
+                winRate: 75,
+                reverseProb: 25
             };
         }
 
