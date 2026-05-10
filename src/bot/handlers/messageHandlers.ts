@@ -291,6 +291,16 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                 });
             }
 
+            if (message === 'دليل الخوارزميات 📖') {
+                const guide = `📖 **دليل الخوارزميات (V1-V5):**\n\n` +
+                    `${analysisService.getAlgorithmExplanation('V1')}\n\n` +
+                    `${analysisService.getAlgorithmExplanation('V2')}\n\n` +
+                    `${analysisService.getAlgorithmExplanation('V3')}\n\n` +
+                    `${analysisService.getAlgorithmExplanation('V4')}\n\n` +
+                    `${analysisService.getAlgorithmExplanation('V5')}`;
+                return ctx.reply(guide);
+            }
+
             if (message === 'الخوارزمية V1 (الأساسي)') {
                 user.botState = 'AWAITING_ANALYSIS_SYMBOL_V1';
                 await user.save();
@@ -545,11 +555,32 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
             await ctx.reply(`🔍 جاري تحليل البيانات التاريخية لـ ${symbol}... قد يستغرق ذلك بضع ثوانٍ.`);
 
             const report = await backtestService.runBacktest(symbol, type === 'sc' ? 'Scalp' : 'Swing');
-            await ctx.replyWithHTML(report);
+            await ctx.reply(report, { parse_mode: 'Markdown' });
 
         } catch (error: any) {
             logger.error('Error in backtest action:', error);
             await ctx.reply(`❌ فشل الاختبار الرجعي: ${error.message}`);
+        }
+    });
+
+    bot.action(/^dt_(sc|sw)_(.+)$/, async (ctx) => {
+        try {
+            const [_, type, s] = ctx.match;
+            const symbol = `${s}/USDT:USDT`;
+            
+            // Re-run analysis to get the latest details
+            const user = await User.findOne({ telegramId: ctx.from!.id.toString() });
+            const res = await analysisService.analyze(symbol, 'V5', {
+                quickTF: user?.analysisSettings?.scalpTF,
+                longTF: user?.analysisSettings?.swingTF
+            });
+
+            const details = analysisService.generateEducationalDetails(res);
+            await ctx.reply(details, { parse_mode: 'Markdown' });
+
+        } catch (error) {
+            logger.error('Error in details action:', error);
+            await ctx.reply('❌ فشل جلب التفاصيل.');
         }
     });
 
