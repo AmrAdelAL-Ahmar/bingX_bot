@@ -222,16 +222,22 @@ export class AnalysisService {
 
     private analyzeV1(symbol: string, cp: number, isUp: boolean, rsi: number, s1: number, r1: number, fib618: number, fibT: number, atr: number, ma7: number, rsiT: number): AnalysisResult {
         let scalp = this.getDefaultRec(), swing = this.getDefaultRec();
-        const fibPrice = fib618 * 1.01;
+        const fibPriceLong = fib618 * 1.01;
+        const fibPriceShort = fib618 * 0.99;
 
-        if (isUp && rsi < rsiT && cp <= fibPrice) {
-            scalp = { status: "🟢 شراء (V1)", type: 'LONG', entry: cp, tp: ma7, sl: cp * 0.995, timeEstimate: 25, winRate: 75, reverseProb: 20 };
-        } else {
+        // LONG Logic V1
+        if (isUp && rsi < rsiT && cp <= fibPriceLong) {
+            scalp = { status: "🟢 شراء (V1 - الثالوث)", type: 'LONG', entry: cp, tp: ma7, sl: cp * 0.995, timeEstimate: 25, winRate: 75, reverseProb: 20 };
+        } 
+        // SHORT Logic V1 (New)
+        else if (!isUp && rsi > (100 - rsiT) && cp >= fibPriceShort) {
+            scalp = { status: "🔴 بيع (V1 - الثالوث)", type: 'SHORT', entry: cp, tp: ma7, sl: cp * 1.005, timeEstimate: 25, winRate: 72, reverseProb: 22 };
+        }
+        else {
             const reasons = [];
-            if (!isUp) reasons.push("الاتجاه العام هابط (تحت MA99)");
-            if (rsi >= rsiT) reasons.push(`RSI مرتفع (${rsi.toFixed(1)} > ${rsiT})`);
-            if (cp > fibPrice) reasons.push(`السعر بعيد عن الدعم (${cp.toFixed(2)} > ${fibPrice.toFixed(2)})`);
-            scalp.rejectionReason = reasons.join(" + ");
+            if (isUp && rsi >= rsiT) reasons.push(`RSI مرتفع للشرط (${rsi.toFixed(1)})`);
+            if (!isUp && rsi <= (100 - rsiT)) reasons.push(`RSI منخفض للبيع (${rsi.toFixed(1)})`);
+            scalp.rejectionReason = reasons.length > 0 ? reasons.join(" + ") : "السعر ليس عند منطقة دخول ذهبية";
         }
         return { symbol, currentPrice: cp, isUptrend: isUp, quickRSI: rsi, volumeStatus: 'high', quickATR: atr, scalp, swing, levels: {} as any, indicators: {} as any };
     }
@@ -305,7 +311,7 @@ export class AnalysisService {
     }
 
     formatReport(res: AnalysisResult, v: string): string {
-        const { scalp, swing, matrix, indicators, structure } = res;
+        const { scalp, swing, matrix, indicators, structure, levels } = res;
         let r = `💎 **تقرير المحلل الذكي | ${res.symbol}** 💎\n` +
                 `💵 السعر: **$${res.currentPrice.toFixed(3)}** | **${v}**\n\n` +
                 `🏛 **هيكل السوق:** **${structure || 'عرضي'}**\n\n` +
@@ -329,6 +335,7 @@ export class AnalysisService {
                  `🎯 الهدف: ${swing.tp.toFixed(4)} | 📈 الدقة: ${swing.winRate}%\n\n`;
         } else r += `❌ **السبب:** ${swing.rejectionReason || 'الهيكل غير مؤكد'}\n\n`;
 
+        r += `🛠 **المستويات:** R1:${levels.r1.toFixed(3)} | S1:${levels.s1.toFixed(3)} | Fib:${levels.fib618.toFixed(3)}`;
         return r;
     }
 
