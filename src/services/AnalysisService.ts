@@ -71,7 +71,7 @@ export interface IndicatorData {
 
 const TF_WEIGHTS: Record<string, number> = {
     '1m': 1, '3m': 2, '5m': 3, '15m': 4,
-    '30m': 5, '1h': 6, '4h': 8, '1d': 10
+    '30m': 5, '1h': 8, '4h': 12, '1d': 15
 };
 
 export class AnalysisService {
@@ -83,16 +83,13 @@ export class AnalysisService {
         options: { quickTF?: string, longTF?: string, limit?: number, rsiThreshold?: number } = {}
     ): Promise<AnalysisResult> {
         let symbol = symbolInput.toUpperCase();
-        if (!symbol.includes('/')) {
-            symbol = `${symbol}/USDT:USDT`;
-        }
+        if (!symbol.includes('/')) symbol = `${symbol}/USDT:USDT`;
         
         const quickTF = options.quickTF || '5m';
         const longTF = options.longTF || '1h';
         const limit = options.limit || 200;
-        const rsiThreshold = options.rsiThreshold || 35;
 
-        const matrixTFs = ['1m', '5m', '15m', '1h', '4h', '1d'];
+        const matrixTFs = ['1m', '5m', '15m', '30m', '1h', '4h', '1d'];
         const mtfOHLCV: Record<string, any[]> = {};
         for (const tf of matrixTFs) {
             const fetchLimit = (tf === quickTF || tf === longTF) ? Math.max(limit, 200) : 200;
@@ -100,129 +97,110 @@ export class AnalysisService {
         }
 
         const quickOHLCV = mtfOHLCV[quickTF] || mtfOHLCV['5m'];
-        const longOHLCV = mtfOHLCV[longTF] || mtfOHLCV['1h'];
         const dailyOHLCV = mtfOHLCV['1d'];
-
         const currentPrice = quickOHLCV[quickOHLCV.length - 1].close;
-        const currentVolume = quickOHLCV[quickOHLCV.length - 1].volume;
 
-        const quickCloses = quickOHLCV.map(c => c.close);
-        const quickHighs = quickOHLCV.map(c => c.high);
-        const quickLows = quickOHLCV.map(c => c.low);
-        const quickVolumes = quickOHLCV.map(c => c.volume);
-        const longCloses = longOHLCV.map(c => c.close);
-
+        const quickCloses = quickOHLCV.map(c => c.close), quickHighs = quickOHLCV.map(c => c.high), quickLows = quickOHLCV.map(c => c.low);
+        
         const macdArr = MACD.calculate({ values: quickCloses, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false });
         const lastMACD = macdArr[macdArr.length - 1];
-
-        const bbArr = BollingerBands.calculate({ period: 20, values: quickCloses, stdDev: 2 });
-        const lastBB = bbArr[bbArr.length - 1];
-
-        const ma99Arr = SMA.calculate({ period: 99, values: longCloses });
-        const lastMA99 = ma99Arr[ma99Arr.length - 1];
+        const ma99Arr = SMA.calculate({ period: 99, values: mtfOHLCV[longTF].map(c => c.close) });
         const ma7Arr = SMA.calculate({ period: 7, values: quickCloses });
-        const lastMA7 = ma7Arr[ma7Arr.length - 1];
-
         const rsiArr = RSI.calculate({ period: 14, values: quickCloses });
-        const lastRSI = rsiArr[rsiArr.length - 1];
-
-        const cciArr = CCI.calculate({ period: 20, high: quickHighs, low: quickLows, close: quickCloses });
-        const lastCCI = cciArr[cciArr.length - 1];
-
-        const wRArr = WilliamsR.calculate({ period: 14, high: quickHighs, low: quickLows, close: quickCloses });
-        const lastWR = wRArr[wRArr.length - 1];
-
         const atrArr = ATR.calculate({ period: 14, high: quickHighs, low: quickLows, close: quickCloses });
-        const lastATR = atrArr[atrArr.length - 1];
-
-        const mavolArr = SMA.calculate({ period: 14, values: quickVolumes });
-        const lastMAVOL = mavolArr[mavolArr.length - 1];
-
-        const longHigh = Math.max(...longCloses);
-        const longLow = Math.min(...longCloses);
-        const fib618 = longHigh - (longHigh - longLow) * 0.618;
-        const fib382 = longHigh - (longHigh - longLow) * 0.382;
-        const fibTarget = longHigh + (longHigh - longLow) * 1.618;
-
+        const cciArr = CCI.calculate({ period: 20, high: quickHighs, low: quickLows, close: quickCloses });
+        const wRArr = WilliamsR.calculate({ period: 14, high: quickHighs, low: quickLows, close: quickCloses });
         const stochRsiArr = StochasticRSI.calculate({ values: quickCloses, rsiPeriod: 14, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 });
-        const lastStoch = stochRsiArr[stochRsiArr.length - 1];
 
-        const prevCandle = quickOHLCV[quickOHLCV.length - 2];
-        const pivot = (prevCandle.high + prevCandle.low + prevCandle.close) / 3;
-        const s1 = (2 * pivot) - prevCandle.high;
-        const r1 = (2 * pivot) - prevCandle.low;
-
+        const lastATR = atrArr[atrArr.length - 1];
         const indicators: IndicatorData = { 
             macd: { macd: lastMACD?.MACD || 0, signal: lastMACD?.signal || 0, histogram: lastMACD?.histogram || 0 }, 
-            bb: lastBB, 
-            stochRsi: lastStoch?.k || 50,
-            cci: lastCCI || 0,
-            williamsR: lastWR || -50
+            bb: BollingerBands.calculate({ period: 20, values: quickCloses, stdDev: 2 }).slice(-1)[0], 
+            stochRsi: stochRsiArr.slice(-1)[0]?.k || 50,
+            cci: cciArr.slice(-1)[0] || 0,
+            williamsR: wRArr.slice(-1)[0] || -50
         };
-        const levels: TechnicalLevels = { pivot, s1, r1, s2: pivot - (prevCandle.high-prevCandle.low), r2: pivot + (prevCandle.high-prevCandle.low), fib382, fib618, fibTarget, ma99: lastMA99, ma7: lastMA7 };
+
+        const longCloses = mtfOHLCV[longTF].map(c => c.close);
+        const longHigh = Math.max(...longCloses), longLow = Math.min(...longCloses);
+        const levels: TechnicalLevels = { 
+            pivot: (quickOHLCV[quickOHLCV.length-2].high + quickOHLCV[quickOHLCV.length-2].low + quickOHLCV[quickOHLCV.length-2].close)/3,
+            s1: 0, r1: 0, s2: 0, r2: 0,
+            fib382: longHigh - (longHigh-longLow)*0.382,
+            fib618: longHigh - (longHigh-longLow)*0.618,
+            fibTarget: longHigh + (longHigh-longLow)*1.618,
+            ma99: ma99Arr.slice(-1)[0],
+            ma7: ma7Arr.slice(-1)[0]
+        };
+        levels.r1 = (2 * levels.pivot) - quickOHLCV[quickOHLCV.length-2].low;
+        levels.s1 = (2 * levels.pivot) - quickOHLCV[quickOHLCV.length-2].high;
 
         const matrix = this.calculateMatrix(mtfOHLCV);
         const vwap = this.calculateVWAP(dailyOHLCV);
-        const isAboveVWAP = currentPrice > vwap;
-        const structure = this.detectMarketStructure(longOHLCV);
+        const structure = this.detectMarketStructure(mtfOHLCV['1h']);
 
+        // --- ENGINES ---
         let result: AnalysisResult;
-        switch (version) {
-            case 'V1': result = this.analyzeProbabilityEngine(symbol, currentPrice, isAboveVWAP, lastRSI, indicators, levels, matrix, structure, lastATR); break;
-            default: result = this.analyzeProbabilityEngine(symbol, currentPrice, isAboveVWAP, lastRSI, indicators, levels, matrix, structure, lastATR);
+        if (version === 'V3') {
+            result = this.analyzeMatrixMaster(symbol, currentPrice, matrix, indicators, levels, structure, lastATR, vwap);
+        } else {
+            result = this.analyzeProbabilityEngine(symbol, currentPrice, currentPrice > vwap, rsiArr.slice(-1)[0], indicators, levels, matrix, structure, lastATR);
         }
 
         return { ...result, levels, indicators, structure, options: { quickTF, longTF, limit } };
     }
 
+    private analyzeMatrixMaster(symbol: string, cp: number, m: MatrixResult, ind: IndicatorData, l: TechnicalLevels, struct: string, atr: number, vwapPrice: number): AnalysisResult {
+        // V3 focuses on Matrix Confluence (The Big Picture)
+        const type = m.percentage >= 50 ? 'LONG' : 'SHORT';
+        const winRate = Math.min(m.percentage + 10, 98);
+        
+        // Dynamic ATR-based Stop Loss (Preventing stop outs)
+        const slDistance = Math.max(atr * 3, cp * 0.01); // 3x ATR or 1% minimum
+        const sl = type === 'LONG' ? cp - slDistance : cp + slDistance;
+        const tp = type === 'LONG' ? cp + (slDistance * 1.5) : cp - (slDistance * 1.5);
+
+        const scalp: TradeRecommendation = {
+            status: `🏛 V3 MATRIX ${type} ${m.decision}`,
+            type, entry: cp, tp, sl, timeEstimate: 45, winRate, reverseProb: 100 - winRate, confidenceScore: m.percentage
+        };
+
+        return { symbol, currentPrice: cp, isUptrend: cp > vwapPrice, quickRSI: 50, volumeStatus: 'high', quickATR: atr, scalp, swing: scalp, levels: l, indicators: ind, structure: struct, options: {} as any };
+    }
+
     private analyzeProbabilityEngine(symbol: string, cp: number, vwap: boolean, rsi: number, ind: IndicatorData, levels: TechnicalLevels, m: MatrixResult, struct: string, atr: number): AnalysisResult {
         let score = 0;
-        
-        // --- SCORE CALCULATION ---
         score += vwap ? 25 : -25;
         score += (m.percentage - 50) * 0.8;
         if (rsi < 35) score += 15; else if (rsi > 65) score -= 15;
         if (ind.cci < -100) score += 15; else if (ind.cci > 100) score -= 15;
         if (struct.includes("صاعد")) score += 20; else if (struct.includes("هابط")) score -= 20;
-        if (cp <= levels.fib618 * 1.005) score += 15; else if (cp >= levels.fib382 * 0.995) score -= 15;
 
         const absScore = Math.abs(score);
         const winRate = Math.min(50 + (absScore * 0.6), 96);
         const type = score >= 0 ? 'LONG' : 'SHORT';
 
-        // --- SCALP RECOMMENDATION ---
-        let scalpTp = 0;
+        // Dynamic ATR-based Stop Loss
+        const slDistance = Math.max(atr * 2.5, cp * 0.008); 
+        const sl = type === 'LONG' ? cp - slDistance : cp + slDistance;
+        
+        let tp = 0;
         if (type === 'LONG') {
-            scalpTp = Math.max(levels.ma7, levels.r1, cp + (atr * 1.5));
-            if (scalpTp <= cp) scalpTp = cp + (atr * 2); // Guaranteed positive target
+            tp = Math.max(levels.ma7, levels.r1, cp + (atr * 2));
+            if (tp <= cp) tp = cp + (atr * 3);
         } else {
-            scalpTp = Math.min(levels.ma7, levels.s1, cp - (atr * 1.5));
-            if (scalpTp >= cp) scalpTp = cp - (atr * 2);
+            tp = Math.min(levels.ma7, levels.s1, cp - (atr * 2));
+            if (tp >= cp) tp = cp - (atr * 3);
         }
 
         const scalp: TradeRecommendation = {
             status: `${type === 'LONG' ? '🟢 احتمالية صعود' : '🔴 احتمالية هبوط'} (${winRate.toFixed(1)}%)`,
-            type,
-            entry: cp,
-            tp: scalpTp,
-            sl: type === 'LONG' ? cp * 0.995 : cp * 1.005,
-            timeEstimate: 20,
-            winRate,
-            reverseProb: 100 - winRate,
-            confidenceScore: score
+            type, entry: cp, tp, sl, timeEstimate: 20, winRate, reverseProb: 100 - winRate, confidenceScore: score
         };
 
-        // --- SWING RECOMMENDATION ---
-        let swingTp = type === 'LONG' ? levels.fibTarget : cp - (levels.fibTarget - cp);
         const swing: TradeRecommendation = {
-            status: `${type === 'LONG' ? '🌊 موجة صاعدة' : '🌊 موجة هابطة'} (${(winRate * 0.9).toFixed(1)}%)`,
-            type,
-            entry: cp,
-            tp: swingTp,
-            sl: type === 'LONG' ? cp * 0.97 : cp * 1.03,
-            timeEstimate: 1440,
-            winRate: winRate * 0.9,
-            reverseProb: 100 - (winRate * 0.9)
+            status: `${type === 'LONG' ? '🌊 موجة صاعدة' : '🌊 موجة هابطة'}`,
+            type, entry: cp, tp: type === 'LONG' ? levels.fibTarget : cp - (levels.fibTarget-cp), sl: type === 'LONG' ? cp * 0.96 : cp * 1.04, timeEstimate: 1440, winRate: winRate * 0.85, reverseProb: 100 - (winRate * 0.85)
         };
 
         return { symbol, currentPrice: cp, isUptrend: score > 0, quickRSI: rsi, volumeStatus: 'high', quickATR: atr, scalp, swing, levels, indicators: ind, structure: struct, options: {} as any };
@@ -262,19 +240,6 @@ export class AnalysisService {
         return { score: totalScore, percentage, decision, details };
     }
 
-    private predictNextPriceLinear(pastCandles: any[], period: number = 20): PredictionResult {
-        let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
-        const n = Math.min(period, pastCandles.length);
-        const recent = pastCandles.slice(-n);
-        for (let i = 0; i < n; i++) {
-            const x = i + 1, y = recent[i].close;
-            sumX += x; sumY += y; sumXY += (x * y); sumXX += (x * x);
-        }
-        const m = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
-        const b = (sumY - m * sumX) / n;
-        return { predictedPrice: (m * (n + 1)) + b, trendDirection: m > 0 ? 'UP' : 'DOWN', slope: m, confidence: Math.abs(m) * 1000 };
-    }
-
     formatReport(res: AnalysisResult, v: string): string {
         const { scalp, swing, matrix, indicators, structure, levels, options } = res;
         const statusIcon = scalp.winRate >= 80 ? '🔥' : scalp.winRate >= 65 ? '✅' : '⚠️';
@@ -290,7 +255,7 @@ export class AnalysisService {
                 `- RSI: **${res.quickRSI.toFixed(1)}** | CCI: **${indicators.cci.toFixed(0)}**\n` +
                 `- Stoch: **${indicators.stochRsi.toFixed(1)}** | Williams%R: **${indicators.williamsR.toFixed(1)}**\n\n`;
 
-        if (matrix) r += `📈 **المصفوفة (MTF):** **${matrix.percentage.toFixed(0)}%** | ${matrix.decision}\n\n`;
+        if (matrix) r += `📈 **المصفوفة (MTF):** **${matrix.percentage.toFixed(0)}%** | ${matrix.decision}\n${matrix.details}\n\n`;
 
         r += `⚡ **السكالبينج (Scalp):**\n` +
              `✅ **النوع:** ${scalp.type} | 🎯 الهدف: **${scalp.tp.toFixed(4)}**\n` +
