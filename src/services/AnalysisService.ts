@@ -14,6 +14,7 @@ export interface AnalysisResult {
     matrix?: MatrixResult;
     isAboveVWAP?: boolean;
     prediction?: PredictionResult;
+    levels: TechnicalLevels;
 }
 
 export interface TradeRecommendation {
@@ -42,29 +43,47 @@ export interface PredictionResult {
     confidence: number;
 }
 
+export interface TechnicalLevels {
+    pivot: number;
+    s1: number;
+    s2: number;
+    r1: number;
+    r2: number;
+    fib382: number;
+    fib618: number;
+    fibTarget: number;
+    ma99: number;
+}
+
 const TF_WEIGHTS: Record<string, number> = {
     '1m': 1, '3m': 1, '5m': 2, '10m': 3, '15m': 4,
     '30m': 5, '1h': 6, '4h': 8, '8h': 9, '1d': 10
 };
 
 export class AnalysisService {
-    constructor(private bingxService: BingXService) { }
+    constructor(private bingxService: BingXService) {}
 
-    async analyze(symbolInput: string, version: 'V1' | 'V2' | 'V3' | 'V4' | 'V5' = 'V1'): Promise<AnalysisResult> {
+    async analyze(
+        symbolInput: string, 
+        version: 'V1' | 'V2' | 'V3' | 'V4' | 'V5' = 'V1',
+        options: { quickTF?: string, longTF?: string, limit?: number } = {}
+    ): Promise<AnalysisResult> {
         let symbol = symbolInput.toUpperCase();
         if (!symbol.includes('/')) {
             symbol = `${symbol}/USDT:USDT`;
         }
-        logger.info(`Starting ${version} analysis for ${symbol}`);
+        
+        const quickTF = options.quickTF || '5m';
+        const longTF = options.longTF || '1h';
+        const limit = options.limit || 200;
+
+        logger.info(`Starting ${version} analysis for ${symbol} (TF: ${quickTF}/${longTF}, Limit: ${limit})`);
 
         // Fetch Data
-        const quickTF = '5m';
-        const longTF = '1h';
-        const allTFs = ['5m', '15m', '1h', '4h', '1d'];
-
+        const allTFs = [quickTF, '15m', longTF, '4h', '1d'];
         const mtfOHLCV: Record<string, any[]> = {};
         for (const tf of allTFs) {
-            mtfOHLCV[tf] = await this.bingxService.fetchOHLCV(symbol, tf, 500);
+            mtfOHLCV[tf] = await this.bingxService.fetchOHLCV(symbol, tf, Math.max(limit, 200));
         }
 
         const quickOHLCV = mtfOHLCV[quickTF];
@@ -81,23 +100,23 @@ export class AnalysisService {
         const quickLows = quickOHLCV.map(c => c.low);
         const quickVolumes = quickOHLCV.map(c => c.volume);
 
-        const ma99 = SMA.calculate({ period: 99, values: longCloses });
-        const lastMA99 = ma99[ma99.length - 1];
+        const ma99Arr = SMA.calculate({ period: 99, values: longCloses });
+        const lastMA99 = ma99Arr[ma99Arr.length - 1];
         const isUptrend = currentPrice > lastMA99;
 
         const rsi = RSI.calculate({ period: 14, values: quickCloses });
         const lastRSI = rsi[rsi.length - 1];
 
-        const atr = ATR.calculate({ period: 14, high: quickHighs, low: quickLows, close: quickCloses });
-        const lastATR = atr[atr.length - 1];
+        const atrArr = ATR.calculate({ period: 14, high: quickHighs, low: quickLows, close: quickCloses });
+        const lastATR = atrArr[atrArr.length - 1];
 
-        const mavol = SMA.calculate({ period: 14, values: quickVolumes });
-        const lastMAVOL = mavol[mavol.length - 1];
+        const mavolArr = SMA.calculate({ period: 14, values: quickVolumes });
+        const lastMAVOL = mavolArr[mavolArr.length - 1];
         const volumeStatus = currentVolume > lastMAVOL ? 'high' : 'low';
 
-        // Fibonacci
-        const longHigh = Math.max(...longCloses.slice(-50));
-        const longLow = Math.min(...longCloses.slice(-50));
+        // Fibonacci (calculated on longTF)
+        const longHigh = Math.max(...longCloses.slice(-Math.min(limit, 100)));
+        const longLow = Math.min(...longCloses.slice(-Math.min(limit, 100)));
         const fib618 = longHigh - (longHigh - longLow) * 0.618;
         const fib1618 = longHigh + (longHigh - longLow) * 1.618;
         const fib382 = longHigh - (longHigh - longLow) * 0.382;
@@ -107,6 +126,12 @@ export class AnalysisService {
         const pivot = (prevCandle.high + prevCandle.low + prevCandle.close) / 3;
         const s1 = (2 * pivot) - prevCandle.high;
         const r1 = (2 * pivot) - prevCandle.low;
+        const s2 = pivot - (prevCandle.high - prevCandle.low);
+        const r2 = pivot + (prevCandle.high - prevCandle.low);
+
+        const levels: TechnicalLevels = {
+            pivot, s1, s2, r1, r2, fib382, fib618, fibTarget: fib1618, ma99: lastMA99
+        };
 
         // VWAP (Daily)
         const vwap = this.calculateVWAP(dailyOHLCV);
@@ -116,20 +141,28 @@ export class AnalysisService {
         const matrix = this.calculateMatrix(mtfOHLCV);
 
         // --- VERSION ROUTING ---
+        let result: AnalysisResult;
         switch (version) {
             case 'V1':
-                return this.analyzeV1(symbol, currentPrice, isUptrend, lastRSI, s1, fib618, fib1618, lastATR);
+                result = this.analyzeV1(symbol, currentPrice, isUptrend, lastRSI, s1, fib618, fib1618, lastATR);
+                break;
             case 'V2':
-                return this.analyzeV2(symbol, currentPrice, currentVolume, lastMAVOL, isUptrend, lastRSI, s1, fib618, fib1618, lastATR);
+                result = this.analyzeV2(symbol, currentPrice, currentVolume, lastMAVOL, isUptrend, lastRSI, s1, fib618, fib1618, lastATR);
+                break;
             case 'V3':
-                return this.analyzeV3(symbol, currentPrice, isAboveVWAP, matrix, lastRSI, s1, fib618, fib1618, lastATR, lastMA99);
+                result = this.analyzeV3(symbol, currentPrice, isAboveVWAP, matrix, lastRSI, s1, fib618, fib1618, lastATR, lastMA99);
+                break;
             case 'V4':
-                return this.analyzeV4(symbol, currentPrice, isAboveVWAP, matrix, lastRSI, s1, r1, fib618, fib1618, fib382, lastATR, lastMA99);
+                result = this.analyzeV4(symbol, currentPrice, isAboveVWAP, matrix, lastRSI, s1, r1, fib618, fib1618, fib382, lastATR, lastMA99);
+                break;
             case 'V5':
-                return this.analyzeV5(symbol, currentPrice, quickOHLCV, isAboveVWAP, matrix, lastRSI, s1, r1, fib618, fib1618, lastATR, lastMA99);
+                result = this.analyzeV5(symbol, currentPrice, quickOHLCV, isAboveVWAP, matrix, lastRSI, s1, r1, fib618, fib1618, lastATR, lastMA99);
+                break;
             default:
-                return this.analyzeV1(symbol, currentPrice, isUptrend, lastRSI, s1, fib618, fib1618, lastATR);
+                result = this.analyzeV1(symbol, currentPrice, isUptrend, lastRSI, s1, fib618, fib1618, lastATR);
         }
+
+        return { ...result, levels };
     }
 
     private calculateVWAP(ohlcv: any[]): number {
@@ -152,11 +185,11 @@ export class AnalysisService {
             const closes = data.map(c => c.close);
             const ma99Arr = SMA.calculate({ period: 99, values: closes });
             if (ma99Arr.length === 0) continue;
-
+            
             const lastMA99 = ma99Arr[ma99Arr.length - 1];
             const weight = TF_WEIGHTS[tf] || 1;
             const isBullish = closes[closes.length - 1] > lastMA99;
-
+            
             totalScore += (isBullish ? 1 : -1) * weight;
             maxPossibleScore += weight;
             details += `| ${tf}: ${isBullish ? 'صاعد 🟢' : 'هابط 🔴'} `;
@@ -194,7 +227,7 @@ export class AnalysisService {
             predictedPrice,
             trendDirection: m > 0 ? 'UP' : 'DOWN',
             slope: m,
-            confidence: Math.abs(m) * 100 // Simple confidence based on slope magnitude
+            confidence: Math.abs(m) * 100
         };
     }
 
@@ -228,7 +261,7 @@ export class AnalysisService {
             };
         }
 
-        return { symbol, currentPrice, isUptrend, quickRSI: rsi, volumeStatus: 'high', quickATR: atr, scalp, swing };
+        return { symbol, currentPrice, isUptrend, quickRSI: rsi, volumeStatus: 'high', quickATR: atr, scalp, swing, levels: {} as any };
     }
 
     private analyzeV2(symbol: string, currentPrice: number, currentVolume: number, mavol: number, isUptrend: boolean, rsi: number, s1: number, fib618: number, fibTarget: number, atr: number): AnalysisResult {
@@ -264,7 +297,7 @@ export class AnalysisService {
             };
         }
 
-        return { symbol, currentPrice, isUptrend, quickRSI: rsi, volumeStatus: volumeConfirmed ? 'high' : 'low', quickATR: atr, scalp, swing };
+        return { symbol, currentPrice, isUptrend, quickRSI: rsi, volumeStatus: volumeConfirmed ? 'high' : 'low', quickATR: atr, scalp, swing, levels: {} as any };
     }
 
     private analyzeV3(symbol: string, currentPrice: number, isAboveVWAP: boolean, matrix: MatrixResult, rsi: number, s1: number, fib618: number, fibTarget: number, atr: number, ma99: number): AnalysisResult {
@@ -299,7 +332,7 @@ export class AnalysisService {
             };
         }
 
-        return { symbol, currentPrice, isUptrend: currentPrice > ma99, quickRSI: rsi, volumeStatus: 'high', quickATR: atr, scalp, swing, matrix, isAboveVWAP };
+        return { symbol, currentPrice, isUptrend: currentPrice > ma99, quickRSI: rsi, volumeStatus: 'high', quickATR: atr, scalp, swing, matrix, isAboveVWAP, levels: {} as any };
     }
 
     private analyzeV4(symbol: string, currentPrice: number, isAboveVWAP: boolean, matrix: MatrixResult, rsi: number, s1: number, r1: number, fib618: number, fibTarget: number, fib382: number, atr: number, ma99: number): AnalysisResult {
@@ -318,7 +351,7 @@ export class AnalysisService {
                 winRate: matrix.percentage > 60 ? 85 : 60,
                 reverseProb: 15
             };
-        }
+        } 
         else if (matrix.percentage < 50 && !isAboveVWAP && rsi > 70 && currentPrice >= r1) {
             scalp = {
                 status: "بيع سريع من القمة (Short) 🔴",
@@ -360,7 +393,7 @@ export class AnalysisService {
             };
         }
 
-        return { symbol, currentPrice, isUptrend: currentPrice > ma99, quickRSI: rsi, volumeStatus: 'high', quickATR: atr, scalp, swing, matrix, isAboveVWAP };
+        return { symbol, currentPrice, isUptrend: currentPrice > ma99, quickRSI: rsi, volumeStatus: 'high', quickATR: atr, scalp, swing, matrix, isAboveVWAP, levels: {} as any };
     }
 
     private analyzeV5(symbol: string, currentPrice: number, quickOHLCV: any[], isAboveVWAP: boolean, matrix: MatrixResult, rsi: number, s1: number, r1: number, fib618: number, fibTarget: number, atr: number, ma99: number): AnalysisResult {
@@ -372,13 +405,12 @@ export class AnalysisService {
         const trendAgreesWithLong = prediction.trendDirection === 'UP' && priceDiff > (currentPrice * 0.001);
         const trendAgreesWithShort = prediction.trendDirection === 'DOWN' && priceDiff < -(currentPrice * 0.001);
 
-        // Enhanced Scalp V5 (Long)
         if (rsi < 35 && trendAgreesWithLong && matrix.percentage >= 50 && isAboveVWAP) {
             scalp = {
                 status: "إشارة V5 شراء قوية (الذكاء التنبؤي) 🟢🔮",
                 type: 'LONG',
                 entry: currentPrice,
-                tp: currentPrice + (atr * 3), // Higher target with prediction
+                tp: currentPrice + (atr * 3),
                 tp2: currentPrice + (atr * 5),
                 sl: currentPrice * 0.994,
                 timeEstimate: 15,
@@ -386,7 +418,6 @@ export class AnalysisService {
                 reverseProb: 10
             };
         }
-        // Enhanced Scalp V5 (Short)
         else if (rsi > 65 && trendAgreesWithShort && matrix.percentage < 50 && !isAboveVWAP) {
             scalp = {
                 status: "إشارة V5 بيع قوية (الذكاء التنبؤي) 🔴🔮",
@@ -401,11 +432,10 @@ export class AnalysisService {
             };
         }
 
-        // Use V4 swing logic as base for V5
         const v4Result = this.analyzeV4(symbol, currentPrice, isAboveVWAP, matrix, rsi, s1, r1, fib618, fibTarget, fib618, atr, ma99);
         swing = v4Result.swing;
 
-        return { symbol, currentPrice, isUptrend: currentPrice > ma99, quickRSI: rsi, volumeStatus: 'high', quickATR: atr, scalp, swing, matrix, isAboveVWAP, prediction };
+        return { symbol, currentPrice, isUptrend: currentPrice > ma99, quickRSI: rsi, volumeStatus: 'high', quickATR: atr, scalp, swing, matrix, isAboveVWAP, prediction, levels: {} as any };
     }
 
     private getDefaultRecommendation(): TradeRecommendation {
@@ -413,7 +443,7 @@ export class AnalysisService {
     }
 
     formatReport(result: AnalysisResult, version: string): string {
-        const { scalp, swing, matrix, isAboveVWAP, prediction } = result;
+        const { scalp, swing, matrix, isAboveVWAP, prediction, levels } = result;
 
         let report = `💎 **التقرير الكمّي الشامل | ${result.symbol}** 💎\n` +
             `💵 السعر الحالي: **$${result.currentPrice.toFixed(2)}**\n\n`;
@@ -425,15 +455,21 @@ export class AnalysisService {
         }
 
         if (isAboveVWAP !== undefined) {
-            report += `${isAboveVWAP ? '✅ السعر يتداول فوق VWAP (إيجابي للمؤسسات)' : '⚠️ السعر يتداول تحت VWAP (ضغط بيعي من المؤسسات)'}\n\n`;
+            report += `${isAboveVWAP ? '✅ السعر يتداول فوق VWAP (إيجابي)' : '⚠️ السعر يتداول تحت VWAP (سلبي)'}\n\n`;
         }
 
         if (matrix) {
-            report += `📊 **أولاً: مصفوفة الإطارات الزمنية (The Matrix):**\n` +
+            report += `📊 **أولاً: مصفوفة الإطارات الزمنية (Matrix):**\n` +
                 `${matrix.details} |\n` +
-                `🎯 **قوة الاتجاه الكلية:** **${matrix.percentage.toFixed(1)}%**\n` +
-                `⚖️ **القرار العام:** **${matrix.decision}**\n\n`;
+                `🎯 **قوة الاتجاه:** **${matrix.percentage.toFixed(1)}%** | **${matrix.decision}**\n\n`;
         }
+
+        // --- NEW TECHNICAL LEVELS SECTION ---
+        report += `🛠 **المستويات الفنية (Levels):**\n` +
+            `- 🔴 المقاومة (R1): **$${levels.r1.toFixed(4)}**\n` +
+            `- 🟢 الدعم (S1): **$${levels.s1.toFixed(4)}**\n` +
+            `- 📐 فيبوناتشي (0.618): **$${levels.fib618.toFixed(4)}**\n` +
+            `- 📉 متوسط (MA99): **$${levels.ma99.toFixed(4)}**\n\n`;
 
         report += `⚡ **ثانياً: التحليل اللحظي (Scalp):**\n` +
             `- إشارة البوت: **${scalp.status}**\n`;

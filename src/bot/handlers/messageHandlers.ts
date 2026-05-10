@@ -2,7 +2,7 @@ import { Telegraf } from 'telegraf';
 import logger from '../../utils/logger';
 import User from '../../models/User';
 import Trade from '../../models/Trade';
-import { getMainMenuKeyboard, getTraderSettingsKeyboard, getAlgoVersionKeyboard, getAnalysisActionKeyboard } from '../keyboards/baseKeyboards';
+import { getMainMenuKeyboard, getTraderSettingsKeyboard, getAlgoVersionKeyboard, getAnalysisActionKeyboard, getAnalysisSettingsKeyboard, getTFSelectionKeyboard, getLimitSelectionKeyboard } from '../keyboards/baseKeyboards';
 import { AnalysisService } from '../../services/AnalysisService';
 import { BingXService } from '../../services/BingXService';
 import { BacktestService } from '../../services/BacktestService';
@@ -340,10 +340,14 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
 
                 const version = user.botState.split('_').pop() as 'V1' | 'V2' | 'V3' | 'V4' | 'V5';
                 const symbol = message.toUpperCase();
-                ctx.reply(`⏳ جاري تحليل ${symbol} باستخدام ${version}...`);
+                ctx.reply(`⏳ جاري تحليل ${symbol} باستخدام ${version}... (TF: ${user.analysisSettings?.scalpTF || '5m'}/${user.analysisSettings?.swingTF || '1h'})`);
 
                 try {
-                    const result = await analysisService.analyze(symbol, version);
+                    const result = await analysisService.analyze(symbol, version, {
+                        quickTF: user.analysisSettings?.scalpTF,
+                        longTF: user.analysisSettings?.swingTF,
+                        limit: user.analysisSettings?.candleLimit
+                    });
                     const report = analysisService.formatReport(result, version);
 
                     // Send the report
@@ -384,6 +388,31 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                     await user.save();
                     return;
                 }
+            }
+
+            // --- ANALYSIS SETTINGS FLOW ---
+            if (message === '⚙️ إعدادات المحلل الذكي') {
+                return ctx.reply('إعدادات المحلل الذكي: يمكنك تخصيص الفريمات الزمنية وعدد الشمعات المستخدمة في التحليل.', {
+                    reply_markup: getAnalysisSettingsKeyboard()
+                });
+            }
+
+            if (message === '⏱️ فريم السكالبينج') {
+                return ctx.reply('اختر فريم السكالبينج المفضل:', {
+                    reply_markup: getTFSelectionKeyboard('scalp')
+                });
+            }
+
+            if (message === '🌊 فريم السوينج') {
+                return ctx.reply('اختر فريم السوينج المفضل:', {
+                    reply_markup: getTFSelectionKeyboard('swing')
+                });
+            }
+
+            if (message === '📊 عدد الشمعات (Limit)') {
+                return ctx.reply('اختر عدد الشمعات التاريخية لتحليلها:', {
+                    reply_markup: getLimitSelectionKeyboard()
+                });
             }
 
             // 2. Default: Attempt to parse signal
@@ -514,6 +543,52 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
         } catch (error: any) {
             logger.error('Error in backtest action:', error);
             await ctx.reply(`❌ فشل الاختبار الرجعي: ${error.message}`);
+        }
+    });
+
+    // --- ANALYSIS SETTINGS ACTIONS ---
+    bot.action(/^sc_tf_(.+)$/, async (ctx) => {
+        try {
+            const tf = ctx.match[1];
+            const user = await User.findOne({ telegramId: ctx.from!.id.toString() });
+            if (user) {
+                user.analysisSettings.scalpTF = tf;
+                await user.save();
+                await ctx.answerCbQuery(`✅ تم تحديد فريم السكالبينج: ${tf}`);
+                await ctx.editMessageText(`✅ تم تحديث فريم السكالبينج بنجاح إلى: **${tf}**`, { parse_mode: 'Markdown' });
+            }
+        } catch (error) {
+            logger.error('Error updating scalp TF:', error);
+        }
+    });
+
+    bot.action(/^sw_tf_(.+)$/, async (ctx) => {
+        try {
+            const tf = ctx.match[1];
+            const user = await User.findOne({ telegramId: ctx.from!.id.toString() });
+            if (user) {
+                user.analysisSettings.swingTF = tf;
+                await user.save();
+                await ctx.answerCbQuery(`✅ تم تحديد فريم السوينج: ${tf}`);
+                await ctx.editMessageText(`✅ تم تحديث فريم السوينج بنجاح إلى: **${tf}**`, { parse_mode: 'Markdown' });
+            }
+        } catch (error) {
+            logger.error('Error updating swing TF:', error);
+        }
+    });
+
+    bot.action(/^limit_(\d+)$/, async (ctx) => {
+        try {
+            const limit = parseInt(ctx.match[1]);
+            const user = await User.findOne({ telegramId: ctx.from!.id.toString() });
+            if (user) {
+                user.analysisSettings.candleLimit = limit;
+                await user.save();
+                await ctx.answerCbQuery(`✅ تم تحديد عدد الشمعات: ${limit}`);
+                await ctx.editMessageText(`✅ تم تحديث عدد الشمعات للتحليل بنجاح إلى: **${limit}**`, { parse_mode: 'Markdown' });
+            }
+        } catch (error) {
+            logger.error('Error updating candle limit:', error);
         }
     });
 };

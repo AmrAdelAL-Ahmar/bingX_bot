@@ -39,6 +39,12 @@ export interface IUser extends Document {
     tpSplitMode: 'auto' | 'manual'; // auto = equal split, manual = use tpProfitSplits
     tpProfitSplits: number[]; // e.g., [50, 50] or [100]
     errorMitigationEnabled: boolean; // Toggle for auto-scaling notional and leverage fallback
+    // Analysis Settings
+    analysisSettings: {
+        scalpTF: string;
+        swingTF: string;
+        candleLimit: number;
+    };
 }
 
 const UserSchema: Schema = new Schema({
@@ -80,6 +86,11 @@ const UserSchema: Schema = new Schema({
     tpSplitMode: { type: String, enum: ['auto', 'manual'], default: 'auto' },
     tpProfitSplits: { type: [Number], default: [50, 50] },
     errorMitigationEnabled: { type: Boolean, default: true },
+    analysisSettings: {
+        scalpTF: { type: String, default: '5m' },
+        swingTF: { type: String, default: '1h' },
+        candleLimit: { type: Number, default: 200 },
+    },
 });
 
 export default mongoose.model<IUser>('User', UserSchema);

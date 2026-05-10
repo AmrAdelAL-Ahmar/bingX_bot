@@ -309,10 +309,59 @@ export const getAlgoVersionKeyboard = () => {
         keyboard: [
             [{ text: 'الخوارزمية V1 (الأساسي)' }, { text: 'الخوارزمية V2 (الكمي - Quant)' }],
             [{ text: 'الخوارزمية V3 (المصفوفة)' }, { text: 'الخوارزمية V4 (ثنائي الاتجاه)' }],
-            [{ text: 'الخوارزمية V5 (تنبؤي AI) 🔮' }, { text: 'رجوع للقائمة الرئيسية 🔙' }]
+            [{ text: 'الخوارزمية V5 (تنبؤي AI) 🔮' }, { text: 'رجوع للقائمة الرئيسية 🔙' }],
+            [{ text: '⚙️ إعدادات المحلل الذكي' }]
         ],
         resize_keyboard: true,
         is_persistent: true
+    };
+};
+
+export const getAnalysisSettingsKeyboard = () => {
+    return {
+        keyboard: [
+            [{ text: '⏱️ فريم السكالبينج' }, { text: '🌊 فريم السوينج' }],
+            [{ text: '📊 عدد الشمعات (Limit)' }],
+            [{ text: 'رجوع للقائمة الرئيسية 🔙' }]
+        ],
+        resize_keyboard: true
+    };
+};
+
+export const getTFSelectionKeyboard = (type: 'scalp' | 'swing') => {
+    const prefix = type === 'scalp' ? 'sc_tf_' : 'sw_tf_';
+    return {
+        inline_keyboard: [
+            [
+                { text: '1m', callback_data: `${prefix}1m` },
+                { text: '3m', callback_data: `${prefix}3m` },
+                { text: '5m', callback_data: `${prefix}5m` }
+            ],
+            [
+                { text: '15m', callback_data: `${prefix}15m` },
+                { text: '30m', callback_data: `${prefix}30m` },
+                { text: '1h', callback_data: `${prefix}1h` }
+            ],
+            [
+                { text: '4h', callback_data: `${prefix}4h` },
+                { text: '1d', callback_data: `${prefix}1d` }
+            ]
+        ]
+    };
+};
+
+export const getLimitSelectionKeyboard = () => {
+    return {
+        inline_keyboard: [
+            [
+                { text: '100 شمعة', callback_data: 'limit_100' },
+                { text: '200 شمعة', callback_data: 'limit_200' }
+            ],
+            [
+                { text: '300 شمعة', callback_data: 'limit_300' },
+                { text: '500 شمعة', callback_data: 'limit_500' }
+            ]
+        ]
     };
 };
 
