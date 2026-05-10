@@ -308,6 +308,7 @@ export const getAlgoVersionKeyboard = () => {
     return {
         keyboard: [
             [{ text: 'الخوارزمية V1 (الأساسي)' }, { text: 'الخوارزمية V2 (الكمي - Quant)' }],
+            [{ text: 'الخوارزمية V3 (المصفوفة)' }, { text: 'الخوارزمية V4 (ثنائي الاتجاه)' }],
             [{ text: 'رجوع للقائمة الرئيسية 🔙' }]
         ],
         resize_keyboard: true,

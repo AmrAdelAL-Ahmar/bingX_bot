@@ -305,14 +305,30 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                 });
             }
 
-            if (user.botState === 'AWAITING_ANALYSIS_SYMBOL_V1' || user.botState === 'AWAITING_ANALYSIS_SYMBOL_V2') {
+            if (message === 'الخوارزمية V3 (المصفوفة)') {
+                user.botState = 'AWAITING_ANALYSIS_SYMBOL_V3';
+                await user.save();
+                return ctx.reply('يرجى إرسال رمز العملة للتحليل باستخدام V3 (مثال: BTC):', {
+                    reply_markup: { keyboard: [[{ text: 'إلغاء ❌' }]], resize_keyboard: true }
+                });
+            }
+
+            if (message === 'الخوارزمية V4 (ثنائي الاتجاه)') {
+                user.botState = 'AWAITING_ANALYSIS_SYMBOL_V4';
+                await user.save();
+                return ctx.reply('يرجى إرسال رمز العملة للتحليل باستخدام V4 (مثال: BTC):', {
+                    reply_markup: { keyboard: [[{ text: 'إلغاء ❌' }]], resize_keyboard: true }
+                });
+            }
+
+            if (user.botState && user.botState.startsWith('AWAITING_ANALYSIS_SYMBOL_')) {
                 if (message === 'إلغاء ❌' || message === 'رجوع للقائمة الرئيسية 🔙') {
                     user.botState = 'NONE';
                     await user.save();
                     return ctx.reply('تم الإلغاء.', { reply_markup: getMainMenuKeyboard(user) });
                 }
 
-                const version = user.botState === 'AWAITING_ANALYSIS_SYMBOL_V1' ? 'V1' : 'V2';
+                const version = user.botState.split('_').pop() as 'V1' | 'V2' | 'V3' | 'V4';
                 const symbol = message.toUpperCase();
                 ctx.reply(`⏳ جاري تحليل ${symbol} باستخدام ${version}...`);
 
