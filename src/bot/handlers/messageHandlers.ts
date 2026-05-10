@@ -5,14 +5,16 @@ import Trade from '../../models/Trade';
 import { getMainMenuKeyboard, getTraderSettingsKeyboard, getAlgoVersionKeyboard, getAnalysisActionKeyboard } from '../keyboards/baseKeyboards';
 import { AnalysisService } from '../../services/AnalysisService';
 import { BingXService } from '../../services/BingXService';
+import { BacktestService } from '../../services/BacktestService';
 
 import { SignalParser } from '../../services/SignalParser';
 import { TradeManager } from '../../services/TradeManager';
 import { sendTelegramMessage } from '../../utils/telegram';
 
 export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManager) => {
-    const bingxService = new BingXService(); // For analysis, we don't need user-specific keys unless trading
+    const bingxService = new BingXService(); 
     const analysisService = new AnalysisService(bingxService);
+    const backtestService = new BacktestService(bingxService, analysisService);
 
     bot.start(async (ctx) => {
         const user = await User.findOne({ telegramId: ctx.from.id.toString() });
@@ -321,6 +323,14 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                 });
             }
 
+            if (message === 'الخوارزمية V5 (تنبؤي AI) 🔮') {
+                user.botState = 'AWAITING_ANALYSIS_SYMBOL_V5';
+                await user.save();
+                return ctx.reply('يرجى إرسال رمز العملة للتحليل باستخدام V5 (التنبؤي) (مثال: BTC):', {
+                    reply_markup: { keyboard: [[{ text: 'إلغاء ❌' }]], resize_keyboard: true }
+                });
+            }
+
             if (user.botState && user.botState.startsWith('AWAITING_ANALYSIS_SYMBOL_')) {
                 if (message === 'إلغاء ❌' || message === 'رجوع للقائمة الرئيسية 🔙') {
                     user.botState = 'NONE';
@@ -328,7 +338,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                     return ctx.reply('تم الإلغاء.', { reply_markup: getMainMenuKeyboard(user) });
                 }
 
-                const version = user.botState.split('_').pop() as 'V1' | 'V2' | 'V3' | 'V4';
+                const version = user.botState.split('_').pop() as 'V1' | 'V2' | 'V3' | 'V4' | 'V5';
                 const symbol = message.toUpperCase();
                 ctx.reply(`⏳ جاري تحليل ${symbol} باستخدام ${version}...`);
 
@@ -487,6 +497,23 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
         } catch (error: any) {
             logger.error('Error in execute trade action:', error);
             await ctx.answerCbQuery(`❌ فشل التنفيذ: ${error.message}`);
+        }
+    });
+
+    bot.action(/^bt_(sc|sw)_(.+)$/, async (ctx) => {
+        try {
+            const [_, type, s] = ctx.match;
+            const symbol = `${s}/USDT:USDT`;
+            
+            await ctx.answerCbQuery('⏳ جاري تشغيل الاختبار الرجعي (500 شمعة)...');
+            await ctx.reply(`🔍 جاري تحليل البيانات التاريخية لـ ${symbol}... قد يستغرق ذلك بضع ثوانٍ.`);
+
+            const report = await backtestService.runBacktest(symbol, type === 'sc' ? 'Scalp' : 'Swing');
+            await ctx.replyWithHTML(report);
+
+        } catch (error: any) {
+            logger.error('Error in backtest action:', error);
+            await ctx.reply(`❌ فشل الاختبار الرجعي: ${error.message}`);
         }
     });
 };

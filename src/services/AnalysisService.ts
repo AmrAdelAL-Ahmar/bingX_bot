@@ -13,6 +13,7 @@ export interface AnalysisResult {
     swing: TradeRecommendation;
     matrix?: MatrixResult;
     isAboveVWAP?: boolean;
+    prediction?: PredictionResult;
 }
 
 export interface TradeRecommendation {
@@ -34,15 +35,22 @@ export interface MatrixResult {
     details: string;
 }
 
+export interface PredictionResult {
+    predictedPrice: number;
+    trendDirection: 'UP' | 'DOWN';
+    slope: number;
+    confidence: number;
+}
+
 const TF_WEIGHTS: Record<string, number> = {
     '1m': 1, '3m': 1, '5m': 2, '10m': 3, '15m': 4,
     '30m': 5, '1h': 6, '4h': 8, '8h': 9, '1d': 10
 };
 
 export class AnalysisService {
-    constructor(private bingxService: BingXService) {}
+    constructor(private bingxService: BingXService) { }
 
-    async analyze(symbolInput: string, version: 'V1' | 'V2' | 'V3' | 'V4' = 'V1'): Promise<AnalysisResult> {
+    async analyze(symbolInput: string, version: 'V1' | 'V2' | 'V3' | 'V4' | 'V5' = 'V1'): Promise<AnalysisResult> {
         let symbol = symbolInput.toUpperCase();
         if (!symbol.includes('/')) {
             symbol = `${symbol}/USDT:USDT`;
@@ -56,7 +64,7 @@ export class AnalysisService {
 
         const mtfOHLCV: Record<string, any[]> = {};
         for (const tf of allTFs) {
-            mtfOHLCV[tf] = await this.bingxService.fetchOHLCV(symbol, tf, 200);
+            mtfOHLCV[tf] = await this.bingxService.fetchOHLCV(symbol, tf, 500);
         }
 
         const quickOHLCV = mtfOHLCV[quickTF];
@@ -117,6 +125,8 @@ export class AnalysisService {
                 return this.analyzeV3(symbol, currentPrice, isAboveVWAP, matrix, lastRSI, s1, fib618, fib1618, lastATR, lastMA99);
             case 'V4':
                 return this.analyzeV4(symbol, currentPrice, isAboveVWAP, matrix, lastRSI, s1, r1, fib618, fib1618, fib382, lastATR, lastMA99);
+            case 'V5':
+                return this.analyzeV5(symbol, currentPrice, quickOHLCV, isAboveVWAP, matrix, lastRSI, s1, r1, fib618, fib1618, lastATR, lastMA99);
             default:
                 return this.analyzeV1(symbol, currentPrice, isUptrend, lastRSI, s1, fib618, fib1618, lastATR);
         }
@@ -142,11 +152,11 @@ export class AnalysisService {
             const closes = data.map(c => c.close);
             const ma99Arr = SMA.calculate({ period: 99, values: closes });
             if (ma99Arr.length === 0) continue;
-            
+
             const lastMA99 = ma99Arr[ma99Arr.length - 1];
             const weight = TF_WEIGHTS[tf] || 1;
             const isBullish = closes[closes.length - 1] > lastMA99;
-            
+
             totalScore += (isBullish ? 1 : -1) * weight;
             maxPossibleScore += weight;
             details += `| ${tf}: ${isBullish ? 'صاعد 🟢' : 'هابط 🔴'} `;
@@ -160,6 +170,32 @@ export class AnalysisService {
         else if (percentage <= 40) decision = "بيع 🔴";
 
         return { score: totalScore, percentage, decision, details };
+    }
+
+    private predictNextPriceLinear(pastCandles: any[], period: number = 20): PredictionResult {
+        let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+        const n = Math.min(period, pastCandles.length);
+        const recentCandles = pastCandles.slice(-n);
+
+        for (let i = 0; i < n; i++) {
+            const x = i + 1;
+            const y = recentCandles[i].close;
+            sumX += x;
+            sumY += y;
+            sumXY += (x * y);
+            sumXX += (x * x);
+        }
+
+        const m = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+        const b = (sumY - m * sumX) / n;
+        const predictedPrice = (m * (n + 1)) + b;
+
+        return {
+            predictedPrice,
+            trendDirection: m > 0 ? 'UP' : 'DOWN',
+            slope: m,
+            confidence: Math.abs(m) * 100 // Simple confidence based on slope magnitude
+        };
     }
 
     private analyzeV1(symbol: string, currentPrice: number, isUptrend: boolean, rsi: number, s1: number, fib618: number, fibTarget: number, atr: number): AnalysisResult {
@@ -235,7 +271,6 @@ export class AnalysisService {
         let scalp: TradeRecommendation = this.getDefaultRecommendation();
         let swing: TradeRecommendation = this.getDefaultRecommendation();
 
-        // Scalp V3
         if (rsi < 30 && currentPrice <= s1 && isAboveVWAP) {
             scalp = {
                 status: "شراء سريع (Scalp) 🟢",
@@ -250,7 +285,6 @@ export class AnalysisService {
             };
         }
 
-        // Swing V3
         if (currentPrice > ma99 && currentPrice <= (fib618 * 1.02)) {
             swing = {
                 status: "شراء استثمارية (Wave 3) 🟢",
@@ -272,7 +306,6 @@ export class AnalysisService {
         let scalp: TradeRecommendation = this.getDefaultRecommendation();
         let swing: TradeRecommendation = this.getDefaultRecommendation();
 
-        // Scalp V4 (Long)
         if (matrix.percentage >= 50 && isAboveVWAP && rsi < 30 && currentPrice <= s1) {
             scalp = {
                 status: "شراء سريع من القاع (Long) 🟢",
@@ -285,8 +318,7 @@ export class AnalysisService {
                 winRate: matrix.percentage > 60 ? 85 : 60,
                 reverseProb: 15
             };
-        } 
-        // Scalp V4 (Short)
+        }
         else if (matrix.percentage < 50 && !isAboveVWAP && rsi > 70 && currentPrice >= r1) {
             scalp = {
                 status: "بيع سريع من القمة (Short) 🔴",
@@ -301,7 +333,6 @@ export class AnalysisService {
             };
         }
 
-        // Swing V4 (Long)
         if (matrix.percentage >= 60 && currentPrice <= (fib618 * 1.02)) {
             swing = {
                 status: "استثمار صاعد (Wave 3 Long) 🟢",
@@ -315,13 +346,12 @@ export class AnalysisService {
                 reverseProb: 20
             };
         }
-        // Swing V4 (Short)
         else if (matrix.percentage <= 40 && currentPrice >= (fib382 * 0.98)) {
             swing = {
                 status: "استثمار هابط (Wave 3 Short) 🔴",
                 type: 'SHORT',
                 entry: currentPrice,
-                tp: currentPrice - (fibTarget - fib618), // Reversed fib target
+                tp: currentPrice - (fibTarget - fib618),
                 tp2: currentPrice - (fibTarget - fib618) * 1.5,
                 sl: currentPrice * 1.03,
                 timeEstimate: 1440,
@@ -333,15 +363,66 @@ export class AnalysisService {
         return { symbol, currentPrice, isUptrend: currentPrice > ma99, quickRSI: rsi, volumeStatus: 'high', quickATR: atr, scalp, swing, matrix, isAboveVWAP };
     }
 
+    private analyzeV5(symbol: string, currentPrice: number, quickOHLCV: any[], isAboveVWAP: boolean, matrix: MatrixResult, rsi: number, s1: number, r1: number, fib618: number, fibTarget: number, atr: number, ma99: number): AnalysisResult {
+        let scalp: TradeRecommendation = this.getDefaultRecommendation();
+        let swing: TradeRecommendation = this.getDefaultRecommendation();
+
+        const prediction = this.predictNextPriceLinear(quickOHLCV, 20);
+        const priceDiff = prediction.predictedPrice - currentPrice;
+        const trendAgreesWithLong = prediction.trendDirection === 'UP' && priceDiff > (currentPrice * 0.001);
+        const trendAgreesWithShort = prediction.trendDirection === 'DOWN' && priceDiff < -(currentPrice * 0.001);
+
+        // Enhanced Scalp V5 (Long)
+        if (rsi < 35 && trendAgreesWithLong && matrix.percentage >= 50 && isAboveVWAP) {
+            scalp = {
+                status: "إشارة V5 شراء قوية (الذكاء التنبؤي) 🟢🔮",
+                type: 'LONG',
+                entry: currentPrice,
+                tp: currentPrice + (atr * 3), // Higher target with prediction
+                tp2: currentPrice + (atr * 5),
+                sl: currentPrice * 0.994,
+                timeEstimate: 15,
+                winRate: 90,
+                reverseProb: 10
+            };
+        }
+        // Enhanced Scalp V5 (Short)
+        else if (rsi > 65 && trendAgreesWithShort && matrix.percentage < 50 && !isAboveVWAP) {
+            scalp = {
+                status: "إشارة V5 بيع قوية (الذكاء التنبؤي) 🔴🔮",
+                type: 'SHORT',
+                entry: currentPrice,
+                tp: currentPrice - (atr * 3),
+                tp2: currentPrice - (atr * 5),
+                sl: currentPrice * 1.006,
+                timeEstimate: 15,
+                winRate: 90,
+                reverseProb: 10
+            };
+        }
+
+        // Use V4 swing logic as base for V5
+        const v4Result = this.analyzeV4(symbol, currentPrice, isAboveVWAP, matrix, rsi, s1, r1, fib618, fibTarget, fib618, atr, ma99);
+        swing = v4Result.swing;
+
+        return { symbol, currentPrice, isUptrend: currentPrice > ma99, quickRSI: rsi, volumeStatus: 'high', quickATR: atr, scalp, swing, matrix, isAboveVWAP, prediction };
+    }
+
     private getDefaultRecommendation(): TradeRecommendation {
         return { status: "لا توجد فرصة الان", type: 'NONE', entry: 0, tp: 0, tp2: 0, sl: 0, timeEstimate: 0, winRate: 0, reverseProb: 0 };
     }
 
     formatReport(result: AnalysisResult, version: string): string {
-        const { scalp, swing, matrix, isAboveVWAP } = result;
+        const { scalp, swing, matrix, isAboveVWAP, prediction } = result;
 
         let report = `💎 **التقرير الكمّي الشامل | ${result.symbol}** 💎\n` +
             `💵 السعر الحالي: **$${result.currentPrice.toFixed(2)}**\n\n`;
+
+        if (prediction) {
+            report += `🔮 **تحليل الذكاء التنبؤي (V5):**\n` +
+                `- السعر المتوقع (الشمعة القادمة): **$${prediction.predictedPrice.toFixed(2)}**\n` +
+                `- اتجاه التنبؤ: **${prediction.trendDirection === 'UP' ? 'صاعد 📈' : 'هابط 📉'}**\n\n`;
+        }
 
         if (isAboveVWAP !== undefined) {
             report += `${isAboveVWAP ? '✅ السعر يتداول فوق VWAP (إيجابي للمؤسسات)' : '⚠️ السعر يتداول تحت VWAP (ضغط بيعي من المؤسسات)'}\n\n`;
@@ -352,14 +433,8 @@ export class AnalysisService {
                 `${matrix.details} |\n` +
                 `🎯 **قوة الاتجاه الكلية:** **${matrix.percentage.toFixed(1)}%**\n` +
                 `⚖️ **القرار العام:** **${matrix.decision}**\n\n`;
-        } else {
-            report += `📊 **حالة السوق اللحظية:**\n` +
-                `- 📈 الاتجاه العام: **${result.isUptrend ? 'صاعد 🟢' : 'هابط 🔴'}**\n` +
-                `- 💧 السيولة: **${result.volumeStatus === 'high' ? 'مرتفعة ✅' : 'ضعيفة ⚠️'}**\n` +
-                `- ⚡ الزخم (RSI): **${result.quickRSI.toFixed(1)}**\n\n`;
         }
 
-        // Scalp Section
         report += `⚡ **ثانياً: التحليل اللحظي (Scalp):**\n` +
             `- إشارة البوت: **${scalp.status}**\n`;
         if (scalp.entry > 0) {
@@ -369,7 +444,6 @@ export class AnalysisService {
             report += `\n`;
         }
 
-        // Swing Section
         report += `🌊 **ثالثاً: التحليل الموجي (Swing):**\n` +
             `- إشارة البوت: **${swing.status}**\n`;
         if (swing.entry > 0) {

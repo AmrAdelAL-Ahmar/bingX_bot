@@ -309,7 +309,7 @@ export const getAlgoVersionKeyboard = () => {
         keyboard: [
             [{ text: 'الخوارزمية V1 (الأساسي)' }, { text: 'الخوارزمية V2 (الكمي - Quant)' }],
             [{ text: 'الخوارزمية V3 (المصفوفة)' }, { text: 'الخوارزمية V4 (ثنائي الاتجاه)' }],
-            [{ text: 'رجوع للقائمة الرئيسية 🔙' }]
+            [{ text: 'الخوارزمية V5 (تنبؤي AI) 🔮' }, { text: 'رجوع للقائمة الرئيسية 🔙' }]
         ],
         resize_keyboard: true,
         is_persistent: true
@@ -328,6 +328,7 @@ export const getAnalysisActionKeyboard = (symbol: string, type: 'scalp' | 'swing
 
     const callbackData = `ex_${type === 'scalp' ? 'sc' : 'sw'}_${s}_${d}_${e}_${t1}_${sl}_${t2}`;
     const copyData = `cp_${type === 'scalp' ? 'sc' : 'sw'}_${s}_${d}_${e}_${t1}_${sl}_${t2}`;
+    const btData = `bt_${type === 'scalp' ? 'sc' : 'sw'}_${s}`; // Backtest current symbol
 
     return {
         inline_keyboard: [
@@ -336,6 +337,9 @@ export const getAnalysisActionKeyboard = (symbol: string, type: 'scalp' | 'swing
             ],
             [
                 { text: 'نسخ إشارة الصفقة 📋', callback_data: copyData }
+            ],
+            [
+                { text: 'اختبار الاستراتيجية (Backtest) ⏱️', callback_data: btData }
             ]
         ]
     };
