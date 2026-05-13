@@ -396,15 +396,17 @@ export const getAnalysisActionKeyboard = (symbol: string, type: 'scalp' | 'swing
     const copyData = `cp_${type === 'scalp' ? 'sc' : 'sw'}_${s}_${d}_${e}_${t1}_${sl}_${t2}`;
     const btData = `bt_${type === 'scalp' ? 'sc' : 'sw'}_${s}`; 
     const dtData = `dt_${type === 'scalp' ? 'sc' : 'sw'}_${s}`; // Details
+    const eduData = `ed_${type === 'scalp' ? 'sc' : 'sw'}_${s}`; // Educational Guide
 
     return {
         inline_keyboard: [
             [{ text: `تنفيذ صفقة ${type === 'scalp' ? 'Scalp ⚡' : 'Swing 🌊'}`, callback_data: callbackData }],
             [{ text: 'نسخ إشارة الصفقة 📋', callback_data: copyData }],
             [
-                { text: 'اختبار الاستراتيجية ⏱️', callback_data: btData },
-                { text: 'تفاصيل التحليل 🔍', callback_data: dtData }
-            ]
+                { text: '🔍 التقرير التفصيلي', callback_data: dtData },
+                { text: '🎓 دليل المؤشرات', callback_data: eduData }
+            ],
+            [{ text: 'اختبار الاستراتيجية ⏱️', callback_data: btData }]
         ]
     };
 };

@@ -568,6 +568,8 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
             const [_, type, s] = ctx.match;
             const symbol = `${s}/USDT:USDT`;
             
+            await ctx.answerCbQuery('⏳ جاري جلب التقرير التفصيلي...');
+
             // Re-run analysis to get the latest details
             const user = await User.findOne({ telegramId: ctx.from!.id.toString() });
             const res = await analysisService.analyze(symbol, 'V5', {
@@ -575,12 +577,32 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                 longTF: user?.analysisSettings?.swingTF
             });
 
-            const details = analysisService.generateEducationalDetails(res);
+            const details = analysisService.generateDetailedReport(res, type === 'sc' ? 'scalp' : 'swing');
             await ctx.reply(details, { parse_mode: 'Markdown' });
 
         } catch (error) {
             logger.error('Error in details action:', error);
-            await ctx.reply('❌ فشل جلب التفاصيل.');
+            await ctx.reply('❌ فشل جلب التقرير التقني.');
+        }
+    });
+
+    bot.action(/^ed_(sc|sw)_(.+)$/, async (ctx) => {
+        try {
+            const [_, type, s] = ctx.match;
+            const symbol = `${s}/USDT:USDT`;
+            await ctx.answerCbQuery('📚 جاري فتح الدليل التعليمي...');
+
+            const user = await User.findOne({ telegramId: ctx.from!.id.toString() });
+            const res = await analysisService.analyze(symbol, 'V5', {
+                quickTF: user?.analysisSettings?.scalpTF,
+                longTF: user?.analysisSettings?.swingTF
+            });
+
+            const guide = analysisService.generateEducationalGuide(res, type === 'sc' ? 'scalp' : 'swing');
+            await ctx.reply(guide, { parse_mode: 'Markdown' });
+        } catch (error) {
+            logger.error('Error in educational guide action:', error);
+            await ctx.reply('❌ فشل جلب الدليل التعليمي.');
         }
     });
 
