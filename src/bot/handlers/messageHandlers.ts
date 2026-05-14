@@ -704,9 +704,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                 longTF: user?.analysisSettings?.swingTF
             });
 
-            // For correction, we use the quick timeframe (scalp) OHLCV as the base
-            const ohlcv = await bingxService.fetchOHLCV(symbol, user?.analysisSettings?.scalpTF || '15m', 100);
-            const correctionReport = analysisService.generateCorrectionReport(res, ohlcv);
+            const correctionReport = await analysisService.generateCorrectionReport(res);
 
             await ctx.reply(correctionReport, { parse_mode: 'Markdown' });
 

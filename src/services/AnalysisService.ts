@@ -639,44 +639,55 @@ export class AnalysisService {
         }
     }
 
-    generateCorrectionReport(res: AnalysisResult, ohlcv: any[]): string {
-        const div = this.detectBearishDivergence(ohlcv);
-        const direction = res.scalp.type === 'NONE' ? 'LONG' : res.scalp.type;
-        const fib = this.calculateCorrectionFibLevels(ohlcv, direction);
-        
-        let r = `🔍 **رادار التصحيح (Correction Radar) - ${res.symbol}** 🔍\n`;
+    async generateCorrectionReport(res: AnalysisResult): Promise<string> {
+        const symbol = res.symbol;
+        const tfs = ['5m', '15m', '1h'];
+        const results: any[] = [];
+
+        for (const tf of tfs) {
+            const ohlcv = await this.bingxService.fetchOHLCV(symbol, tf, 50);
+            const div = this.detectBearishDivergence(ohlcv);
+            const direction = res.scalp.type === 'NONE' ? 'LONG' : res.scalp.type;
+            const fib = this.calculateCorrectionFibLevels(ohlcv, direction);
+            results.push({ tf, div, fib, price: ohlcv[ohlcv.length - 1].close });
+        }
+
+        let r = `🔍 **رادار التصحيح المتعدد (MTF Correction) - ${symbol}** 🔍\n`;
         r += `━━━━━━━━━━━━━━\n`;
         r += `💵 السعر الحالي: **$${res.currentPrice.toFixed(4)}**\n\n`;
 
-        r += `📉 **تحليل الانحراف (Divergence):**\n`;
-        r += `• الحالة: ${div.description}\n\n`;
+        results.forEach(item => {
+            const divEmoji = item.div.detected ? '⚠️' : '✅';
+            r += `📊 **فريم [${item.tf}]**:\n`;
+            r += `• الحالة: ${divEmoji} ${item.div.description}\n`;
+            r += `• مستوى 0.382: \`$${item.fib.fib382.toFixed(4)}\`\n`;
+            r += `• مستوى 0.500: \`$${item.fib.fib500.toFixed(4)}\`\n`;
+            r += `• مستوى 0.618: \`$${item.fib.fib618.toFixed(4)}\` 🔥\n`;
+            r += `━━━━━━━━━━━━━━\n`;
+        });
 
-        r += `📐 **أهداف التصحيح (Fibonacci):**\n`;
-        r += `• المستوى 0.382: \`$${fib.fib382.toFixed(4)}\`\n`;
-        r += `• المستوى 0.500: \`$${fib.fib500.toFixed(4)}\`\n`;
-        r += `• المستوى الذهبي 0.618: \`$${fib.fib618.toFixed(4)}\` 🔥\n\n`;
-
-        r += `⚠️ **توصية الحماية:**\n`;
+        r += `⚠️ **توصية الحماية الشاملة:**\n`;
+        const detectedCount = results.filter(i => i.div.detected).length;
         const isLong = res.scalp.type !== 'SHORT';
         
         let warning = '';
-        if (div.detected || res.scalp.indicators.stochRsi > 85) {
-            warning = `🔴 **خطر انعكاف عالٍ:** تشبع شرائي مع انحراف سلبي. يفضل الخروج أو تأمين الأرباح فوراً.`;
-        } else if (isLong && res.currentPrice < fib.fib500) {
-            warning = `🟠 **تحذير: تصحيح عميق:** السعر كسر مستوى 0.500. راقب المستوى الذهبي ($${fib.fib618.toFixed(4)}) بحذر.`;
-        } else if (isLong && res.currentPrice < fib.fib382) {
-            warning = `🟡 **تنبيه: بداية تصحيح:** السعر تحت 0.382. قد يكون مجرد تفريغ بسيط للزخم.`;
-        } else if (!isLong && res.currentPrice > fib.fib500) {
-            warning = `🟠 **تحذير: ارتداد عميق:** السعر فوق مستوى 0.500. راقب المقاومة الذهبية ($${fib.fib618.toFixed(4)}) بحذر.`;
-        } else if (!isLong && res.currentPrice > fib.fib382) {
-            warning = `🟡 **تنبيه: بداية ارتداد:** السعر فوق 0.382. قد يكون مجرد تصحيح عرضي للهبوط.`;
+        if (detectedCount >= 2) {
+            warning = `🚨 **خطر انعكاس مؤكد (Confluence):** تصحيح مرصود على فريمات متعددة. اخرج الآن لحماية محفظتك!`;
+        } else if (detectedCount === 1) {
+            warning = `🟠 **تحذير: بداية ضعف:** هناك بوادر تصحيح على فريم واحد. ارفع الستوب لوز فوراً.`;
         } else {
-            warning = `🟢 **وضع مستقر:** لا توجد بوادر تصحيح حادة حالياً والسعر يحافظ على مستوياته.`;
+            // Level based check on smallest timeframe
+            const f5 = results[0].fib;
+            if (isLong && res.currentPrice < f5.fib500) {
+                warning = `🟠 **تصحيح عميق (5m):** السعر كسر مستوى 0.500. راقب الهدف $${f5.fib618.toFixed(4)}.`;
+            } else {
+                warning = `🟢 **وضع مستقر:** لا يوجد توافق على التصحيح حالياً. الاتجاه لا يزال يحافظ على قوته.`;
+            }
         }
 
         r += `${warning}\n`;
         r += `━━━━━━━━━━━━━━\n`;
-        r += `💡 *استخدم زر "تنبيه التصحيح" لمراقبة الصفقة آلياً.*`;
+        r += `💡 *هذا التقرير يجمع بين التحليل التكتيكي والاستراتيجي.*`;
 
         return r;
     }
