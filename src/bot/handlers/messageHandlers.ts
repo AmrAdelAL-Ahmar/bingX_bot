@@ -361,8 +361,13 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                     });
                     const report = analysisService.formatReport(result, version);
 
-                    // Send the report
-                    await ctx.replyWithHTML(report);
+                    // Send the report with a button for comprehensive analysis
+                    const shortSym = symbol.split('/')[0];
+                    await ctx.replyWithHTML(report, {
+                        reply_markup: {
+                            inline_keyboard: [[{ text: '📊 التحليل الشامل (MTF)', callback_data: `all_tf_${shortSym}` }]]
+                        }
+                    });
 
                     // Send buttons for Scalp
                     if (result.scalp.type !== 'NONE') {
@@ -664,6 +669,26 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
             }
         } catch (error) {
             logger.error('Error updating RSI threshold:', error);
+        }
+    });
+
+    bot.action(/^all_tf_(.+)$/, async (ctx) => {
+        try {
+            const symbol = `${ctx.match[1]}/USDT:USDT`;
+            await ctx.answerCbQuery('🌐 جاري توليد التحليل الشامل لجميع الفريمات...');
+
+            const user = await User.findOne({ telegramId: ctx.from!.id.toString() });
+            const res = await analysisService.analyze(symbol, 'V5', {
+                quickTF: user?.analysisSettings?.scalpTF,
+                longTF: user?.analysisSettings?.swingTF
+            });
+
+            const comprehensiveReport = analysisService.generateComprehensiveReport(res);
+            await ctx.reply(comprehensiveReport, { parse_mode: 'Markdown' });
+
+        } catch (error) {
+            logger.error('Error in comprehensive analysis action:', error);
+            await ctx.reply('❌ فشل توليد التحليل الشامل.');
         }
     });
 };
