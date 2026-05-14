@@ -2,17 +2,56 @@ import { RSI, SMA, ATR, VWAP, MACD, BollingerBands, StochasticRSI, CCI, Williams
 import logger from '../utils/logger';
 import { BingXService } from './BingXService';
 
-export interface AnalysisResult {
-    symbol: string;
-    currentPrice: number;
-    isUptrend: boolean;
-    matrix?: MatrixResult;
-    isAboveVWAP?: boolean;
-    prediction?: PredictionResult;
-    scalp: TradeRecommendation & AnalysisDetails;
-    swing: TradeRecommendation & AnalysisDetails;
-    allTimeframes: Record<string, AnalysisDetails>;
-    options: { quickTF: string, longTF: string, limit: number };
+// --- Types & Interfaces ---
+
+export interface OHLCV {
+    timestamp: number;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume: number;
+}
+
+export interface CandleData {
+    closes: number[];
+    highs: number[];
+    lows: number[];
+    volumes: number[];
+    last: OHLCV;
+    prev: OHLCV;
+    all: OHLCV[];
+}
+
+export interface IndicatorData {
+    macd: { macd: number, signal: number, histogram: number };
+    bb: { upper: number, lower: number, middle: number };
+    stochRsi: number;
+    cci: number;
+    williamsR: number;
+    mfi?: number;
+}
+
+export interface TechnicalLevels {
+    pivot: number;
+    s1: number;
+    s2: number;
+    r1: number;
+    r2: number;
+    fib382: number;
+    fib618: number;
+    fibTarget: number;
+    ma99: number;
+    ma20: number;
+    ma7: number;
+}
+
+export interface IndicatorSentiment {
+    name: string;
+    value: string | number;
+    status: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+    description: string;
+    timeframe?: string;
 }
 
 export interface AnalysisDetails {
@@ -24,14 +63,6 @@ export interface AnalysisDetails {
     structure: string;
     timeframe: string;
     isBullishTrend: boolean;
-}
-
-export interface IndicatorSentiment {
-    name: string;
-    value: string | number;
-    status: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
-    description: string;
-    timeframe?: string;
 }
 
 export interface TradeRecommendation {
@@ -62,96 +93,248 @@ export interface PredictionResult {
     confidence: number;
 }
 
-export interface TechnicalLevels {
-    pivot: number;
-    s1: number;
-    s2: number;
-    r1: number;
-    r2: number;
-    fib382: number;
-    fib618: number;
-    fibTarget: number;
-    ma99: number;
-    ma20: number;
-    ma7: number;
+export interface AnalysisResult {
+    symbol: string;
+    currentPrice: number;
+    isUptrend: boolean;
+    matrix: MatrixResult;
+    isAboveVWAP: boolean;
+    prediction?: PredictionResult;
+    scalp: TradeRecommendation & AnalysisDetails;
+    swing: TradeRecommendation & AnalysisDetails;
+    allTimeframes: Record<string, AnalysisDetails>;
+    options: { quickTF: string, longTF: string, limit: number };
+    sniper: {
+        isStochSynced: boolean;
+        isFullBreakout: boolean;
+        isAboveGolden: boolean;
+    };
 }
 
-export interface IndicatorData {
-    macd: { macd: number, signal: number, histogram: number };
-    bb: { upper: number, lower: number, middle: number };
-    stochRsi: number;
-    cci: number;
-    williamsR: number;
-    mfi?: number;
-}
+// --- Constants ---
 
 const TF_WEIGHTS: Record<string, number> = {
     '1m': 1, '3m': 2, '5m': 3, '15m': 4,
     '30m': 5, '1h': 8, '4h': 12, '1d': 15
 };
 
-export class AnalysisService {
-    constructor(private bingxService: BingXService) { }
+const MATRIX_TFS = ['1m', '5m', '15m', '30m', '1h', '4h', '1d'];
 
-    async analyze(
-        symbolInput: string,
-        version: 'V1' | 'V2' | 'V3' | 'V4' | 'V5' = 'V1',
-        options: { quickTF?: string, longTF?: string, limit?: number, rsiThreshold?: number } = {}
-    ): Promise<AnalysisResult> {
-        let symbol = symbolInput.toUpperCase();
-        if (!symbol.includes('/')) symbol = `${symbol}/USDT:USDT`;
+// --- Utilities ---
 
-        const quickTF = options.quickTF || '5m';
-        const longTF = options.longTF || '1h';
-        const limit = options.limit || 200;
-
-        const matrixTFs = ['1m', '5m', '15m', '30m', '1h', '4h', '1d'];
-        const mtfOHLCV: Record<string, any[]> = {};
-        for (const tf of matrixTFs) {
-            const fetchLimit = (tf === quickTF || tf === longTF) ? Math.max(limit, 200) : 200;
-            mtfOHLCV[tf] = await this.bingxService.fetchOHLCV(symbol, tf, fetchLimit);
-        }
-
-        const quickOHLCV = mtfOHLCV[quickTF] || mtfOHLCV['5m'];
-        const dailyOHLCV = mtfOHLCV['1d'];
-        const currentPrice = quickOHLCV[quickOHLCV.length - 1].close;
-
-        const vwap = this.calculateVWAP(dailyOHLCV);
-
-        // Calculate All Timeframes Data FIRST
-        const allTimeframes: Record<string, AnalysisDetails> = {};
-        for (const tf of matrixTFs) {
-            allTimeframes[tf] = this.calculateTechnicalData(mtfOHLCV[tf], tf, currentPrice, vwap);
-        }
-
-        const matrix = this.calculateMatrix(allTimeframes);
-        const scalpData = allTimeframes[quickTF] || allTimeframes['5m'];
-        const swingData = allTimeframes[longTF] || allTimeframes['1h'];
-
-        // --- ENGINES ROUTING ---
-        const scalpRec = this.runEngine(version, symbol, currentPrice, scalpData, matrix, vwap, quickOHLCV);
-        const swingRec = this.runEngine(version, symbol, currentPrice, swingData, matrix, vwap, mtfOHLCV[longTF]);
-
-        // Sniper Logic (V7)
-        const isStochSynced = scalpData.indicators.stochRsi < 25 && swingData.indicators.stochRsi < 25;
-        const isFullBreakout = matrix.percentage >= 95;
-        const isAboveGolden = currentPrice > scalpData.levels.fib618;
-
+class TechnicalAnalyzer {
+    static prepareCandleData(ohlcv: OHLCV[]): CandleData {
         return {
-            symbol,
-            currentPrice,
-            isUptrend: scalpData.rsi < 50,
-            matrix,
-            isAboveVWAP: currentPrice > vwap,
-            scalp: { ...scalpRec, ...scalpData },
-            swing: { ...swingRec, ...swingData },
-            allTimeframes,
-            options: { quickTF, longTF, limit },
-            sniper: { isStochSynced, isFullBreakout, isAboveGolden }
-        } as any;
+            closes: ohlcv.map(c => c.close),
+            highs: ohlcv.map(c => c.high),
+            lows: ohlcv.map(c => c.low),
+            volumes: ohlcv.map(c => c.volume),
+            last: ohlcv[ohlcv.length - 1],
+            prev: ohlcv[ohlcv.length - 2],
+            all: ohlcv
+        };
     }
 
-    private runEngine(version: string, symbol: string, cp: number, data: AnalysisDetails, m: MatrixResult, vwap: number, ohlcv: any[]): TradeRecommendation {
+    static calculateIndicators(data: CandleData): IndicatorData {
+        const { closes, highs, lows, volumes } = data;
+        
+        const macdArr = MACD.calculate({ 
+            values: closes, 
+            fastPeriod: 12, 
+            slowPeriod: 26, 
+            signalPeriod: 9, 
+            SimpleMAOscillator: false, 
+            SimpleMASignal: false 
+        });
+        const lastMACD = macdArr[macdArr.length - 1];
+
+        return {
+            macd: { 
+                macd: lastMACD?.MACD || 0, 
+                signal: lastMACD?.signal || 0, 
+                histogram: lastMACD?.histogram || 0 
+            },
+            bb: BollingerBands.calculate({ period: 20, values: closes, stdDev: 2 }).slice(-1)[0],
+            stochRsi: StochasticRSI.calculate({ values: closes, rsiPeriod: 14, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 }).slice(-1)[0]?.k || 50,
+            cci: CCI.calculate({ period: 20, high: highs, low: lows, close: closes }).slice(-1)[0] || 0,
+            williamsR: WilliamsR.calculate({ period: 14, high: highs, low: lows, close: closes }).slice(-1)[0] || -50,
+            mfi: MFI.calculate({ period: 14, high: highs, low: lows, close: closes, volume: volumes }).slice(-1)[0] || 50
+        };
+    }
+
+    static calculateTechnicalData(ohlcv: OHLCV[], tf: string, vwap: number): AnalysisDetails {
+        const data = this.prepareCandleData(ohlcv);
+        const { closes, highs, lows, last, prev } = data;
+
+        const ma20 = SMA.calculate({ period: 20, values: closes }).slice(-1)[0] || last.close;
+        const isBullishTrend = last.close > ma20;
+
+        const rsi = RSI.calculate({ period: 14, values: closes }).slice(-1)[0] || 50;
+        const atr = ATR.calculate({ period: 14, high: highs, low: lows, close: closes }).slice(-1)[0] || 0;
+
+        const levels: TechnicalLevels = {
+            pivot: (prev.high + prev.low + prev.close) / 3,
+            r1: 0, s1: 0, r2: 0, s2: 0,
+            ma7: SMA.calculate({ period: 7, values: closes }).slice(-1)[0],
+            ma20: ma20,
+            ma99: SMA.calculate({ period: 99, values: closes }).slice(-1)[0],
+            fib618: 0, fib382: 0, fibTarget: 0
+        };
+
+        levels.r1 = (2 * levels.pivot) - prev.low;
+        levels.s1 = (2 * levels.pivot) - prev.high;
+        levels.r2 = levels.pivot + (prev.high - prev.low);
+        levels.s2 = levels.pivot - (prev.high - prev.low);
+
+        const fibCandles = ohlcv.slice(-50);
+        const maxH = Math.max(...fibCandles.map(c => c.high));
+        const minL = Math.min(...fibCandles.map(c => c.low));
+        const diff = maxH - minL;
+        levels.fib618 = maxH - (diff * 0.382);
+        levels.fib382 = maxH - (diff * 0.618);
+        levels.fibTarget = maxH + (diff * 0.618);
+
+        const indicators = this.calculateIndicators(data);
+
+        return {
+            indicators,
+            sentiments: [],
+            rsi,
+            atr,
+            levels,
+            structure: this.detectMarketStructure(data),
+            timeframe: tf,
+            isBullishTrend
+        };
+    }
+
+    static detectMarketStructure(data: CandleData): string {
+        const recent = data.all.slice(-30);
+        const highs = recent.map(c => c.high);
+        const lows = recent.map(c => c.low);
+        
+        const lastH = highs[highs.length - 1];
+        const prevH = Math.max(...highs.slice(-10, -1));
+        const lastL = lows[lows.length - 1];
+        const prevL = Math.min(...lows.slice(-10, -1));
+
+        if (lastH > prevH && lastL > prevL) return "صاعد (HH/HL) 📈";
+        if (lastH < prevH && lastL < prevL) return "هابط (LH/LL) 📉";
+        if (lastH > prevH && lastL < prevL) return "كسر هيكل (BOS) ⚡";
+        return "عرضي ↔️";
+    }
+
+    static calculateVWAP(ohlcv: OHLCV[]): number {
+        const input = {
+            high: ohlcv.map(c => c.high),
+            low: ohlcv.map(c => c.low),
+            close: ohlcv.map(c => c.close),
+            volume: ohlcv.map(c => c.volume)
+        };
+        const vwapValues = VWAP.calculate(input);
+        return vwapValues[vwapValues.length - 1];
+    }
+
+    static calculateMatrix(allTimeframes: Record<string, AnalysisDetails>): MatrixResult {
+        let totalScore = 0;
+        let maxPossibleScore = 0;
+        let details = "| ";
+
+        MATRIX_TFS.forEach(tf => {
+            const data = allTimeframes[tf];
+            if (data) {
+                const weight = TF_WEIGHTS[tf] || 1;
+                totalScore += (data.isBullishTrend ? 1 : -1) * weight;
+                maxPossibleScore += weight;
+                details += `${tf}:${data.isBullishTrend ? '🟢' : '🔴'} | `;
+            }
+        });
+
+        const percentage = ((totalScore + maxPossibleScore) / (2 * maxPossibleScore)) * 100;
+        let decision = "محايد ⚪";
+        if (percentage >= 75) decision = "شراء قوي 🟢";
+        else if (percentage >= 55) decision = "شراء 🟢";
+        else if (percentage <= 25) decision = "بيع قوي 🔴";
+        else if (percentage <= 45) decision = "بيع 🔴";
+
+        return { score: totalScore, percentage, decision, details };
+    }
+
+    static predictNextPriceLinear(pastCandles: OHLCV[], period: number = 20): PredictionResult {
+        let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+        const n = Math.min(period, pastCandles.length);
+        const recent = pastCandles.slice(-n);
+        
+        for (let i = 0; i < n; i++) {
+            const x = i + 1;
+            const y = recent[i].close;
+            sumX += x;
+            sumY += y;
+            sumXY += (x * y);
+            sumXX += (x * x);
+        }
+        
+        const m = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+        const b = (sumY - m * sumX) / n;
+        const predictedPrice = (m * (n + 1)) + b;
+
+        return {
+            predictedPrice,
+            trendDirection: m > 0 ? 'UP' : 'DOWN',
+            slope: m,
+            confidence: Math.abs(m) * 1000
+        };
+    }
+
+    static detectBearishDivergence(ohlcv: OHLCV[]): { detected: boolean, description: string } {
+        const closes = ohlcv.map(c => c.close);
+        const rsiValues = RSI.calculate({ period: 14, values: closes });
+        
+        if (closes.length < 20 || rsiValues.length < 20) {
+            return { detected: false, description: "بيانات غير كافية" };
+        }
+
+        const p2 = closes[closes.length - 1];
+        const p1 = closes[closes.length - 10] || closes[0];
+        const r2 = rsiValues[rsiValues.length - 1];
+        const r1 = rsiValues[rsiValues.length - 10] || rsiValues[0];
+
+        const isDivergent = p2 > p1 && r2 < r1;
+        return { 
+            detected: isDivergent, 
+            description: isDivergent ? "⚠️ انحراف سلبي رصد: السعر يصعد والزخم يضعف" : "✅ لا يوجد انحراف سلبي حالياً" 
+        };
+    }
+
+    static calculateCorrectionFibLevels(ohlcv: OHLCV[], direction: 'LONG' | 'SHORT' = 'LONG') {
+        const highs = ohlcv.map(c => c.high);
+        const lows = ohlcv.map(c => c.low);
+        const maxHigh = Math.max(...highs.slice(-40));
+        const minLow = Math.min(...lows.slice(-40));
+        const diff = maxHigh - minLow;
+
+        if (direction === 'LONG') {
+            return {
+                fib382: maxHigh - (diff * 0.382),
+                fib500: maxHigh - (diff * 0.500),
+                fib618: maxHigh - (diff * 0.618),
+                type: 'SUPPORT'
+            };
+        } else {
+            return {
+                fib382: minLow + (diff * 0.382),
+                fib500: minLow + (diff * 0.500),
+                fib618: minLow + (diff * 0.618),
+                type: 'RESISTANCE'
+            };
+        }
+    }
+}
+
+// --- Trading Engines ---
+
+class TradingEngines {
+    static run(version: string, cp: number, data: AnalysisDetails, m: MatrixResult, vwap: number, ohlcv: OHLCV[]): TradeRecommendation {
         switch (version) {
             case 'V2': return this.analyzeQuantV2(cp, data, m);
             case 'V3': return this.analyzeMatrixMaster(cp, data, m, vwap);
@@ -161,178 +344,97 @@ export class AnalysisService {
         }
     }
 
-    private getQuickIndicators(ohlcv: any[]): IndicatorData {
-        const closes = ohlcv.map(c => c.close), highs = ohlcv.map(c => c.high), lows = ohlcv.map(c => c.low), volumes = ohlcv.map(c => c.volume);
-        const macdArr = MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false });
-        return {
-            macd: { macd: macdArr[macdArr.length - 1]?.MACD || 0, signal: macdArr[macdArr.length - 1]?.signal || 0, histogram: macdArr[macdArr.length - 1]?.histogram || 0 },
-            bb: BollingerBands.calculate({ period: 20, values: closes, stdDev: 2 }).slice(-1)[0],
-            stochRsi: StochasticRSI.calculate({ values: closes, rsiPeriod: 14, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 }).slice(-1)[0]?.k || 50,
-            cci: CCI.calculate({ period: 20, high: highs, low: lows, close: closes }).slice(-1)[0] || 0,
-            williamsR: WilliamsR.calculate({ period: 14, high: highs, low: lows, close: closes }).slice(-1)[0] || -50,
-            mfi: MFI.calculate({ period: 14, high: highs, low: lows, close: closes, volume: volumes }).slice(-1)[0] || 50
-        };
-    }
-
-    private calculateTechnicalData(ohlcv: any[], tf: string, cp: number, vwap: number): AnalysisDetails {
-        const closes = ohlcv.map(c => c.close), highs = ohlcv.map(c => c.high), lows = ohlcv.map(c => c.low), volumes = ohlcv.map(c => c.volume);
-        const lastClose = closes[closes.length - 1];
-        const ma20 = SMA.calculate({ period: 20, values: closes }).slice(-1)[0] || lastClose;
-        const isBullishTrend = lastClose > ma20;
-
-        const rsi = RSI.calculate({ period: 14, values: closes }).slice(-1)[0] || 50;
-        const atr = ATR.calculate({ period: 14, high: highs, low: lows, close: closes }).slice(-1)[0] || 0;
-        const macdArr = MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false });
-        const lastMACD = macdArr[macdArr.length - 1];
-
-        // --- Calculate Levels ---
-        const lastCandle = ohlcv[ohlcv.length - 1];
-        const prevCandle = ohlcv[ohlcv.length - 2];
-        const levels: TechnicalLevels = {
-            pivot: (prevCandle.high + prevCandle.low + prevCandle.close) / 3,
-            r1: 0, s1: 0, r2: 0, s2: 0, ma7: SMA.calculate({ period: 7, values: closes }).slice(-1)[0], ma20: SMA.calculate({ period: 20, values: closes }).slice(-1)[0], ma99: SMA.calculate({ period: 99, values: closes }).slice(-1)[0],
-            fib618: 0, fib382: 0, fibTarget: 0
-        };
-        levels.r1 = (2 * levels.pivot) - prevCandle.low;
-        levels.s1 = (2 * levels.pivot) - prevCandle.high;
-        levels.r2 = levels.pivot + (prevCandle.high - prevCandle.low);
-        levels.s2 = levels.pivot - (prevCandle.high - prevCandle.low);
-
-        // Fib
-        const fibCandles = ohlcv.slice(-50);
-        const maxH = Math.max(...fibCandles.map(c => c.high)), minL = Math.min(...fibCandles.map(c => c.low));
-        const diff = maxH - minL;
-        levels.fib618 = maxH - (diff * 0.382);
-        levels.fib382 = maxH - (diff * 0.618);
-        levels.fibTarget = maxH + (diff * 0.618);
-
-        const indicators = this.getQuickIndicators(ohlcv);
-
-        return { indicators, sentiments: [], rsi, atr, levels, structure: this.detectMarketStructure(ohlcv), timeframe: tf, isBullishTrend };
-    }
-
-    private analyzeQuantV2(cp: number, data: AnalysisDetails, m: MatrixResult): TradeRecommendation {
+    private static analyzeQuantV2(cp: number, data: AnalysisDetails, m: MatrixResult): TradeRecommendation {
         const mfi = data.indicators.mfi || 50;
         const type = mfi < 30 ? 'LONG' : mfi > 70 ? 'SHORT' : (m.percentage >= 50 ? 'LONG' : 'SHORT');
         const winRate = Math.min(60 + Math.abs(mfi - 50) * 0.8, 92);
-
         const slDistance = data.atr * 3;
+
         return {
             status: `📊 V2 QUANT (${type}) - MFI: ${mfi.toFixed(0)}`,
-            type, entry: cp, tp: type === 'LONG' ? cp + (slDistance * 1.5) : cp - (slDistance * 1.5), sl: type === 'LONG' ? cp - slDistance : cp + slDistance,
-            timeEstimate: data.timeframe.includes('m') ? 60 : 240, winRate, reverseProb: 100 - winRate
+            type, entry: cp,
+            tp: type === 'LONG' ? cp + (slDistance * 1.5) : cp - (slDistance * 1.5),
+            sl: type === 'LONG' ? cp - slDistance : cp + slDistance,
+            timeEstimate: data.timeframe.includes('m') ? 60 : 240,
+            winRate, reverseProb: 100 - winRate
         };
     }
 
-    private analyzeScalpProV4(cp: number, data: AnalysisDetails, m: MatrixResult): TradeRecommendation {
+    private static analyzeScalpProV4(cp: number, data: AnalysisDetails, m: MatrixResult): TradeRecommendation {
         const isLong = cp <= data.indicators.bb.lower || data.indicators.cci < -100;
         const isShort = cp >= data.indicators.bb.upper || data.indicators.cci > 100;
         const type = isLong ? 'LONG' : 'SHORT';
         const winRate = Math.min(65 + (Math.abs(data.indicators.cci) / 10), 94);
-
         const slDistance = data.atr * 2;
+
         return {
             status: `⚡ V4 SCALP PRO (${type}) - BB/CCI Confluence`,
-            type, entry: cp, tp: type === 'LONG' ? data.indicators.bb.middle : data.indicators.bb.middle, sl: type === 'LONG' ? cp - slDistance : cp + slDistance,
-            timeEstimate: data.timeframe.includes('m') ? 15 : 60, winRate, reverseProb: 100 - winRate
+            type, entry: cp,
+            tp: data.indicators.bb.middle, // Both long and short target middle band
+            sl: type === 'LONG' ? cp - slDistance : cp + slDistance,
+            timeEstimate: data.timeframe.includes('m') ? 15 : 60,
+            winRate, reverseProb: 100 - winRate
         };
     }
 
-    private analyzePredictiveV5(cp: number, data: AnalysisDetails, ohlcv: any[]): TradeRecommendation {
-        const pred = this.predictNextPriceLinear(ohlcv, 20);
+    private static analyzePredictiveV5(cp: number, data: AnalysisDetails, ohlcv: OHLCV[]): TradeRecommendation {
+        const pred = TechnicalAnalyzer.predictNextPriceLinear(ohlcv, 20);
         const type = pred.predictedPrice > cp ? 'LONG' : 'SHORT';
         const winRate = Math.min(70 + (pred.confidence * 0.1), 96);
 
         return {
             status: `🔮 V5 PREDICTIVE AI - Expected: $${pred.predictedPrice.toFixed(2)}`,
-            type, entry: cp, tp: pred.predictedPrice, sl: type === 'LONG' ? cp - (data.atr * 4) : cp + (data.atr * 4),
-            timeEstimate: data.timeframe.includes('m') ? 30 : 120, winRate, reverseProb: 100 - winRate
+            type, entry: cp,
+            tp: pred.predictedPrice,
+            sl: type === 'LONG' ? cp - (data.atr * 4) : cp + (data.atr * 4),
+            timeEstimate: data.timeframe.includes('m') ? 30 : 120,
+            winRate, reverseProb: 100 - winRate
         };
     }
 
-    private analyzeMatrixMaster(cp: number, data: AnalysisDetails, m: MatrixResult, vwapPrice: number): TradeRecommendation {
+    private static analyzeMatrixMaster(cp: number, data: AnalysisDetails, m: MatrixResult, vwapPrice: number): TradeRecommendation {
         const type = m.percentage >= 50 ? 'LONG' : 'SHORT';
         const winRate = Math.min(m.percentage + 10, 98);
         const slDistance = Math.max(data.atr * 3, cp * 0.01);
+
         return {
             status: `🏛 V3 MATRIX ${type} ${m.decision}`,
-            type, entry: cp, tp: type === 'LONG' ? cp + (slDistance * 2) : cp - (slDistance * 2), sl: type === 'LONG' ? cp - slDistance : cp + slDistance,
-            timeEstimate: data.timeframe.includes('m') ? 60 : 240, winRate, reverseProb: 100 - winRate, confidenceScore: m.percentage
+            type, entry: cp,
+            tp: type === 'LONG' ? cp + (slDistance * 2) : cp - (slDistance * 2),
+            sl: type === 'LONG' ? cp - slDistance : cp + slDistance,
+            timeEstimate: data.timeframe.includes('m') ? 60 : 240,
+            winRate, reverseProb: 100 - winRate,
+            confidenceScore: m.percentage
         };
     }
 
-    private analyzeProbabilityEngine(cp: number, data: AnalysisDetails, vwap: boolean, m: MatrixResult): TradeRecommendation {
+    private static analyzeProbabilityEngine(cp: number, data: AnalysisDetails, vwap: boolean, m: MatrixResult): TradeRecommendation {
         let score = 0;
         score += vwap ? 25 : -25;
         score += (m.percentage - 50) * 0.8;
-        if (data.rsi < 35) score += 15; else if (data.rsi > 65) score -= 15;
+        if (data.rsi < 35) score += 15;
+        else if (data.rsi > 65) score -= 15;
+
         const winRate = Math.min(50 + (Math.abs(score) * 0.6), 96);
         const type = score >= 0 ? 'LONG' : 'SHORT';
         const slDistance = data.atr * 2.5;
+
         return {
             status: `${type === 'LONG' ? '🟢 احتمالية صعود' : '🔴 احتمالية هبوط'} (${winRate.toFixed(1)}%)`,
-            type, entry: cp, tp: type === 'LONG' ? Math.max(data.levels.ma7, cp + data.atr * 2) : Math.min(data.levels.ma7, cp - data.atr * 2), sl: type === 'LONG' ? cp - slDistance : cp + slDistance,
-            timeEstimate: data.timeframe.includes('m') ? 20 : 90, winRate, reverseProb: 100 - winRate, confidenceScore: score
+            type, entry: cp,
+            tp: type === 'LONG' ? Math.max(data.levels.ma7, cp + data.atr * 2) : Math.min(data.levels.ma7, cp - data.atr * 2),
+            sl: type === 'LONG' ? cp - slDistance : cp + slDistance,
+            timeEstimate: data.timeframe.includes('m') ? 20 : 90,
+            winRate, reverseProb: 100 - winRate,
+            confidenceScore: score
         };
     }
+}
 
-    private detectMarketStructure(ohlcv: any[]): string {
-        const candles = ohlcv.slice(-30);
-        const highs = candles.map(c => c.high), lows = candles.map(c => c.low);
-        const lastH = highs[highs.length - 1], prevH = Math.max(...highs.slice(-10, -1));
-        const lastL = lows[lows.length - 1], prevL = Math.min(...lows.slice(-10, -1));
-        if (lastH > prevH && lastL > prevL) return "صاعد (HH/HL) 📈";
-        if (lastH < prevH && lastL < prevL) return "هابط (LH/LL) 📉";
-        if (lastH > prevH && lastL < prevL) return "كسر هيكل (BOS) ⚡";
-        return "عرضي ↔️";
-    }
+// --- Report Formatter ---
 
-    private calculateVWAP(ohlcv: any[]): number {
-        const input = { high: ohlcv.map(c => c.high), low: ohlcv.map(c => c.low), close: ohlcv.map(c => c.close), volume: ohlcv.map(c => c.volume) };
-        const vwapValues = VWAP.calculate(input);
-        return vwapValues[vwapValues.length - 1];
-    }
-
-    private calculateMatrix(allTimeframes: Record<string, AnalysisDetails>): MatrixResult {
-        const tfs = ['1m', '5m', '15m', '30m', '1h', '4h', '1d'];
-        const weights: Record<string, number> = { '1m': 1, '5m': 3, '15m': 4, '30m': 5, '1h': 8, '4h': 12, '1d': 15 };
-        let totalScore = 0;
-        let maxPossibleScore = 0;
-        let details = "| ";
-
-        tfs.forEach(tf => {
-            const data = allTimeframes[tf];
-            if (data) {
-                const weight = weights[tf] || 1;
-                totalScore += (data.isBullishTrend ? 1 : -1) * weight;
-                maxPossibleScore += weight;
-                details += `${tf}:${data.isBullishTrend ? '🟢' : '🔴'} | `;
-            }
-        });
-
-        const percentage = ((totalScore + maxPossibleScore) / (2 * maxPossibleScore)) * 100;
-        return {
-            score: totalScore,
-            percentage,
-            decision: percentage >= 75 ? "شراء قوي 🟢" : percentage >= 55 ? "شراء 🟢" : percentage <= 25 ? "بيع قوي 🔴" : percentage <= 45 ? "بيع 🔴" : "محايد ⚪",
-            details
-        };
-    }
-
-    private predictNextPriceLinear(pastCandles: any[], period: number = 20): PredictionResult {
-        let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
-        const n = Math.min(period, pastCandles.length);
-        const recent = pastCandles.slice(-n);
-        for (let i = 0; i < n; i++) {
-            const x = i + 1, y = recent[i].close;
-            sumX += x; sumY += y; sumXY += (x * y); sumXX += (x * x);
-        }
-        const m = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
-        const b = (sumY - m * sumX) / n;
-        return { predictedPrice: (m * (n + 1)) + b, trendDirection: m > 0 ? 'UP' : 'DOWN', slope: m, confidence: Math.abs(m) * 1000 };
-    }
-
-    formatReport(res: any, v: string): string {
+export class AnalysisFormatter {
+    static formatReport(res: AnalysisResult, v: string): string {
         const { scalp, swing, matrix, options, prediction, sniper } = res;
 
         let r = `💎 **المحلل الاحتمالي V7 SNIPER | ${res.symbol}** 💎\n` +
@@ -363,7 +465,6 @@ export class AnalysisService {
             `• المستويات: R1:${swing.levels.r1.toFixed(3)} | S1:${swing.levels.s1.toFixed(3)}\n\n`;
 
         if (matrix) r += `📈 **المصفوفة (MTF):** **${matrix.percentage.toFixed(0)}%** | ${matrix.decision}\n${matrix.details}\n\n`;
-
         if (prediction) r += `🔮 **التوقع الإحصائي:** **$${prediction.predictedPrice.toFixed(2)}** (${prediction.trendDirection})\n`;
 
         r += `━━━━━━━━━━━━━━\n`;
@@ -372,7 +473,7 @@ export class AnalysisService {
         return r;
     }
 
-    formatSignalText(symbol: string, type: 'LONG' | 'SHORT', entry: number, targets: number[], sl: number, leverage: number = 25): string {
+    static formatSignalText(symbol: string, type: 'LONG' | 'SHORT', entry: number, targets: number[], sl: number, leverage: number = 25): string {
         return `\`${symbol}\`\n\n` +
             `${type === 'LONG' ? '🔼LONG' : '🔽SHORT'}  X${leverage}  \n\n` +
             `▶️ENTER PRICE(سعر الدخول):\n${entry.toFixed(6)}\n\n` +
@@ -380,88 +481,10 @@ export class AnalysisService {
             `▶️STOP LOSE(الاستوب)\n${sl.toFixed(6)}`;
     }
 
-    getAlgorithmExplanation(v: string): string {
-        return "📘 **نظام التداول المتعدد الاستراتيجيات:** يضم 5 محركات تحليل مختلفة (كمي، مصفوفي، مضاربي، وتنبؤي) لتغطية كافة ظروف السوق.";
-    }
-
-    private calculateSentiments(cp: number, ind: IndicatorData, l: TechnicalLevels, m: MatrixResult, struct: string, vwap: number, qTF: string, lTF: string, rsi: number): IndicatorSentiment[] {
-        const s: IndicatorSentiment[] = [];
-
-        // RSI
-        s.push({
-            name: 'RSI', value: rsi.toFixed(1),
-            status: rsi < 35 ? 'BULLISH' : rsi > 65 ? 'BEARISH' : 'NEUTRAL',
-            description: rsi < 35 ? 'تشبع بيعي - ارتداد صاعد محتمل' : rsi > 65 ? 'تشبع شرائي - جني أرباح محتمل' : 'زخم محايد',
-            timeframe: qTF
-        });
-
-        // MACD
-        const macdStatus = ind.macd.histogram > 0 ? 'BULLISH' : 'BEARISH';
-        s.push({
-            name: 'MACD', value: ind.macd.histogram.toFixed(4),
-            status: macdStatus,
-            description: macdStatus === 'BULLISH' ? 'زخم صاعد متزايد' : 'ضغط بيعي مستمر',
-            timeframe: qTF
-        });
-
-        // VWAP
-        s.push({
-            name: 'VWAP', value: vwap.toFixed(2),
-            status: cp > vwap ? 'BULLISH' : 'BEARISH',
-            description: cp > vwap ? 'السعر فوق المتوسط المؤسساتي' : 'السعر تحت المتوسط المؤسساتي',
-            timeframe: '1d'
-        });
-
-        // Matrix
-        s.push({
-            name: 'Matrix', value: `${m.percentage.toFixed(0)}%`,
-            status: m.percentage >= 55 ? 'BULLISH' : m.percentage <= 45 ? 'BEARISH' : 'NEUTRAL',
-            description: m.decision,
-            timeframe: 'MTF'
-        });
-
-        // Structure
-        s.push({
-            name: 'Structure', value: struct,
-            status: struct.includes('صاعد') ? 'BULLISH' : struct.includes('هابط') ? 'BEARISH' : 'NEUTRAL',
-            description: 'هيكل السوق العام',
-            timeframe: '1h'
-        });
-
-        // MFI
-        if (ind.mfi !== undefined) {
-            s.push({
-                name: 'MFI', value: ind.mfi.toFixed(1),
-                status: ind.mfi < 25 ? 'BULLISH' : ind.mfi > 75 ? 'BEARISH' : 'NEUTRAL',
-                description: ind.mfi < 25 ? 'تدفق سيولة شرائية' : ind.mfi > 75 ? 'خروج سيولة' : 'تدفق مستقر',
-                timeframe: qTF
-            });
-        }
-
-        // Stoch RSI
-        s.push({
-            name: 'Stoch RSI', value: ind.stochRsi.toFixed(1),
-            status: ind.stochRsi < 20 ? 'BULLISH' : ind.stochRsi > 80 ? 'BEARISH' : 'NEUTRAL',
-            description: ind.stochRsi < 20 ? 'قاع لحظي - شراء' : ind.stochRsi > 80 ? 'قمة لحظية - بيع' : 'تذبذب عادي',
-            timeframe: qTF
-        });
-
-        // CCI
-        s.push({
-            name: 'CCI', value: ind.cci.toFixed(0),
-            status: ind.cci > 100 ? 'BULLISH' : ind.cci < -100 ? 'BEARISH' : 'NEUTRAL',
-            description: ind.cci > 100 ? 'بداية ترند صاعد' : ind.cci < -100 ? 'بداية ترند هابط' : 'نطاق عرضي',
-            timeframe: qTF
-        });
-
-        return s;
-    }
-
-    generateDetailedReport(res: AnalysisResult, type: 'scalp' | 'swing'): string {
+    static generateDetailedReport(res: AnalysisResult, type: 'scalp' | 'swing'): string {
         const data = type === 'scalp' ? res.scalp : res.swing;
         const tf = type === 'scalp' ? res.options.quickTF : res.options.longTF;
-        
-        const sentiments = this.calculateSentiments(res.currentPrice, data.indicators, data.levels, res.matrix!, data.structure, res.isAboveVWAP ? res.currentPrice : 0, tf, tf, data.rsi);
+        const sentiments = this.calculateSentiments(res.currentPrice, data.indicators, data.levels, res.matrix, data.structure, res.isAboveVWAP, tf, data.rsi);
         
         let report = `🔍 **التقرير التقني لـ ${res.symbol} (${type === 'scalp' ? 'Scalp ⚡' : 'Swing 🌊'})**\n\n`;
         report += `💵 السعر الحالي: \`$${res.currentPrice.toFixed(4)}\`\n`;
@@ -492,11 +515,10 @@ export class AnalysisService {
         return report;
     }
 
-    generateEducationalGuide(res: AnalysisResult, type: 'scalp' | 'swing'): string {
+    static generateEducationalGuide(res: AnalysisResult, type: 'scalp' | 'swing'): string {
         const data = type === 'scalp' ? res.scalp : res.swing;
         const tf = type === 'scalp' ? res.options.quickTF : res.options.longTF;
-
-        const sentiments = this.calculateSentiments(res.currentPrice, data.indicators, data.levels, res.matrix!, data.structure, res.isAboveVWAP ? res.currentPrice : 0, tf, tf, data.rsi);
+        const sentiments = this.calculateSentiments(res.currentPrice, data.indicators, data.levels, res.matrix, data.structure, res.isAboveVWAP, tf, data.rsi);
 
         const getIndicatorStatus = (name: string) => {
             const s = sentiments.find(item => item.name === name);
@@ -520,7 +542,7 @@ export class AnalysisService {
         r += `• 🔴 دخول SHORT: تقاطع للأسفل وقيمة سالبة \`< 0\`\n\n`;
 
         r += `🔹 **Matrix (توافق السوق)**\n`;
-        r += `• القيمة: \`${res.matrix ? res.matrix.percentage.toFixed(0) : '0'}%\` | **${res.matrix?.decision || 'محايد'}**\n`;
+        r += `• القيمة: \`${res.matrix.percentage.toFixed(0)}%\` | **${res.matrix.decision}**\n`;
         r += `• 🟢 دخول LONG: توافق الفريمات بنسبة \`> 55%\`\n`;
         r += `• 🔴 دخول SHORT: توافق الفريمات بنسبة \`< 45%\`\n\n`;
 
@@ -541,12 +563,11 @@ export class AnalysisService {
 
         r += `🔹 **VWAP (خط المؤسسات)**\n`;
         r += `• الحالة: **${res.isAboveVWAP ? '🟢 السعر فوق المتوسط المؤسساتي' : '🔴 السعر تحت المتوسط المؤسساتي'}**\n`;
-        r += `• 🟢 دخول LONG: عندما يكون السعر فوق الـ VWAP (تداول مع السيولة).\n`;
-        r += `• 🔴 دخول SHORT: عندما يكون السعر تحت الـ VWAP (سيطرة البائعين).\n\n`;
+        r += `• 🟢 دخول LONG: عندما يكون السعر فوق الـ VWAP.\n`;
+        r += `• 🔴 دخول SHORT: عندما يكون السعر تحت الـ VWAP.\n\n`;
 
         r += `🔹 **ATR (المخاطرة)**\n`;
         r += `• الوضع: **${data.atr > (res.currentPrice * 0.015) ? 'تذبذب عالي (خطير) ⚠️' : 'تذبذب مستقر (آمن) ✅'}**\n`;
-        r += `• ⚪ توقف: إذا كان التذبذب "مجنوناً" (ATR مرتفع جداً) لتجنب ضرب الستوب لوز.\n\n`;
 
         r += `━━━━━━━━━━━━━━\n`;
         r += `🏛 **هيكل السوق:** ${data.structure || 'عرضي ↔️'}\n`;
@@ -555,7 +576,7 @@ export class AnalysisService {
         return r;
     }
 
-    generateComprehensiveReport(res: AnalysisResult): string {
+    static generateComprehensiveReport(res: AnalysisResult): string {
         let r = `🌐 **التقرير الفني الشامل (Multi-Timeframe Analysis)** 🌐\n`;
         r += `━━━━━━━━━━━━━━\n`;
         r += `💵 السعر: **$${res.currentPrice.toFixed(4)}** | العملة: **${res.symbol}**\n\n`;
@@ -567,7 +588,6 @@ export class AnalysisService {
             const data = res.allTimeframes[tf];
             if (!data) return;
 
-            // Trend Check (Consistent with Matrix SMA 20 logic)
             const isBullish = res.currentPrice > data.levels.ma20;
             if (isBullish) bullishCount++;
 
@@ -593,64 +613,153 @@ export class AnalysisService {
         return r;
     }
 
-    detectBearishDivergence(ohlcv: any[]): { detected: boolean, description: string } {
-        const closes = ohlcv.map(c => c.close);
-        const rsiValues = RSI.calculate({ period: 14, values: closes });
-        
-        if (closes.length < 20 || rsiValues.length < 20) return { detected: false, description: "بيانات غير كافية" };
+    private static calculateSentiments(cp: number, ind: IndicatorData, l: TechnicalLevels, m: MatrixResult, struct: string, isAboveVWAP: boolean, qTF: string, rsi: number): IndicatorSentiment[] {
+        const s: IndicatorSentiment[] = [];
 
-        // Simple Peak detection logic (last 2 swing highs)
-        // This is a simplified version for the detector
-        const p2 = closes[closes.length - 1];
-        const p1 = closes[closes.length - 10] || closes[0];
-        const r2 = rsiValues[rsiValues.length - 1];
-        const r1 = rsiValues[rsiValues.length - 10] || rsiValues[0];
+        s.push({
+            name: 'RSI', value: rsi.toFixed(1),
+            status: rsi < 35 ? 'BULLISH' : rsi > 65 ? 'BEARISH' : 'NEUTRAL',
+            description: rsi < 35 ? 'تشبع بيعي - ارتداد صاعد محتمل' : rsi > 65 ? 'تشبع شرائي - جني أرباح محتمل' : 'زخم محايد',
+            timeframe: qTF
+        });
 
-        const isDivergent = p2 > p1 && r2 < r1;
-        return { 
-            detected: isDivergent, 
-            description: isDivergent ? "⚠️ انحراف سلبي رصد: السعر يصعد والزخم يضعف" : "✅ لا يوجد انحراف سلبي حالياً" 
-        };
-    }
+        const macdStatus = ind.macd.histogram > 0 ? 'BULLISH' : 'BEARISH';
+        s.push({
+            name: 'MACD', value: ind.macd.histogram.toFixed(4),
+            status: macdStatus,
+            description: macdStatus === 'BULLISH' ? 'زخم صاعد متزايد' : 'ضغط بيعي مستمر',
+            timeframe: qTF
+        });
 
-    calculateCorrectionFibLevels(ohlcv: any[], direction: 'LONG' | 'SHORT' = 'LONG') {
-        const highs = ohlcv.map(c => c.high);
-        const lows = ohlcv.map(c => c.low);
-        const maxHigh = Math.max(...highs.slice(-40));
-        const minLow = Math.min(...lows.slice(-40));
-        const diff = maxHigh - minLow;
+        s.push({
+            name: 'VWAP', value: isAboveVWAP ? 'Above' : 'Below',
+            status: isAboveVWAP ? 'BULLISH' : 'BEARISH',
+            description: isAboveVWAP ? 'السعر فوق المتوسط المؤسساتي' : 'السعر تحت المتوسط المؤسساتي',
+            timeframe: '1d'
+        });
 
-        if (direction === 'LONG') {
-            // Target is a drop to support
-            return {
-                fib382: maxHigh - (diff * 0.382),
-                fib500: maxHigh - (diff * 0.500),
-                fib618: maxHigh - (diff * 0.618),
-                type: 'SUPPORT'
-            };
-        } else {
-            // Target is a bounce to resistance
-            return {
-                fib382: minLow + (diff * 0.382),
-                fib500: minLow + (diff * 0.500),
-                fib618: minLow + (diff * 0.618),
-                type: 'RESISTANCE'
-            };
+        s.push({
+            name: 'Matrix', value: `${m.percentage.toFixed(0)}%`,
+            status: m.percentage >= 55 ? 'BULLISH' : m.percentage <= 45 ? 'BEARISH' : 'NEUTRAL',
+            description: m.decision,
+            timeframe: 'MTF'
+        });
+
+        s.push({
+            name: 'Structure', value: struct,
+            status: struct.includes('صاعد') ? 'BULLISH' : struct.includes('هابط') ? 'BEARISH' : 'NEUTRAL',
+            description: 'هيكل السوق العام',
+            timeframe: '1h'
+        });
+
+        if (ind.mfi !== undefined) {
+            s.push({
+                name: 'MFI', value: ind.mfi.toFixed(1),
+                status: ind.mfi < 25 ? 'BULLISH' : ind.mfi > 75 ? 'BEARISH' : 'NEUTRAL',
+                description: ind.mfi < 25 ? 'تدفق سيولة شرائية' : ind.mfi > 75 ? 'خروج سيولة' : 'تدفق مستقر',
+                timeframe: qTF
+            });
         }
+
+        s.push({
+            name: 'Stoch RSI', value: ind.stochRsi.toFixed(1),
+            status: ind.stochRsi < 20 ? 'BULLISH' : ind.stochRsi > 80 ? 'BEARISH' : 'NEUTRAL',
+            description: ind.stochRsi < 20 ? 'قاع لحظي - شراء' : ind.stochRsi > 80 ? 'قمة لحظية - بيع' : 'تذبذب عادي',
+            timeframe: qTF
+        });
+
+        s.push({
+            name: 'CCI', value: ind.cci.toFixed(0),
+            status: ind.cci > 100 ? 'BULLISH' : ind.cci < -100 ? 'BEARISH' : 'NEUTRAL',
+            description: ind.cci > 100 ? 'بداية ترند صاعد' : ind.cci < -100 ? 'بداية ترند هابط' : 'نطاق عرضي',
+            timeframe: qTF
+        });
+
+        return s;
+    }
+}
+
+// --- Main Service ---
+
+export class AnalysisService {
+    constructor(private bingxService: BingXService) { }
+
+    async analyze(
+        symbolInput: string,
+        version: 'V1' | 'V2' | 'V3' | 'V4' | 'V5' = 'V1',
+        options: { quickTF?: string, longTF?: string, limit?: number, rsiThreshold?: number } = {}
+    ): Promise<AnalysisResult> {
+        let symbol = symbolInput.toUpperCase();
+        if (!symbol.includes('/')) symbol = `${symbol}/USDT:USDT`;
+
+        const quickTF = options.quickTF || '5m';
+        const longTF = options.longTF || '1h';
+        const limit = options.limit || 200;
+
+        // Parallel Data Fetching
+        const fetchPromises = MATRIX_TFS.map(async tf => {
+            const fetchLimit = (tf === quickTF || tf === longTF) ? Math.max(limit, 200) : 200;
+            const ohlcv = await this.bingxService.fetchOHLCV(symbol, tf, fetchLimit);
+            return { tf, ohlcv };
+        });
+
+        const fetchResults = await Promise.all(fetchPromises);
+        const mtfOHLCV: Record<string, OHLCV[]> = {};
+        fetchResults.forEach(res => mtfOHLCV[res.tf] = res.ohlcv);
+
+        const quickOHLCV = mtfOHLCV[quickTF] || mtfOHLCV['5m'];
+        const dailyOHLCV = mtfOHLCV['1d'];
+        const currentPrice = quickOHLCV[quickOHLCV.length - 1].close;
+
+        const vwap = TechnicalAnalyzer.calculateVWAP(dailyOHLCV);
+
+        // Technical Data Calculation
+        const allTimeframes: Record<string, AnalysisDetails> = {};
+        MATRIX_TFS.forEach(tf => {
+            if (mtfOHLCV[tf]) {
+                allTimeframes[tf] = TechnicalAnalyzer.calculateTechnicalData(mtfOHLCV[tf], tf, vwap);
+            }
+        });
+
+        const matrix = TechnicalAnalyzer.calculateMatrix(allTimeframes);
+        const scalpData = allTimeframes[quickTF] || allTimeframes['5m'];
+        const swingData = allTimeframes[longTF] || allTimeframes['1h'];
+
+        // Engine Execution
+        const scalpRec = TradingEngines.run(version, currentPrice, scalpData, matrix, vwap, quickOHLCV);
+        const swingRec = TradingEngines.run(version, currentPrice, swingData, matrix, vwap, mtfOHLCV[longTF]);
+
+        // Sniper Logic (V7)
+        const isStochSynced = scalpData.indicators.stochRsi < 25 && swingData.indicators.stochRsi < 25;
+        const isFullBreakout = matrix.percentage >= 95;
+        const isAboveGolden = currentPrice > scalpData.levels.fib618;
+
+        return {
+            symbol,
+            currentPrice,
+            isUptrend: scalpData.rsi < 50,
+            matrix,
+            isAboveVWAP: currentPrice > vwap,
+            scalp: { ...scalpRec, ...scalpData },
+            swing: { ...swingRec, ...swingData },
+            allTimeframes,
+            options: { quickTF, longTF, limit },
+            sniper: { isStochSynced, isFullBreakout, isAboveGolden }
+        };
     }
 
     async generateCorrectionReport(res: AnalysisResult): Promise<string> {
         const symbol = res.symbol;
         const tfs = ['5m', '15m', '1h'];
-        const results: any[] = [];
-
-        for (const tf of tfs) {
+        
+        // Parallel fetching for correction report
+        const results = await Promise.all(tfs.map(async tf => {
             const ohlcv = await this.bingxService.fetchOHLCV(symbol, tf, 50);
-            const div = this.detectBearishDivergence(ohlcv);
+            const div = TechnicalAnalyzer.detectBearishDivergence(ohlcv);
             const direction = res.scalp.type === 'NONE' ? 'LONG' : res.scalp.type;
-            const fib = this.calculateCorrectionFibLevels(ohlcv, direction);
-            results.push({ tf, div, fib, price: ohlcv[ohlcv.length - 1].close });
-        }
+            const fib = TechnicalAnalyzer.calculateCorrectionFibLevels(ohlcv, direction);
+            return { tf, div, fib, price: ohlcv[ohlcv.length - 1].close };
+        }));
 
         let r = `🔍 **رادار التصحيح المتعدد (MTF Correction) - ${symbol}** 🔍\n`;
         r += `━━━━━━━━━━━━━━\n`;
@@ -676,7 +785,6 @@ export class AnalysisService {
         } else if (detectedCount === 1) {
             warning = `🟠 **تحذير: بداية ضعف:** هناك بوادر تصحيح على فريم واحد. ارفع الستوب لوز فوراً.`;
         } else {
-            // Level based check on smallest timeframe
             const f5 = results[0].fib;
             if (isLong && res.currentPrice < f5.fib500) {
                 warning = `🟠 **تصحيح عميق (5m):** السعر كسر مستوى 0.500. راقب الهدف $${f5.fib618.toFixed(4)}.`;
@@ -685,16 +793,43 @@ export class AnalysisService {
             }
         }
 
-        r += `${warning}\n`;
-        r += `━━━━━━━━━━━━━━\n`;
-        r += `💡 *هذا التقرير يجمع بين التحليل التكتيكي والاستراتيجي.*`;
-
-        return r;
+        return r + `${warning}\n━━━━━━━━━━━━━━\n💡 *هذا التقرير يجمع بين التحليل التكتيكي والاستراتيجي.*`;
     }
 
     isPivotBroken(cp: number, pivot: number, direction: 'LONG' | 'SHORT'): boolean {
-        // If LONG, price breaking BELOW pivot is a structural break
-        // If SHORT, price breaking ABOVE pivot is a structural break
         return direction === 'LONG' ? cp < pivot : cp > pivot;
+    }
+
+    // Proxy methods for backward compatibility
+    formatReport(res: AnalysisResult, v: string): string {
+        return AnalysisFormatter.formatReport(res, v);
+    }
+
+    formatSignalText(symbol: string, type: 'LONG' | 'SHORT', entry: number, targets: number[], sl: number, leverage: number = 25): string {
+        return AnalysisFormatter.formatSignalText(symbol, type, entry, targets, sl, leverage);
+    }
+
+    detectBearishDivergence(ohlcv: OHLCV[]): { detected: boolean, description: string } {
+        return TechnicalAnalyzer.detectBearishDivergence(ohlcv);
+    }
+
+    calculateCorrectionFibLevels(ohlcv: OHLCV[], direction: 'LONG' | 'SHORT' = 'LONG') {
+        return TechnicalAnalyzer.calculateCorrectionFibLevels(ohlcv, direction);
+    }
+
+    generateDetailedReport(res: AnalysisResult, type: 'scalp' | 'swing'): string {
+        return AnalysisFormatter.generateDetailedReport(res, type);
+    }
+
+    generateEducationalGuide(res: AnalysisResult, type: 'scalp' | 'swing'): string {
+        return AnalysisFormatter.generateEducationalGuide(res, type);
+    }
+
+    generateComprehensiveReport(res: AnalysisResult): string {
+        return AnalysisFormatter.generateComprehensiveReport(res);
+    }
+
+    getAlgorithmExplanation(v: string): string {
+        return "📘 **نظام التداول المتعدد الاستراتيجيات:** يضم 5 محركات تحليل مختلفة (كمي، مصفوفي، مضاربي، وتنبؤي) لتغطية كافة ظروف السوق.";
     }
 }
