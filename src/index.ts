@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import connectDB from './config/db';
 import logger from './utils/logger';
 import { BingXService } from './services/BingXService';
+import { AnalysisService } from './services/AnalysisService';
 import { TradeManager } from './services/TradeManager';
 import { SignalParser } from './services/SignalParser';
 import { ReportingService } from './services/ReportingService';
@@ -22,11 +23,12 @@ dotenv.config();
 
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN || '');
 const bingXService = new BingXService(process.env.BINGX_API_KEY, process.env.BINGX_SECRET_KEY);
+const analysisService = new AnalysisService(bingXService);
 const tradeManager = new TradeManager(bingXService);
 const reportingService = new ReportingService(bot);
 
 // Initialize Monitor
-const positionMonitor = new PositionMonitor(bingXService, async (telegramId, msg) => {
+const positionMonitor = new PositionMonitor(bingXService, analysisService, async (telegramId, msg) => {
     try {
         await sendTelegramMessage(bot, telegramId, msg);
     } catch (error) {

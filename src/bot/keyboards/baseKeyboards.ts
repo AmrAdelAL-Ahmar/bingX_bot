@@ -397,6 +397,8 @@ export const getAnalysisActionKeyboard = (symbol: string, type: 'scalp' | 'swing
     const btData = `bt_${type === 'scalp' ? 'sc' : 'sw'}_${s}`; 
     const dtData = `dt_${type === 'scalp' ? 'sc' : 'sw'}_${s}`; // Details
     const eduData = `ed_${type === 'scalp' ? 'sc' : 'sw'}_${s}`; // Educational Guide
+    const corData = `cor_ck_${s}`; // Correction Check
+    const alertData = `cor_al_${s}`; // Correction Alert Toggle
 
     return {
         inline_keyboard: [
@@ -405,6 +407,11 @@ export const getAnalysisActionKeyboard = (symbol: string, type: 'scalp' | 'swing
             [
                 { text: '🔍 التقرير التفصيلي', callback_data: dtData },
                 { text: '🎓 دليل المؤشرات', callback_data: eduData }
+            ],
+            [{ text: '📊 التحليل الشامل (MTF)', callback_data: `all_tf_${s}` }],
+            [
+                { text: '🎯 معرفة التصحيح', callback_data: corData },
+                { text: '🔔 تنبيه التصحيح', callback_data: alertData }
             ],
             [{ text: 'اختبار الاستراتيجية ⏱️', callback_data: btData }]
         ]

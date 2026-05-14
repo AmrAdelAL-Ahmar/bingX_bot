@@ -691,4 +691,64 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
             await ctx.reply('❌ فشل توليد التحليل الشامل.');
         }
     });
+
+    // Handle Correction Check
+    bot.action(/^cor_ck_(.+)$/, async (ctx) => {
+        try {
+            const symbol = ctx.match[1].includes('/') ? ctx.match[1] : `${ctx.match[1]}/USDT:USDT`;
+            await ctx.answerCbQuery('🔍 جاري فحص رادار التصحيح...');
+
+            const user = await User.findOne({ telegramId: ctx.from!.id.toString() });
+            const res = await analysisService.analyze(symbol, 'V5', {
+                quickTF: user?.analysisSettings?.scalpTF,
+                longTF: user?.analysisSettings?.swingTF
+            });
+
+            // For correction, we use the quick timeframe (scalp) OHLCV as the base
+            const ohlcv = await bingxService.fetchOHLCV(symbol, user?.analysisSettings?.scalpTF || '15m', 100);
+            const correctionReport = analysisService.generateCorrectionReport(res, ohlcv);
+
+            await ctx.reply(correctionReport, { parse_mode: 'Markdown' });
+
+        } catch (error) {
+            logger.error('Error in correction check action:', error);
+            await ctx.reply('❌ فشل فحص رادار التصحيح.');
+        }
+    });
+
+    // Handle Correction Alert Toggle
+    bot.action(/^cor_al_(.+)$/, async (ctx) => {
+        try {
+            const symbol = ctx.match[1].includes('/') ? ctx.match[1] : `${ctx.match[1]}/USDT:USDT`;
+            const user = await User.findOne({ telegramId: ctx.from!.id.toString() });
+            
+            if (!user) {
+                return await ctx.reply('❌ مستخدم غير مسجل.');
+            }
+
+            const userId = user._id;
+
+            // Find the most recent active trade for this symbol
+            const activeTrade = await Trade.findOne({
+                userId,
+                symbol,
+                currentStatus: { $in: ['OPEN', 'TP1_HIT', 'TP2_HIT', 'TP3_HIT'] }
+            }).sort({ entryTime: -1 });
+
+            if (!activeTrade) {
+                return await ctx.reply('❌ لم يتم العثور على صفقة مفتوحة نشطة لهذه العملة لتفعيل التنبيه لها.');
+            }
+
+            activeTrade.correctionAlertEnabled = true;
+            activeTrade.correctionWarningSent = false; // Reset warning if reactivating
+            await activeTrade.save();
+
+            await ctx.answerCbQuery('🔔 تم تفعيل تنبيه التصحيح');
+            await ctx.reply(`✅ **تم تفعيل مراقبة التصحيح لعملة ${activeTrade.symbol}**\n\nسأقوم بتنبيهك فوراً في حال كسر الـ Pivot أو ظهور انحراف سلبي حاد على الفريمات الصغيرة لحماية أرباحك.`, { parse_mode: 'Markdown' });
+            
+        } catch (error) {
+            logger.error('Error in correction alert action:', error);
+            await ctx.reply('❌ فشل تفعيل تنبيه التصحيح.');
+        }
+    });
 };

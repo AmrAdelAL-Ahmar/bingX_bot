@@ -24,6 +24,8 @@ export interface ITrade extends Document {
     // Warning tracking
     slWarningSent?: boolean;
     triggeredTpWarnings?: number[]; // e.g. [70, 90] means those thresholds were already notified
+    correctionAlertEnabled?: boolean;
+    correctionWarningSent?: boolean;
 }
 
 const TradeSchema: Schema = new Schema({
@@ -54,6 +56,8 @@ const TradeSchema: Schema = new Schema({
     // Warning tracking
     slWarningSent: { type: Boolean, default: false },
     triggeredTpWarnings: { type: [Number], default: [] },
+    correctionAlertEnabled: { type: Boolean, default: false },
+    correctionWarningSent: { type: Boolean, default: false },
 });
 
 export default mongoose.model<ITrade>('Trade', TradeSchema);

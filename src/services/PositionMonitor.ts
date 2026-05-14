@@ -1,16 +1,19 @@
 import { BingXService } from './BingXService';
+import { AnalysisService } from './AnalysisService';
 import Trade from '../models/Trade';
 import User from '../models/User';
 import logger from '../utils/logger';
 
 export class PositionMonitor {
     private bingx: BingXService;
+    private analysis: AnalysisService;
     private notifier: (telegramId: string, msg: string) => Promise<void>;
     private isRunning: boolean = false;
     private intervalId?: NodeJS.Timeout;
 
-    constructor(bingx: BingXService, notifier: (telegramId: string, msg: string) => Promise<void>) {
+    constructor(bingx: BingXService, analysis: AnalysisService, notifier: (telegramId: string, msg: string) => Promise<void>) {
         this.bingx = bingx;
+        this.analysis = analysis;
         this.notifier = notifier;
     }
 
@@ -167,7 +170,6 @@ export class PositionMonitor {
                                 }
                             }
                         }
-
                         // --- TP WARNINGS (user-defined thresholds) ---
                         if (telegramId && user?.tpWarningEnabled && trade.targets && trade.targets.length > 0) {
                             const tp1 = trade.targets[0].price;
@@ -204,6 +206,49 @@ export class PositionMonitor {
                                     trade.triggeredTpWarnings = triggered;
                                     await trade.save();
                                 }
+                            }
+                        }
+
+                        // --- CORRECTION GUARD (V7 Sniper Logic) ---
+                        if (telegramId && trade.correctionAlertEnabled && !trade.correctionWarningSent) {
+                            try {
+                                const ohlcv5m = await this.bingx.fetchOHLCV(symbol, '5m', 50);
+                                if (ohlcv5m.length >= 20) {
+                                    const divergence = this.analysis.detectBearishDivergence(ohlcv5m);
+                                    const fib = this.analysis.calculateCorrectionFibLevels(ohlcv5m, trade.direction);
+                                    
+                                    if (divergence.detected) {
+                                        logger.info(`Correction Warning (Divergence) for ${trade.symbol}`);
+                                        const warningMsg = `⚠️ <b>تحذير استراتيجي: ضعف في الزخم!</b>\n\n` +
+                                            `📉 الرمز: <b>${trade.symbol}</b>\n` +
+                                            `🔍 الإشارة: <b>انحراف سلبي (Bearish Divergence)</b>\n` +
+                                            `🛡️ منطقة الارتداد المتوقعة (Zone):\n` +
+                                            `🔖 من: <b>$${fib.fib500.toFixed(4)}</b>\n` +
+                                            `🔖 إلى: <b>$${fib.fib618.toFixed(4)}</b> (المستوى الذهبي)\n\n` +
+                                            `💡 يمثل هذا النطاق أقوى منطقة دعم يتوقع أن يرتد منها السعر لإكمال الاتجاه.`;
+                                        await this.notifier(telegramId, warningMsg);
+                                        trade.correctionWarningSent = true;
+                                        await trade.save();
+                                    }
+
+                                    const ohlcv1h = await this.bingx.fetchOHLCV(symbol, '1h', 2);
+                                    const prev1h = ohlcv1h[ohlcv1h.length - 2];
+                                    const pivot = (prev1h.high + prev1h.low + prev1h.close) / 3;
+                                    
+                                    if (this.analysis.isPivotBroken(currentPrice, pivot, trade.direction)) {
+                                        logger.info(`CRITICAL: Pivot broken for ${trade.symbol}`);
+                                        const criticalMsg = `🚨 <b>تنبيه حرج: كسر هيكل السوق!</b>\n\n` +
+                                            `📉 الرمز: <b>${trade.symbol}</b>\n` +
+                                            `⛔ الحالة: <b>السعر كسر مستوى الـ Pivot</b> (${pivot.toFixed(4)})\n` +
+                                            `🎯 الهدف القادم (نهاية التصحيح): <b>$${fib.fib618.toFixed(4)}</b>\n\n` +
+                                            `التصحيح بدأ رسمياً وفقد السعر الدعم المؤسساتي. ينصح بالخروج الآن أو تأمين الصفقة فوراً!`;
+                                        await this.notifier(telegramId, criticalMsg);
+                                        trade.correctionAlertEnabled = false;
+                                        await trade.save();
+                                    }
+                                }
+                            } catch (error) {
+                                logger.error(`Error in Correction Guard for ${trade.symbol}:`, error);
                             }
                         }
 
