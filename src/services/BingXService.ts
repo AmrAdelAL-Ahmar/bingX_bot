@@ -74,6 +74,23 @@ export class BingXService {
         return market?.limits?.amount?.min || 0;
     }
 
+    async getPricePrecision(symbol: string): Promise<number> {
+        try {
+            await this.exchange.loadMarkets();
+
+            // Try direct lookup
+            let market = this.exchange.markets[symbol];
+
+
+            const pricePrecision = market?.info?.pricePrecision;
+
+            return pricePrecision;
+        } catch (e) {
+            logger.error(`Error getting precision for ${symbol}:`, e);
+            return 4;
+        }
+    }
+
     async getBalance() {
         try {
             const balance = await this.exchange.fetchBalance({ type: 'swap' });

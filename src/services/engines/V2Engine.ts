@@ -1,17 +1,17 @@
 import { AnalysisDetails, MatrixResult, OHLCV, TradeRecommendation } from '../AnalysisService';
 import { ITradingEngine, EngineResult } from './ITradingEngine';
-import { TechnicalAnalyzer } from '../TechnicalAnalyzer';
+import { TechnicalAnalyzer, TF_WEIGHTS } from '../TechnicalAnalyzer';
 
 export class V2Engine implements ITradingEngine {
     analyze(
-        cp: number, 
-        vwap: number, 
-        allTimeframes: Record<string, AnalysisDetails>, 
+        cp: number,
+        vwap: number,
+        allTimeframes: Record<string, AnalysisDetails>,
         mtfOHLCV: Record<string, OHLCV[]>,
         options: { quickTF: string, longTF: string }
     ): EngineResult {
         const matrix = this.calculateMatrix(allTimeframes);
-        
+
         const scalpData = allTimeframes[options.quickTF] || allTimeframes['5m'];
         const swingData = allTimeframes[options.longTF] || allTimeframes['1h'];
 
@@ -23,7 +23,27 @@ export class V2Engine implements ITradingEngine {
     }
 
     private calculateMatrix(allTimeframes: Record<string, AnalysisDetails>): MatrixResult {
-        return TechnicalAnalyzer.calculateMatrix(allTimeframes);
+        let totalScore = 0;
+        let maxPossibleScore = 0;
+        let details = "";
+
+        // نستخدم البيانات المحسوبة مسبقاً لتوفير الأداء
+        for (const [tf, data] of Object.entries(allTimeframes)) {
+            const weight = TF_WEIGHTS[tf] || 1;
+            const isBullish = data.isBullishTrend; // هذه القيمة هي فعلياً close > SMA20
+
+            totalScore += (isBullish ? 1 : -1) * weight;
+            maxPossibleScore += weight;
+            details += `| ${tf}:${isBullish ? '🟢' : '🔴'} `;
+        }
+        const percentage = ((totalScore + maxPossibleScore) / (2 * maxPossibleScore)) * 100;
+
+        // استخدام المنطق الخاص بك لاتخاذ القرار
+        let decision = percentage >= 75 ? "شراء قوي 🟢" :
+            percentage >= 55 ? "شراء 🟡" :
+                percentage <= 25 ? "بيع قوي 🔴" : "محايد ⚪";
+        return { score: totalScore, percentage, decision, details };
+        // return TechnicalAnalyzer.calculateMatrix(allTimeframes);
     }
 
     private analyzeScalp(cp: number, data: AnalysisDetails, m: MatrixResult): TradeRecommendation {

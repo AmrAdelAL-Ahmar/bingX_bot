@@ -275,7 +275,7 @@ export const buildStrategySettingsKeyboard = (user: any) => {
     const splitMode = user.tpSplitMode === 'manual' ? 'يدوي (مخصص)' : 'تلقائي (متساوي)';
     const beStatus = user.autoBreakEven ? '🟢 مفعل' : '🔴 معطل';
     const errorMitStatus = user.errorMitigationEnabled ? '🟢 مفعل' : '🔴 معطل';
-    
+
     return {
         inline_keyboard: [
             [
@@ -388,14 +388,14 @@ export const getAnalysisActionKeyboard = (symbol: string, type: 'scalp' | 'swing
     // data contains entry, tp, sl, direction, tp2
     const s = symbol.split('/')[0]; // Use short symbol BTC instead of BTC/USDT:USDT
     const d = data.direction === 'LONG' ? 'L' : 'S';
-    const e = data.entry.toFixed(4);
-    const t1 = data.tp.toFixed(4);
-    const sl = data.sl.toFixed(4);
-    const t2 = data.tp2 ? data.tp2.toFixed(4) : '0';
+    const e = data.entry.toFixed(data.pricePrecision || 5);
+    const t1 = data.tp.toFixed(data.pricePrecision || 5);
+    const sl = data.sl.toFixed(data.pricePrecision || 5);
+    const t2 = data.tp2 ? data.tp2.toFixed(data.pricePrecision || 5) : '0';
 
     const callbackData = `ex_${type === 'scalp' ? 'sc' : 'sw'}_${s}_${d}_${e}_${t1}_${sl}_${t2}`;
     const copyData = `cp_${type === 'scalp' ? 'sc' : 'sw'}_${s}_${d}_${e}_${t1}_${sl}_${t2}`;
-    const btData = `bt_${type === 'scalp' ? 'sc' : 'sw'}_${s}`; 
+    const btData = `bt_${type === 'scalp' ? 'sc' : 'sw'}_${s}`;
     const dtData = `dt_${type === 'scalp' ? 'sc' : 'sw'}_${s}`; // Details
     const eduData = `ed_${type === 'scalp' ? 'sc' : 'sw'}_${s}`; // Educational Guide
     const corData = `cor_ck_${s}`; // Correction Check

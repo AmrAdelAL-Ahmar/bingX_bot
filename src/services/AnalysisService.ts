@@ -105,6 +105,7 @@ export interface PredictionResult {
 export interface AnalysisResult {
     symbol: string;
     currentPrice: number;
+    pricePrecision: number;
     isUptrend: boolean;
     matrix: MatrixResult;
     isAboveVWAP: boolean;
@@ -137,8 +138,9 @@ export class AnalysisFormatter {
     static formatReport(res: AnalysisResult, v: string): string {
         const { scalp, swing, matrix, options, prediction, sniper } = res;
 
+        const p = res.pricePrecision;
         let r = `💎 **المحلل الاحتمالي V7 SNIPER | ${res.symbol}** 💎\n` +
-            `💵 السعر الحالي: **$${res.currentPrice.toFixed(4)}** | **${v}**\n` +
+            `💵 السعر الحالي: **$${res.currentPrice.toFixed(p)}** | **${v}**\n` +
             `━━━━━━━━━━━━━━\n`;
 
         if (sniper.isStochSynced) r += `🔥 **[إشارة قنص ذهبية: قاع مزدوج متزامن]** 🔥\n`;
@@ -152,9 +154,9 @@ export class AnalysisFormatter {
             `• النتيجة: ${scalp.status} ${sIcon}\n`;
         if (scalp.rejectionReason) r += `• سبب الرفض: 🛡️ **${scalp.rejectionReason}**\n`;
         r += `• التوصية: **${scalp.type}** | Win: **${scalp.winRate.toFixed(0)}%**\n` +
-            `• الأهداف: 🎯 **${scalp.tp.toFixed(4)}** | 🛑 **${scalp.sl.toFixed(4)}**\n` +
+            `• الأهداف: 🎯 **${scalp.tp.toFixed(p)}** | 🛑 **${scalp.sl.toFixed(p)}**\n` +
             `• المؤشرات: RSI:**${scalp.rsi.toFixed(1)}** | هيكل:**${scalp.structure}**\n` +
-            `• المستويات: R1:${scalp.levels.r1.toFixed(3)} | S1:${scalp.levels.s1.toFixed(3)}\n\n`;
+            `• المستويات: R1:${scalp.levels.r1.toFixed(p)} | S1:${scalp.levels.s1.toFixed(p)}\n\n`;
 
         // SWING SECTION
         const wIcon = swing.winRate >= 80 ? '🔥' : swing.winRate >= 65 ? '✅' : '⚠️';
@@ -162,12 +164,12 @@ export class AnalysisFormatter {
             `• النتيجة: ${swing.status} ${wIcon}\n`;
         if (swing.rejectionReason) r += `• سبب الرفض: 🛡️ **${swing.rejectionReason}**\n`;
         r += `• التوصية: **${swing.type}** | Win: **${swing.winRate.toFixed(0)}%**\n` +
-            `• الأهداف: 🎯 **${swing.tp.toFixed(4)}** | 🛑 **${swing.sl.toFixed(4)}**\n` +
+            `• الأهداف: 🎯 **${swing.tp.toFixed(p)}** | 🛑 **${swing.sl.toFixed(p)}**\n` +
             `• المؤشرات: RSI:**${swing.rsi.toFixed(1)}** | هيكل:**${swing.structure}**\n` +
-            `• المستويات: R1:${swing.levels.r1.toFixed(3)} | S1:${swing.levels.s1.toFixed(3)}\n\n`;
+            `• المستويات: R1:${swing.levels.r1.toFixed(p)} | S1:${swing.levels.s1.toFixed(p)}\n\n`;
 
         if (matrix) r += `📈 **المصفوفة (MTF):** **${matrix.percentage.toFixed(0)}%** | ${matrix.decision}\n${matrix.details}\n\n`;
-        if (prediction) r += `🔮 **التوقع الإحصائي:** **$${prediction.predictedPrice.toFixed(2)}** (${prediction.trendDirection})\n`;
+        if (prediction) r += `🔮 **التوقع الإحصائي:** **$${prediction.predictedPrice.toFixed(p)}** (${prediction.trendDirection})\n`;
 
         r += `━━━━━━━━━━━━━━\n`;
         r += `💡 *استخدم التقرير التفصيلي لمعرفة مناطق الدخول الدقيقة.*`;
@@ -175,21 +177,22 @@ export class AnalysisFormatter {
         return r;
     }
 
-    static formatSignalText(symbol: string, type: 'LONG' | 'SHORT', entry: number, targets: number[], sl: number, leverage: number = 25): string {
+    static formatSignalText(symbol: string, type: 'LONG' | 'SHORT', entry: number, targets: number[], sl: number, leverage: number = 25, pricePrecision: number = 4): string {
+        const p = pricePrecision;
         return `\`${symbol}\`\n\n` +
             `${type === 'LONG' ? '🔼LONG' : '🔽SHORT'}  X${leverage}  \n\n` +
-            `▶️ENTER PRICE(سعر الدخول):\n${entry.toFixed(6)}\n\n` +
-            `▶️TARGET  PRICES(الاهداف):\n${targets.map(t => t.toFixed(6)).join('\n')}\n\n` +
-            `▶️STOP LOSE(الاستوب)\n${sl.toFixed(6)}`;
+            `▶️ENTER PRICE(سعر الدخول):\n${entry.toFixed(p)}\n\n` +
+            `▶️TARGET  PRICES(الاهداف):\n${targets.map(t => t.toFixed(p)).join('\n')}\n\n` +
+            `▶️STOP LOSE(الاستوب)\n${sl.toFixed(p)}`;
     }
 
     static generateDetailedReport(res: AnalysisResult, type: 'scalp' | 'swing'): string {
         const data = type === 'scalp' ? res.scalp : res.swing;
         const tf = type === 'scalp' ? res.options.quickTF : res.options.longTF;
         const sentiments = this.calculateSentiments(res.currentPrice, data.indicators, data.levels, res.matrix, data.structure, res.isAboveVWAP, tf, data.rsi);
-        
+
         let report = `🔍 **التقرير التقني لـ ${res.symbol} (${type === 'scalp' ? 'Scalp ⚡' : 'Swing 🌊'})**\n\n`;
-        report += `💵 السعر الحالي: \`$${res.currentPrice.toFixed(4)}\`\n`;
+        report += `💵 السعر الحالي: \`$${res.currentPrice.toFixed(res.pricePrecision)}\`\n`;
         report += `⚙️ الفريم المحلل: \`${tf}\`\n\n`;
 
         report += `📊 **تحليل الزخم والمؤشرات:**\n`;
@@ -199,17 +202,18 @@ export class AnalysisFormatter {
             report += `${emoji} **${s.name}**: \`${s.value}\` | ${s.description}\n`;
         });
 
+        const p = res.pricePrecision;
         report += `\n🎯 **مستويات الدعم والمقاومة:**\n`;
-        report += `🛑 **R2**: \`${data.levels.r2.toFixed(4)}\`\n`;
-        report += `🔸 **R1**: \`${data.levels.r1.toFixed(4)}\`\n`;
-        report += `📍 **Pivot**: \`${data.levels.pivot.toFixed(4)}\`\n`;
-        report += `🔹 **S1**: \`${data.levels.s1.toFixed(4)}\`\n`;
-        report += `🛑 **S2**: \`${data.levels.s2.toFixed(4)}\`\n`;
+        report += `🛑 **R2**: \`${data.levels.r2.toFixed(p)}\`\n`;
+        report += `🔸 **R1**: \`${data.levels.r1.toFixed(p)}\`\n`;
+        report += `📍 **Pivot**: \`${data.levels.pivot.toFixed(p)}\`\n`;
+        report += `🔹 **S1**: \`${data.levels.s1.toFixed(p)}\`\n`;
+        report += `🛑 **S2**: \`${data.levels.s2.toFixed(p)}\`\n`;
 
         report += `\n📐 **مستويات فيبوناتشي الاستراتيجية:**\n`;
-        report += `🏁 الهدف (Extension): \`${data.levels.fibTarget.toFixed(4)}\`\n`;
-        report += `🟡 الذهبي (0.618): \`${data.levels.fib618.toFixed(4)}\`\n`;
-        report += `⚪ تصحيح (0.382): \`${data.levels.fib382.toFixed(4)}\`\n`;
+        report += `🏁 الهدف (Extension): \`${data.levels.fibTarget.toFixed(p)}\`\n`;
+        report += `🟡 الذهبي (0.618): \`${data.levels.fib618.toFixed(p)}\`\n`;
+        report += `⚪ تصحيح (0.382): \`${data.levels.fib382.toFixed(p)}\`\n`;
 
         report += `\n🏛 **هيكل السوق:** ${data.structure || 'عرضي ↔️'}\n`;
         report += `📉 *تمت معالجة بيانات فريم ${tf} لتقديم هذه الأرقام.*`;
@@ -279,9 +283,10 @@ export class AnalysisFormatter {
     }
 
     static generateComprehensiveReport(res: AnalysisResult): string {
+        const p = res.pricePrecision;
         let r = `🌐 **التقرير الفني الشامل (Multi-Timeframe Analysis)** 🌐\n`;
         r += `━━━━━━━━━━━━━━\n`;
-        r += `💵 السعر: **$${res.currentPrice.toFixed(4)}** | العملة: **${res.symbol}**\n\n`;
+        r += `💵 السعر: **$${res.currentPrice.toFixed(p)}** | العملة: **${res.symbol}**\n\n`;
 
         const tfs = ['1m', '5m', '15m', '1h', '4h', '1d'];
         let bullishCount = 0;
@@ -298,13 +303,13 @@ export class AnalysisFormatter {
 
             r += `📊 **فريم [${tf}]**: ${data.structure} | ${trendEmoji}\n`;
             r += `• RSI: \`${data.rsi.toFixed(1)}\`${rsiEmoji} | MFI: \`${data.indicators.mfi?.toFixed(0)}\`\n`;
-            r += `• الدعم: \`${data.levels.s1.toFixed(3)}\` | المقاومة: \`${data.levels.r1.toFixed(3)}\`\n`;
+            r += `• الدعم: \`${data.levels.s1.toFixed(p)}\` | المقاومة: \`${data.levels.r1.toFixed(p)}\`\n`;
             r += `━━━━━━━━━━━━━━\n`;
         });
 
         r += `\n💡 **خلاصة التوافق (Confluence):**\n`;
         r += `• عدد الفريمات الإيجابية (ترند): **${bullishCount} / ${tfs.length}**\n`;
-        
+
         let conclusion = "محايد ⚪";
         if (bullishCount >= 5) conclusion = "صعود قوي 🔥 (توافق كامل)";
         else if (bullishCount >= 3) conclusion = "صعود متذبذب ✅";
@@ -398,14 +403,15 @@ export class AnalysisService {
         const longTF = options.longTF || '1h';
         const limit = options.limit || 200;
 
-        // Parallel Data Fetching
-        const fetchPromises = MATRIX_TFS.map(async tf => {
-            const fetchLimit = (tf === quickTF || tf === longTF) ? Math.max(limit, 200) : 200;
-            const ohlcv = await this.bingxService.fetchOHLCV(symbol, tf, fetchLimit);
-            return { tf, ohlcv };
-        });
-
-        const fetchResults = await Promise.all(fetchPromises);
+        // Fetch Precision and OHLCV in parallel
+        const [pricePrecision, ...fetchResults] = await Promise.all([
+            this.bingxService.getPricePrecision(symbol),
+            ...MATRIX_TFS.map(async tf => {
+                const fetchLimit = (tf === quickTF || tf === longTF) ? Math.max(limit, 200) : 200;
+                const ohlcv = await this.bingxService.fetchOHLCV(symbol, tf, fetchLimit);
+                return { tf, ohlcv };
+            })
+        ]);
         const mtfOHLCV: Record<string, OHLCV[]> = {};
         fetchResults.forEach(res => mtfOHLCV[res.tf] = res.ohlcv);
 
@@ -438,6 +444,7 @@ export class AnalysisService {
         return {
             symbol,
             currentPrice,
+            pricePrecision,
             isUptrend: scalpData.rsi < 50,
             matrix: result.matrix,
             isAboveVWAP: currentPrice > vwap,
@@ -452,7 +459,7 @@ export class AnalysisService {
     async generateCorrectionReport(res: AnalysisResult): Promise<string> {
         const symbol = res.symbol;
         const tfs = ['5m', '15m', '1h'];
-        
+
         // Parallel fetching for correction report
         const results = await Promise.all(tfs.map(async tf => {
             const ohlcv = await this.bingxService.fetchOHLCV(symbol, tf, 50);
@@ -479,7 +486,7 @@ export class AnalysisService {
         r += `⚠️ **توصية الحماية الشاملة:**\n`;
         const detectedCount = results.filter(i => i.div.detected).length;
         const isLong = res.scalp.type !== 'SHORT';
-        
+
         let warning = '';
         if (detectedCount >= 2) {
             warning = `🚨 **خطر انعكاس مؤكد (Confluence):** تصحيح مرصود على فريمات متعددة. اخرج الآن لحماية محفظتك!`;
@@ -506,8 +513,8 @@ export class AnalysisService {
         return AnalysisFormatter.formatReport(res, v);
     }
 
-    formatSignalText(symbol: string, type: 'LONG' | 'SHORT', entry: number, targets: number[], sl: number, leverage: number = 25): string {
-        return AnalysisFormatter.formatSignalText(symbol, type, entry, targets, sl, leverage);
+    formatSignalText(symbol: string, type: 'LONG' | 'SHORT', entry: number, targets: number[], sl: number, leverage: number = 25, pricePrecision: number = 4): string {
+        return AnalysisFormatter.formatSignalText(symbol, type, entry, targets, sl, leverage, pricePrecision);
     }
 
     detectBearishDivergence(ohlcv: OHLCV[]): { detected: boolean, description: string } {

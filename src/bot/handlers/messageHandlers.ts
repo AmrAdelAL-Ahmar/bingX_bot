@@ -12,7 +12,7 @@ import { TradeManager } from '../../services/TradeManager';
 import { sendTelegramMessage } from '../../utils/telegram';
 
 export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManager) => {
-    const bingxService = new BingXService(); 
+    const bingxService = new BingXService();
     const analysisService = new AnalysisService(bingxService);
     const backtestService = new BacktestService(bingxService, analysisService);
 
@@ -385,7 +385,8 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                                 direction: result.scalp.type,
                                 entry: result.scalp.entry,
                                 tp: result.scalp.tp,
-                                sl: result.scalp.sl
+                                sl: result.scalp.sl,
+                                p: result.pricePrecision
                             })
                         });
                     }
@@ -397,7 +398,9 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                                 direction: result.swing.type,
                                 entry: result.swing.entry,
                                 tp: result.swing.tp,
-                                sl: result.swing.sl
+                                sl: result.swing.sl,
+                                p: result.pricePrecision
+
                             })
                         });
                     }
@@ -458,8 +461,9 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                     if (signal.type === 'CLOSE') {
                         ctx.reply(`✅ تم إغلاق الصفقة (أو الصفقات) للعملة ${signal.symbol} بنجاح.`);
                     } else if (result) {
+                        const precision = await bingxService.getPricePrecision(result.symbol);
                         const orderTypeLabel = result.orderType === 'limit'
-                            ? `📌 حدي (Limit) عند ${result.entryPrice.toFixed(6)}`
+                            ? `📌 حدي (Limit) عند ${result.entryPrice.toFixed(precision)}`
                             : '⚡ سوق (Market)';
 
                         let successMsg = result.isPending
@@ -472,18 +476,18 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                             `الاتجاه: <b>${result.direction}</b>\n` +
                             `نوع التنفيذ: <b>${orderTypeLabel}</b>\n` +
                             `الرافعة المالية: <b>${result.leverage}x</b>\n` +
-                            `المبلغ المستثمر (Margin): <b>${result.margin.toFixed(6)} USDT</b> (${result.marginPercentage}% من رأس المال)\n` +
-                            `سعر الدخول: <b>${result.entryPrice.toFixed(6)}</b>\n\n`;
+                            `المبلغ المستثمر (Margin): <b>${result.margin.toFixed(precision)} USDT</b> (${result.marginPercentage}% من رأس المال)\n` +
+                            `سعر الدخول: <b>${result.entryPrice.toFixed(precision)}</b>\n\n`;
 
                         if (result.targets.length > 0) {
                             successMsg += `🎯 <b>الأهداف:</b>\n`;
                             result.targets.forEach((t, i) => {
-                                successMsg += `الهدف ${i + 1}: ${t.price.toFixed(6)} (+${t.pnlPercent.toFixed(6)}%)\n`;
+                                successMsg += `الهدف ${i + 1}: ${t.price.toFixed(precision)} (+${t.pnlPercent.toFixed(2)}%)\n`;
                             });
                             successMsg += '\n';
                         }
 
-                        successMsg += `🛑 <b>وقف الخسارة:</b> ${result.stopLoss.price.toFixed(6)} (${result.stopLoss.pnlPercent.toFixed(6)}%)`;
+                        successMsg += `🛑 <b>وقف الخسارة:</b> ${result.stopLoss.price.toFixed(precision)} (${result.stopLoss.pnlPercent.toFixed(2)}%)`;
 
                         await sendTelegramMessage(bot, ctx.chat.id, successMsg);
 
@@ -513,13 +517,14 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
 
             const targets = [parseFloat(t1)];
             if (t2 && t2 !== '0') targets.push(parseFloat(t2));
-
-            const signalText = analysisService.formatSignalText(
+            const precision = await bingxService.getPricePrecision(`${s}/USDT:USDT`); const signalText = analysisService.formatSignalText(
                 `${s}/USDT:USDT`,
                 d === 'L' ? 'LONG' : 'SHORT',
                 parseFloat(e),
                 targets,
-                parseFloat(sl)
+                parseFloat(sl),
+                25, // Default leverage
+                precision
             );
 
             await ctx.replyWithMarkdown(signalText);
@@ -553,7 +558,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
 
             ctx.answerCbQuery('⏳ جاري تنفيذ الصفقة...');
             await tradeManager.executeSignal(signal as any, user._id.toString(), ctx.chat!.id.toString());
-            
+
         } catch (error: any) {
             logger.error('Error in execute trade action:', error);
             await ctx.answerCbQuery(`❌ فشل التنفيذ: ${error.message}`);
@@ -564,7 +569,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
         try {
             const [_, type, s] = ctx.match;
             const symbol = `${s}/USDT:USDT`;
-            
+
             await ctx.answerCbQuery('⏳ جاري تشغيل الاختبار الرجعي (500 شمعة)...');
             await ctx.reply(`🔍 جاري تحليل البيانات التاريخية لـ ${symbol}... قد يستغرق ذلك بضع ثوانٍ.`);
 
@@ -581,7 +586,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
         try {
             const [_, type, s] = ctx.match;
             const symbol = `${s}/USDT:USDT`;
-            
+
             await ctx.answerCbQuery('⏳ جاري جلب التقرير التفصيلي...');
 
             // Re-run analysis to get the latest details
@@ -728,7 +733,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
         try {
             const symbol = ctx.match[1].includes('/') ? ctx.match[1] : `${ctx.match[1]}/USDT:USDT`;
             const user = await User.findOne({ telegramId: ctx.from!.id.toString() });
-            
+
             if (!user) {
                 return await ctx.reply('❌ مستخدم غير مسجل.');
             }
@@ -752,7 +757,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
 
             await ctx.answerCbQuery('🔔 تم تفعيل تنبيه التصحيح');
             await ctx.reply(`✅ **تم تفعيل مراقبة التصحيح لعملة ${activeTrade.symbol}**\n\nسأقوم بتنبيهك فوراً في حال كسر الـ Pivot أو ظهور انحراف سلبي حاد على الفريمات الصغيرة لحماية أرباحك.`, { parse_mode: 'Markdown' });
-            
+
         } catch (error) {
             logger.error('Error in correction alert action:', error);
             await ctx.reply('❌ فشل تفعيل تنبيه التصحيح.');
