@@ -477,9 +477,9 @@ export class AnalysisService {
             const divEmoji = item.div.detected ? '⚠️' : '✅';
             r += `📊 **فريم [${item.tf}]**:\n`;
             r += `• الحالة: ${divEmoji} ${item.div.description}\n`;
-            r += `• مستوى 0.382: \`$${item.fib.fib382.toFixed(4)}\`\n`;
-            r += `• مستوى 0.500: \`$${item.fib.fib500.toFixed(4)}\`\n`;
-            r += `• مستوى 0.618: \`$${item.fib.fib618.toFixed(4)}\` 🔥\n`;
+            r += `• مستوى 0.382: \`$${item.fib.fib382.toFixed(res.pricePrecision)}\`\n`;
+            r += `• مستوى 0.500: \`$${item.fib.fib500.toFixed(res.pricePrecision)}\`\n`;
+            r += `• مستوى 0.618: \`$${item.fib.fib618.toFixed(res.pricePrecision)}\` 🔥\n`;
             r += `━━━━━━━━━━━━━━\n`;
         });
 
@@ -495,7 +495,7 @@ export class AnalysisService {
         } else {
             const f5 = results[0].fib;
             if (isLong && res.currentPrice < f5.fib500) {
-                warning = `🟠 **تصحيح عميق (5m):** السعر كسر مستوى 0.500. راقب الهدف $${f5.fib618.toFixed(4)}.`;
+                warning = `🟠 **تصحيح عميق (5m):** السعر كسر مستوى 0.500. راقب الهدف $${f5.fib618.toFixed(res.pricePrecision)}.`;
             } else {
                 warning = `🟢 **وضع مستقر:** لا يوجد توافق على التصحيح حالياً. الاتجاه لا يزال يحافظ على قوته.`;
             }
@@ -512,7 +512,6 @@ export class AnalysisService {
     formatReport(res: AnalysisResult, v: string): string {
         return AnalysisFormatter.formatReport(res, v);
     }
-
     formatSignalText(symbol: string, type: 'LONG' | 'SHORT', entry: number, targets: number[], sl: number, leverage: number = 25, pricePrecision: number = 4): string {
         return AnalysisFormatter.formatSignalText(symbol, type, entry, targets, sl, leverage, pricePrecision);
     }

@@ -514,10 +514,10 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
         try {
             const [_, type, rest] = ctx.match;
             const [s, d, e, t1, sl, t2] = rest.split('_');
-
             const targets = [parseFloat(t1)];
             if (t2 && t2 !== '0') targets.push(parseFloat(t2));
-            const precision = await bingxService.getPricePrecision(`${s}/USDT:USDT`); const signalText = analysisService.formatSignalText(
+            const precision = await bingxService.getPricePrecision(`${s}/USDT:USDT`);
+            const signalText = analysisService.formatSignalText(
                 `${s}/USDT:USDT`,
                 d === 'L' ? 'LONG' : 'SHORT',
                 parseFloat(e),
@@ -526,9 +526,8 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                 25, // Default leverage
                 precision
             );
-
             await ctx.replyWithMarkdown(signalText);
-            await ctx.answerCbQuery('تم إنشاء نموذج الإشارة ✅');
+            await ctx.answerCbQuery('تم إنشاء نموذج ا لإشارة ✅');
         } catch (error: any) {
             logger.error('Error in copy signal action:', error);
             await ctx.answerCbQuery('❌ حدث خطأ أثناء إنشاء الإشارة');

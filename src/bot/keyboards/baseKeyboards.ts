@@ -388,10 +388,11 @@ export const getAnalysisActionKeyboard = (symbol: string, type: 'scalp' | 'swing
     // data contains entry, tp, sl, direction, tp2
     const s = symbol.split('/')[0]; // Use short symbol BTC instead of BTC/USDT:USDT
     const d = data.direction === 'LONG' ? 'L' : 'S';
-    const e = data.entry.toFixed(data.pricePrecision || 5);
-    const t1 = data.tp.toFixed(data.pricePrecision || 5);
-    const sl = data.sl.toFixed(data.pricePrecision || 5);
-    const t2 = data.tp2 ? data.tp2.toFixed(data.pricePrecision || 5) : '0';
+    const p = data?.pricePrecision || 6;
+    const e = data.entry.toFixed(p);
+    const t1 = data.tp.toFixed(p);
+    const sl = data.sl.toFixed(p);
+    const t2 = data.tp2 ? data.tp2.toFixed(p) : '0';
 
     const callbackData = `ex_${type === 'scalp' ? 'sc' : 'sw'}_${s}_${d}_${e}_${t1}_${sl}_${t2}`;
     const copyData = `cp_${type === 'scalp' ? 'sc' : 'sw'}_${s}_${d}_${e}_${t1}_${sl}_${t2}`;
@@ -400,7 +401,6 @@ export const getAnalysisActionKeyboard = (symbol: string, type: 'scalp' | 'swing
     const eduData = `ed_${type === 'scalp' ? 'sc' : 'sw'}_${s}`; // Educational Guide
     const corData = `cor_ck_${s}`; // Correction Check
     const alertData = `cor_al_${s}`; // Correction Alert Toggle
-
     return {
         inline_keyboard: [
             [{ text: `تنفيذ صفقة ${type === 'scalp' ? 'Scalp ⚡' : 'Swing 🌊'}`, callback_data: callbackData }],
