@@ -292,12 +292,13 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
             }
 
             if (message === 'دليل الخوارزميات 📖') {
-                const guide = `📖 **دليل الخوارزميات (V1-V5):**\n\n` +
+                const guide = `📖 **دليل الخوارزميات (V1-V6):**\n\n` +
                     `${analysisService.getAlgorithmExplanation('V1')}\n\n` +
                     `${analysisService.getAlgorithmExplanation('V2')}\n\n` +
                     `${analysisService.getAlgorithmExplanation('V3')}\n\n` +
                     `${analysisService.getAlgorithmExplanation('V4')}\n\n` +
-                    `${analysisService.getAlgorithmExplanation('V5')}`;
+                    `${analysisService.getAlgorithmExplanation('V5')}\n\n` +
+                    `${analysisService.getAlgorithmExplanation('V6')}`;
                 return ctx.reply(guide);
             }
 
@@ -341,6 +342,14 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                 });
             }
 
+            if (message === 'الخوارزمية V6 (Sniper V7) 🎯') {
+                user.botState = 'AWAITING_ANALYSIS_SYMBOL_V6';
+                await user.save();
+                return ctx.reply('يرجى إرسال رمز العملة للتحليل باستخدام V6 (Sniper V7) 🎯 (مثال: BTC):', {
+                    reply_markup: { keyboard: [[{ text: 'إلغاء ❌' }]], resize_keyboard: true }
+                });
+            }
+
             if (user.botState && user.botState.startsWith('AWAITING_ANALYSIS_SYMBOL_')) {
                 if (message === 'إلغاء ❌' || message === 'رجوع للقائمة الرئيسية 🔙') {
                     user.botState = 'NONE';
@@ -348,7 +357,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                     return ctx.reply('تم الإلغاء.', { reply_markup: getMainMenuKeyboard(user) });
                 }
 
-                const version = user.botState.split('_').pop() as 'V1' | 'V2' | 'V3' | 'V4' | 'V5';
+                const version = user.botState.split('_').pop() as 'V1' | 'V2' | 'V3' | 'V4' | 'V5' | 'V6';
                 const symbol = message.toUpperCase();
                 ctx.reply(`⏳ جاري تحليل ${symbol} باستخدام ${version}... (TF: ${user.analysisSettings?.scalpTF || '5m'}/${user.analysisSettings?.swingTF || '1h'})`);
 

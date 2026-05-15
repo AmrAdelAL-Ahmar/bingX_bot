@@ -58,13 +58,19 @@ export class TechnicalAnalyzer {
         const rsi = RSI.calculate({ period: 14, values: closes }).slice(-1)[0] || 50;
         const atr = ATR.calculate({ period: 14, high: highs, low: lows, close: closes }).slice(-1)[0] || 0;
 
+        const recentCandles = ohlcv.slice(-15);
+        const lastSwingHigh = Math.max(...recentCandles.map(c => c.high));
+        const lastSwingLow = Math.min(...recentCandles.map(c => c.low));
+
         const levels: TechnicalLevels = {
             pivot: (prev.high + prev.low + prev.close) / 3,
             r1: 0, s1: 0, r2: 0, s2: 0,
             ma7: SMA.calculate({ period: 7, values: closes }).slice(-1)[0],
             ma20: ma20,
             ma99: SMA.calculate({ period: 99, values: closes }).slice(-1)[0],
-            fib618: 0, fib382: 0, fibTarget: 0
+            fib618: 0, fib382: 0, fibTarget: 0,
+            lastSwingHigh,
+            lastSwingLow
         };
 
         levels.r1 = (2 * levels.pivot) - prev.low;
@@ -121,12 +127,12 @@ export class TechnicalAnalyzer {
         return vwapValues[vwapValues.length - 1];
     }
 
-    static calculateMatrix(allTimeframes: Record<string, AnalysisDetails>): MatrixResult {
+    static calculateMatrix(allTimeframes: Record<string, AnalysisDetails>, targetTFs: string[] = MATRIX_TFS): MatrixResult {
         let totalScore = 0;
         let maxPossibleScore = 0;
         let details = "| ";
 
-        MATRIX_TFS.forEach(tf => {
+        targetTFs.forEach(tf => {
             const data = allTimeframes[tf];
             if (data) {
                 const weight = TF_WEIGHTS[tf] || 1;

@@ -7,6 +7,7 @@ import { V2Engine } from './engines/V2Engine';
 import { V3Engine } from './engines/V3Engine';
 import { V4Engine } from './engines/V4Engine';
 import { V5Engine } from './engines/V5Engine';
+import { V6Engine } from './engines/V6Engine';
 
 // --- Types & Interfaces ---
 
@@ -50,6 +51,8 @@ export interface TechnicalLevels {
     ma99: number;
     ma20: number;
     ma7: number;
+    lastSwingHigh: number;
+    lastSwingLow: number;
 }
 
 export interface IndicatorSentiment {
@@ -124,7 +127,8 @@ const ENGINES: Record<string, ITradingEngine> = {
     'V2': new V2Engine(),
     'V3': new V3Engine(),
     'V4': new V4Engine(),
-    'V5': new V5Engine()
+    'V5': new V5Engine(),
+    'V6': new V6Engine()
 };
 
 // --- Report Formatter ---
@@ -145,8 +149,9 @@ export class AnalysisFormatter {
         // SCALP SECTION
         const sIcon = scalp.winRate >= 80 ? '🔥' : scalp.winRate >= 65 ? '✅' : '⚠️';
         r += `⚡ **[تحليل السكالبينج - ${options.quickTF}]**\n` +
-            `• النتيجة: ${scalp.status} ${sIcon}\n` +
-            `• التوصية: **${scalp.type}** | Win: **${scalp.winRate.toFixed(0)}%**\n` +
+            `• النتيجة: ${scalp.status} ${sIcon}\n`;
+        if (scalp.rejectionReason) r += `• سبب الرفض: 🛡️ **${scalp.rejectionReason}**\n`;
+        r += `• التوصية: **${scalp.type}** | Win: **${scalp.winRate.toFixed(0)}%**\n` +
             `• الأهداف: 🎯 **${scalp.tp.toFixed(4)}** | 🛑 **${scalp.sl.toFixed(4)}**\n` +
             `• المؤشرات: RSI:**${scalp.rsi.toFixed(1)}** | هيكل:**${scalp.structure}**\n` +
             `• المستويات: R1:${scalp.levels.r1.toFixed(3)} | S1:${scalp.levels.s1.toFixed(3)}\n\n`;
@@ -154,8 +159,9 @@ export class AnalysisFormatter {
         // SWING SECTION
         const wIcon = swing.winRate >= 80 ? '🔥' : swing.winRate >= 65 ? '✅' : '⚠️';
         r += `🌊 **[تحليل السوينج - ${options.longTF}]**\n` +
-            `• النتيجة: ${swing.status} ${wIcon}\n` +
-            `• التوصية: **${swing.type}** | Win: **${swing.winRate.toFixed(0)}%**\n` +
+            `• النتيجة: ${swing.status} ${wIcon}\n`;
+        if (swing.rejectionReason) r += `• سبب الرفض: 🛡️ **${swing.rejectionReason}**\n`;
+        r += `• التوصية: **${swing.type}** | Win: **${swing.winRate.toFixed(0)}%**\n` +
             `• الأهداف: 🎯 **${swing.tp.toFixed(4)}** | 🛑 **${swing.sl.toFixed(4)}**\n` +
             `• المؤشرات: RSI:**${swing.rsi.toFixed(1)}** | هيكل:**${swing.structure}**\n` +
             `• المستويات: R1:${swing.levels.r1.toFixed(3)} | S1:${swing.levels.s1.toFixed(3)}\n\n`;
@@ -382,7 +388,7 @@ export class AnalysisService {
 
     async analyze(
         symbolInput: string,
-        version: 'V1' | 'V2' | 'V3' | 'V4' | 'V5' = 'V1',
+        version: 'V1' | 'V2' | 'V3' | 'V4' | 'V5' | 'V6' = 'V1',
         options: { quickTF?: string, longTF?: string, limit?: number, rsiThreshold?: number } = {}
     ): Promise<AnalysisResult> {
         let symbol = symbolInput.toUpperCase();
@@ -525,6 +531,7 @@ export class AnalysisService {
     }
 
     getAlgorithmExplanation(v: string): string {
-        return "📘 **نظام التداول المتعدد الاستراتيجيات:** يضم 5 محركات تحليل مختلفة (كمي، مصفوفي، مضاربي، وتنبؤي) لتغطية كافة ظروف السوق.";
+        if (v === 'V6') return "🎯 **V6 Sniper V7:** الإصدار الأقوى. يستخدم جدار حماية زمني لفصل السكالب عن السوينج، مع فلاتر هيكل السوق (Price Action) لمنع الدخول العكسي الخاطئ وربط رادار التصحيح كصمام أمان.";
+        return "📘 **نظام التداول المتعدد الاستراتيجيات:** يضم 6 محركات تحليل مختلفة لتغطية كافة ظروف السوق.";
     }
 }
