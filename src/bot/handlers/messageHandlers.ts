@@ -111,6 +111,13 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
 
             if (!user) return;
 
+            // --- UNIVERSAL CANCEL ---
+            if (message === 'إلغاء ❌' || message === 'رجوع للقائمة الرئيسية 🔙' || message === 'رجوع 🔙') {
+                user.botState = 'NONE';
+                await user.save();
+                return ctx.reply('تم الإلغاء والعودة للقائمة الرئيسية.', { reply_markup: getMainMenuKeyboard(user) });
+            }
+
             // 1. Check AWAITING States
             if (user.botState === 'AWAITING_RISK_PERCENTAGE') {
                 if (message === 'رجوع 🔙') {
@@ -588,6 +595,12 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
     bot.action('btw_cancel', async (ctx) => {
         await ctx.answerCbQuery('تم الإلغاء');
         await ctx.deleteMessage().catch(() => {});
+        
+        const telegramId = ctx.from?.id.toString();
+        const user = await User.findOne({ telegramId });
+        if (user) {
+            await ctx.reply('تم الإلغاء والعودة للقائمة الرئيسية.', { reply_markup: getMainMenuKeyboard(user) });
+        }
     });
 
     bot.action(/^btw_v_(V[1-6])_(.+)$/, async (ctx) => {
