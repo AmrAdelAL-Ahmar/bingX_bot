@@ -31,7 +31,7 @@ export class BacktestService {
         private analysisService: AnalysisService
     ) { }
 
-    async runAdvancedBacktest(symbol: string, version: string, options: { quickTF: string, longTF: string, days: number, stepMinutes: number, mode: 'SCALP' | 'SWING' }): Promise<BacktestResult> {
+    async runAdvancedBacktest(symbol: string, version: string, options: { quickTF: string, longTF: string, days: number, stepMinutes: number, mode: 'SCALP' | 'SWING', initialCapital?: number, marginPerTradePercentage?: number }): Promise<BacktestResult> {
         logger.info(`Running Time-Step Backtest for ${symbol} on ${version} over ${options.days} days with step ${options.stepMinutes}m (Mode: ${options.mode})`);
 
         const stepMs = options.stepMinutes * 60 * 1000;
@@ -291,37 +291,135 @@ export class BacktestService {
             }
         }
 
+        // 4. Pass 3: Realistic Capital Simulation
+        let initialCapital = options.initialCapital || 1000;
+        let activeCapital = initialCapital; // Liquid balance
+        let totalCapital = initialCapital; // Final account size (includes locked margin)
+        const riskPercentage = options.marginPerTradePercentage || 3;
+        const defaultLeverage = 10; // For backtesting simulation
+        let peakCapital = totalCapital;
+        let maxDrawdown = 0;
+        let skippedTrades = 0;
+
+        // Create chronological events for concurrent capital simulation
+        const events: { type: 'OPEN' | 'CLOSE', time: number, trade: any }[] = [];
+        for (const trade of generatedTrades) {
+            events.push({ type: 'OPEN', time: trade.entryTime, trade });
+            if (trade.closeTime) {
+                events.push({ type: 'CLOSE', time: trade.closeTime, trade });
+            }
+        }
+        
+        // Sort chronologically
+        events.sort((a, b) => a.time - b.time);
+
+        for (const event of events) {
+            if (event.type === 'OPEN') {
+                const requestedMargin = totalCapital * (riskPercentage / 100);
+                
+                // If we don't have enough available capital, scale it down or skip.
+                if (activeCapital < 5) { // Minimum 5 USDT to trade
+                    event.trade.skipped = true;
+                    event.trade.skipReason = 'Insufficient Margin';
+                    skippedTrades++;
+                    
+                    // Undo stats contribution
+                    if (event.trade.status === 'WIN') {
+                        if (event.trade.type === 'LONG') stats.longWins--;
+                        if (event.trade.type === 'SHORT') stats.shortWins--;
+                    } else if (event.trade.status === 'LOSS') {
+                        if (event.trade.type === 'LONG') stats.longLosses--;
+                        if (event.trade.type === 'SHORT') stats.shortLosses--;
+                    } else if (event.trade.status === 'OPEN') {
+                        stats.open--;
+                    }
+                    continue;
+                }
+
+                event.trade.availableCapitalBefore = activeCapital;
+                event.trade.totalCapitalBefore = totalCapital;
+                
+                const actualMargin = Math.min(requestedMargin, activeCapital);
+                activeCapital -= actualMargin;
+                
+                event.trade.marginUsed = actualMargin;
+                event.trade.marginPercent = (actualMargin / totalCapital) * 100;
+                event.trade.leverage = defaultLeverage;
+            } else if (event.type === 'CLOSE') {
+                if (event.trade.skipped) continue; // It was never opened
+
+                const margin = event.trade.marginUsed;
+                let pnlMultiplier = 0;
+                
+                if (event.trade.type === 'LONG') {
+                    pnlMultiplier = ((event.trade.closePrice - event.trade.entry) / event.trade.entry) * defaultLeverage;
+                } else {
+                    pnlMultiplier = ((event.trade.entry - event.trade.closePrice) / event.trade.entry) * defaultLeverage;
+                }
+
+                const pnlUSDT = margin * pnlMultiplier;
+                
+                // Free up the margin + PnL
+                activeCapital += (margin + pnlUSDT);
+                totalCapital += pnlUSDT;
+                
+                if (totalCapital > peakCapital) {
+                    peakCapital = totalCapital;
+                }
+                const currentDrawdown = ((peakCapital - totalCapital) / peakCapital) * 100;
+                if (currentDrawdown > maxDrawdown) {
+                    maxDrawdown = currentDrawdown;
+                }
+
+                event.trade.pnlUSDT = pnlUSDT;
+                event.trade.availableCapitalAfter = activeCapital;
+                event.trade.totalCapitalAfter = totalCapital;
+            }
+        }
+
+        // Adjust stats for skipped trades
+        stats.total -= skippedTrades;
+
         const totalClosed = stats.total - stats.open;
         const totalWins = stats.longWins + stats.shortWins;
         const totalLosses = stats.longLosses + stats.shortLosses;
         const winRate = totalClosed > 0 ? (totalWins / totalClosed) * 100 : 0;
         const modeText = options.mode === 'SCALP' ? 'سكالبينج ⚡️' : 'سوينج 🌊';
+        const roi = ((totalCapital - initialCapital) / initialCapital) * 100;
+        const netProfit = totalCapital - initialCapital;
 
         const reportText = `
-📊 **تقرير الاختبار الرجعي الزمني (Time-Step Backtest)** 📊
+📊 **تقرير الاختبار الرجعي الشامل مع محاكاة رأس المال** 📊
 ━━━━━━━━━━━━━━
 🪙 العملة: **${symbol}**
 ⚙️ الإصدار: **${version}**
 نوع الاختبار: **${modeText}**
-⏱️ الفريمات المرجعية: **جميع الفريمات**
 📅 مدة الاختبار: **أخر ${options.days} أيام**
 ⏳ فاصل التحليل: **كل ${options.stepMinutes} دقيقة**
 
-🔢 إجمالي إشارات الدخول (الصفقات): **${stats.total}**
+💼 **الأداء المالي (المحاكاة):**
+رأس المال الابتدائي: **${initialCapital.toFixed(2)} USDT**
+رأس المال النهائي: **${totalCapital.toFixed(2)} USDT**
+صافي الربح/الخسارة: **${netProfit >= 0 ? '+' : ''}${netProfit.toFixed(2)} USDT**
+نسبة نمو الحساب (ROI): **${roi >= 0 ? '+' : ''}${roi.toFixed(2)}%**
+أقصى تراجع (Max Drawdown): **${maxDrawdown.toFixed(2)}%**
+حجم الدخول للصفقة (Margin): **${riskPercentage}% من الرصيد المتوفر**
+الرافعة المالية المفترضة: **${defaultLeverage}x**
+
+🔢 **إحصائيات الصفقات:**
+إجمالي الإشارات المنفذة: **${stats.total}**
+تم تجاهلها (رصيد غير كافٍ): **${skippedTrades}**
 
 🟢 **صفقات LONG:**
-🏆 أهداف (TP): **${stats.longWins}**
-❌ استوب (SL): **${stats.longLosses}**
+🏆 أهداف (TP): **${stats.longWins}** | ❌ استوب (SL): **${stats.longLosses}**
 
 🔴 **صفقات SHORT:**
-🏆 أهداف (TP): **${stats.shortWins}**
-❌ استوب (SL): **${stats.shortLosses}**
+🏆 أهداف (TP): **${stats.shortWins}** | ❌ استوب (SL): **${stats.shortLosses}**
 
-🕒 **صفقات مازالت مفتوحة (لم تضرب هدف أو استوب حتى الآن):** **${stats.open}**
-
+🕒 **صفقات مفتوحة:** **${stats.open}**
 🎯 **نسبة نجاح الصفقات المغلقة:** **${winRate.toFixed(1)}%**
 ━━━━━━━━━━━━━━
-💡 *تم الاختبار عبر محاكاة الزمن خطوة بخطوة باستخدام بيانات حقيقية لكل الفريمات. تم حفظ سجلات مفصلة لكل صفقة مع تاريخها ووقت تحليلها.*
+💡 *تم الاختبار عبر محاكاة الزمن خطوة بخطوة مع تخصيص واقعي لرأس المال وتتبع دقيق للمارجن المحجوز لضمان واقعية النتائج.*
         `;
 
         return { reportText, trades: generatedTrades };
