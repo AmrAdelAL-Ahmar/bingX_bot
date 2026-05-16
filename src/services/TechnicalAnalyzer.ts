@@ -178,7 +178,7 @@ export class TechnicalAnalyzer {
         };
     }
 
-    static detectBearishDivergence(ohlcv: OHLCV[]): { detected: boolean, description: string } {
+    static detectDivergence(ohlcv: OHLCV[], direction: 'LONG' | 'SHORT' = 'LONG'): { detected: boolean, description: string } {
         const closes = ohlcv.map(c => c.close);
         const rsiValues = RSI.calculate({ period: 14, values: closes });
         
@@ -191,11 +191,21 @@ export class TechnicalAnalyzer {
         const r2 = rsiValues[rsiValues.length - 1];
         const r1 = rsiValues[rsiValues.length - 10] || rsiValues[0];
 
-        const isDivergent = p2 > p1 && r2 < r1;
-        return { 
-            detected: isDivergent, 
-            description: isDivergent ? "⚠️ انحراف سلبي رصد: السعر يصعد والزخم يضعف" : "✅ لا يوجد انحراف سلبي حالياً" 
-        };
+        if (direction === 'LONG') {
+            // Bearish Divergence: Price higher high, RSI lower high
+            const isDivergent = p2 > p1 && r2 < r1;
+            return { 
+                detected: isDivergent, 
+                description: isDivergent ? "⚠️ انحراف سلبي (Bearish): السعر يصعد والزخم يضعف" : "✅ لا يوجد انحراف سلبي حالياً" 
+            };
+        } else {
+            // Bullish Divergence: Price lower low, RSI higher low
+            const isDivergent = p2 < p1 && r2 > r1;
+            return { 
+                detected: isDivergent, 
+                description: isDivergent ? "⚠️ انحراف إيجابي (Bullish): السعر يهبط وقوة الشراء تزداد" : "✅ لا يوجد انحراف إيجابي حالياً" 
+            };
+        }
     }
 
     static calculateCorrectionFibLevels(ohlcv: OHLCV[], direction: 'LONG' | 'SHORT' = 'LONG') {

@@ -384,7 +384,7 @@ export const getRSISelectionKeyboard = () => {
 };
 
 // --- ANALYSIS REPORT ACTION KEYBOARD (INLINE) ---
-export const getAnalysisActionKeyboard = (symbol: string, type: 'scalp' | 'swing', data: any) => {
+export const getAnalysisActionKeyboard = (symbol: string, type: 'scalp' | 'swing', data: any, version: string = 'V6') => {
     // data contains entry, tp, sl, direction, tp2
     const s = symbol.split('/')[0]; // Use short symbol BTC instead of BTC/USDT:USDT
     const d = data.direction === 'LONG' ? 'L' : 'S';
@@ -396,10 +396,10 @@ export const getAnalysisActionKeyboard = (symbol: string, type: 'scalp' | 'swing
 
     const callbackData = `ex_${type === 'scalp' ? 'sc' : 'sw'}_${s}_${d}_${e}_${t1}_${sl}_${t2}`;
     const copyData = `cp_${type === 'scalp' ? 'sc' : 'sw'}_${s}_${d}_${e}_${t1}_${sl}_${t2}`;
-    const btData = `bt_${type === 'scalp' ? 'sc' : 'sw'}_${s}`;
-    const dtData = `dt_${type === 'scalp' ? 'sc' : 'sw'}_${s}`; // Details
-    const eduData = `ed_${type === 'scalp' ? 'sc' : 'sw'}_${s}`; // Educational Guide
-    const corData = `cor_ck_${s}`; // Correction Check
+    const btData = `bt_${type === 'scalp' ? 'sc' : 'sw'}_${s}_${version}`;
+    const dtData = `dt_${type === 'scalp' ? 'sc' : 'sw'}_${s}_${d}_${version}`; // Details with Direction & Version
+    const eduData = `ed_${type === 'scalp' ? 'sc' : 'sw'}_${s}_${version}`; // Educational Guide
+    const corData = `cor_ck_${s}_${d}_${version}`; // Correction Check with Direction & Version
     const alertData = `cor_al_${s}`; // Correction Alert Toggle
     return {
         inline_keyboard: [

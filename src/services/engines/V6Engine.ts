@@ -4,9 +4,9 @@ import { TechnicalAnalyzer } from '../TechnicalAnalyzer';
 
 export class V6Engine implements ITradingEngine {
     analyze(
-        cp: number, 
-        vwap: number, 
-        allTimeframes: Record<string, AnalysisDetails>, 
+        cp: number,
+        vwap: number,
+        allTimeframes: Record<string, AnalysisDetails>,
         mtfOHLCV: Record<string, OHLCV[]>,
         options: { quickTF: string, longTF: string }
     ): EngineResult {
@@ -41,7 +41,7 @@ export class V6Engine implements ITradingEngine {
     private runSniperLogic(cp: number, data: AnalysisDetails, m: MatrixResult, ohlcv: OHLCV[], vwap: number, mode: 'SCALP' | 'SWING'): TradeRecommendation {
         let score = 0;
         const isAboveVWAP = cp > vwap;
-        
+
         score += isAboveVWAP ? 25 : -25;
         score += (m.percentage - 50) * 0.8;
         if (data.rsi < 35) score += 15;
@@ -53,7 +53,7 @@ export class V6Engine implements ITradingEngine {
         let rejectionReason = "";
 
         // --- 2. Price Action & Radar Firewall ---
-        const div = TechnicalAnalyzer.detectBearishDivergence(ohlcv);
+        const div = TechnicalAnalyzer.detectDivergence(ohlcv, type);
 
         if (type === 'SHORT') {
             // Case A: Strong uptrend - Don't short unless Last Swing Low is broken
@@ -66,12 +66,17 @@ export class V6Engine implements ITradingEngine {
                 type = 'NONE';
                 rejectionReason = "حماية: رادار التصحيح لا يدعم الهبوط حالياً";
             }
-        } 
+        }
         else if (type === 'LONG') {
             // Case C: Strong downtrend - Don't long unless Last Swing High is broken
             if (m.percentage <= 45 && cp < data.levels.lastSwingHigh) {
                 type = 'NONE';
                 rejectionReason = `حماية: لم يتم اختراق القمة اللحظية (${data.levels.lastSwingHigh.toFixed(2)})`;
+            }
+            // Case D: No confluence of correction (Radar Veto)
+            else if (m.percentage <= 50 && !div.detected) {
+                type = 'NONE';
+                rejectionReason = "حماية: رادار التصحيح لا يدعم الصعود حالياً";
             }
         }
 
@@ -84,8 +89,8 @@ export class V6Engine implements ITradingEngine {
 
         // --- 3. Dynamic TP/SL based on Pivots ---
         const tp = type === 'LONG' ? Math.max(data.levels.lastSwingHigh, cp + data.atr * 2) : Math.min(data.levels.lastSwingLow, cp - data.atr * 2);
-        const sl = type === 'LONG' 
-            ? Math.min(cp - slDistance, data.levels.lastSwingLow - (data.atr * 0.5)) 
+        const sl = type === 'LONG'
+            ? Math.min(cp - slDistance, data.levels.lastSwingLow - (data.atr * 0.5))
             : Math.max(cp + slDistance, data.levels.lastSwingHigh + (data.atr * 0.5));
 
         return {

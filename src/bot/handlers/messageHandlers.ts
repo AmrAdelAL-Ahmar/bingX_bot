@@ -374,7 +374,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                     const shortSym = symbol.split('/')[0];
                     await ctx.replyWithHTML(report, {
                         reply_markup: {
-                            inline_keyboard: [[{ text: '📊 التحليل الشامل (MTF)', callback_data: `all_tf_${shortSym}` }]]
+                            inline_keyboard: [[{ text: '📊 التحليل الشامل (MTF)', callback_data: `all_tf_${shortSym}_${version}` }]]
                         }
                     });
 
@@ -387,7 +387,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                                 tp: result.scalp.tp,
                                 sl: result.scalp.sl,
                                 p: result.pricePrecision
-                            })
+                            }, version)
                         });
                     }
 
@@ -400,8 +400,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                                 tp: result.swing.tp,
                                 sl: result.swing.sl,
                                 p: result.pricePrecision
-
-                            })
+                            }, version)
                         });
                     }
 
@@ -566,10 +565,11 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
 
     bot.action(/^bt_(sc|sw)_(.+)$/, async (ctx) => {
         try {
-            const [_, type, s] = ctx.match;
+            const [_, type, rest] = ctx.match;
+            const [s, version] = rest.split('_');
             const symbol = `${s}/USDT:USDT`;
-
-            await ctx.answerCbQuery('⏳ جاري تشغيل الاختبار الرجعي (500 شمعة)...');
+            
+            await ctx.answerCbQuery(`⏳ جاري تشغيل الاختبار الرجعي (${version || 'V6'})...`);
             await ctx.reply(`🔍 جاري تحليل البيانات التاريخية لـ ${symbol}... قد يستغرق ذلك بضع ثوانٍ.`);
 
             const report = await backtestService.runBacktest(symbol, type === 'sc' ? 'Scalp' : 'Swing');
@@ -583,14 +583,18 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
 
     bot.action(/^dt_(sc|sw)_(.+)$/, async (ctx) => {
         try {
-            const [_, type, s] = ctx.match;
+            const [_, type, rest] = ctx.match;
+            const parts = rest.split('_');
+            const s = parts[0];
+            const d = parts[1] === 'L' ? 'LONG' : 'SHORT';
+            const v = parts[2] || 'V6';
             const symbol = `${s}/USDT:USDT`;
-
-            await ctx.answerCbQuery('⏳ جاري جلب التقرير التفصيلي...');
+            
+            await ctx.answerCbQuery(`⏳ جاري جلب التقرير التفصيلي (${v})...`);
 
             // Re-run analysis to get the latest details
             const user = await User.findOne({ telegramId: ctx.from!.id.toString() });
-            const res = await analysisService.analyze(symbol, 'V5', {
+            const res = await analysisService.analyze(symbol, v as any, {
                 quickTF: user?.analysisSettings?.scalpTF,
                 longTF: user?.analysisSettings?.swingTF
             });
@@ -606,12 +610,15 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
 
     bot.action(/^ed_(sc|sw)_(.+)$/, async (ctx) => {
         try {
-            const [_, type, s] = ctx.match;
+            const [_, type, rest] = ctx.match;
+            const parts = rest.split('_');
+            const s = parts[0];
+            const v = parts[1] || 'V6';
             const symbol = `${s}/USDT:USDT`;
             await ctx.answerCbQuery('📚 جاري فتح الدليل التعليمي...');
 
             const user = await User.findOne({ telegramId: ctx.from!.id.toString() });
-            const res = await analysisService.analyze(symbol, 'V5', {
+            const res = await analysisService.analyze(symbol, v as any, {
                 quickTF: user?.analysisSettings?.scalpTF,
                 longTF: user?.analysisSettings?.swingTF
             });
@@ -687,11 +694,15 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
 
     bot.action(/^all_tf_(.+)$/, async (ctx) => {
         try {
-            const symbol = `${ctx.match[1]}/USDT:USDT`;
-            await ctx.answerCbQuery('🌐 جاري توليد التحليل الشامل لجميع الفريمات...');
+            const rest = ctx.match[1];
+            const parts = rest.split('_');
+            const s = parts[0];
+            const v = parts[1] || 'V6';
+            const symbol = `${s}/USDT:USDT`;
+            await ctx.answerCbQuery(`🌐 جاري توليد التحليل الشامل (${v})...`);
 
             const user = await User.findOne({ telegramId: ctx.from!.id.toString() });
-            const res = await analysisService.analyze(symbol, 'V5', {
+            const res = await analysisService.analyze(symbol, v as any, {
                 quickTF: user?.analysisSettings?.scalpTF,
                 longTF: user?.analysisSettings?.swingTF
             });
@@ -708,16 +719,22 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
     // Handle Correction Check
     bot.action(/^cor_ck_(.+)$/, async (ctx) => {
         try {
-            const symbol = ctx.match[1].includes('/') ? ctx.match[1] : `${ctx.match[1]}/USDT:USDT`;
-            await ctx.answerCbQuery('🔍 جاري فحص رادار التصحيح...');
+            const rest = ctx.match[1];
+            const parts = rest.split('_');
+            const s = parts[0];
+            const d = parts[1] === 'L' ? 'LONG' : 'SHORT';
+            const v = parts[2] || 'V6';
+
+            const symbol = s.includes('/') ? s : `${s}/USDT:USDT`;
+            await ctx.answerCbQuery(`🔍 جاري فحص رادار التصحيح (${v})...`);
 
             const user = await User.findOne({ telegramId: ctx.from!.id.toString() });
-            const res = await analysisService.analyze(symbol, 'V5', {
+            const res = await analysisService.analyze(symbol, v as any, {
                 quickTF: user?.analysisSettings?.scalpTF,
                 longTF: user?.analysisSettings?.swingTF
             });
 
-            const correctionReport = await analysisService.generateCorrectionReport(res);
+            const correctionReport = await analysisService.generateCorrectionReport(res, d);
 
             await ctx.reply(correctionReport, { parse_mode: 'Markdown' });
 

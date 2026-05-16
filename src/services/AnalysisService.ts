@@ -456,22 +456,21 @@ export class AnalysisService {
         };
     }
 
-    async generateCorrectionReport(res: AnalysisResult): Promise<string> {
+    async generateCorrectionReport(res: AnalysisResult, direction: "LONG" | "SHORT"): Promise<string> {
         const symbol = res.symbol;
         const tfs = ['5m', '15m', '1h'];
-
         // Parallel fetching for correction report
         const results = await Promise.all(tfs.map(async tf => {
             const ohlcv = await this.bingxService.fetchOHLCV(symbol, tf, 50);
-            const div = TechnicalAnalyzer.detectBearishDivergence(ohlcv);
-            const direction = res.scalp.type === 'NONE' ? 'LONG' : res.scalp.type;
+            // const direction = (res.scalp.type === 'NONE' ? 'LONG' : res.scalp.type) as "LONG" | "SHORT";
+            const div = TechnicalAnalyzer.detectDivergence(ohlcv, direction);
             const fib = TechnicalAnalyzer.calculateCorrectionFibLevels(ohlcv, direction);
             return { tf, div, fib, price: ohlcv[ohlcv.length - 1].close };
         }));
 
         let r = `🔍 **رادار التصحيح المتعدد (MTF Correction) - ${symbol}** 🔍\n`;
         r += `━━━━━━━━━━━━━━\n`;
-        r += `💵 السعر الحالي: **$${res.currentPrice.toFixed(4)}**\n\n`;
+        r += `💵 السعر الحالي: **$${res.currentPrice.toFixed(res.pricePrecision)}**\n\n`;
 
         results.forEach(item => {
             const divEmoji = item.div.detected ? '⚠️' : '✅';
@@ -516,8 +515,8 @@ export class AnalysisService {
         return AnalysisFormatter.formatSignalText(symbol, type, entry, targets, sl, leverage, pricePrecision);
     }
 
-    detectBearishDivergence(ohlcv: OHLCV[]): { detected: boolean, description: string } {
-        return TechnicalAnalyzer.detectBearishDivergence(ohlcv);
+    detectDivergence(ohlcv: OHLCV[], direction: 'LONG' | 'SHORT' = 'LONG'): { detected: boolean, description: string } {
+        return TechnicalAnalyzer.detectDivergence(ohlcv, direction);
     }
 
     calculateCorrectionFibLevels(ohlcv: OHLCV[], direction: 'LONG' | 'SHORT' = 'LONG') {

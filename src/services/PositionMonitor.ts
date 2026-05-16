@@ -215,18 +215,21 @@ export class PositionMonitor {
                                 const ohlcv5m = await this.bingx.fetchOHLCV(symbol, '5m', 50);
                                 const p = await this.bingx.getPricePrecision(symbol);
                                 if (ohlcv5m.length >= 20) {
-                                    const divergence = this.analysis.detectBearishDivergence(ohlcv5m);
-                                    const fib = this.analysis.calculateCorrectionFibLevels(ohlcv5m, trade.direction);
-
+                                    const divergence = this.analysis.detectDivergence(ohlcv5m, trade.direction as 'LONG' | 'SHORT');
+                                    const fib = this.analysis.calculateCorrectionFibLevels(ohlcv5m, trade.direction as 'LONG' | 'SHORT');
+                                    
                                     if (divergence.detected) {
                                         logger.info(`Correction Warning (Divergence) for ${trade.symbol}`);
+                                        const typeMsg = trade.direction === 'LONG' ? 'انحراف سلبي (Bearish)' : 'انحراف إيجابي (Bullish)';
+                                        const zoneMsg = trade.direction === 'LONG' ? 'منطقة الدعم' : 'منطقة المقاومة';
+
                                         const warningMsg = `⚠️ <b>تحذير استراتيجي: ضعف في الزخم!</b>\n\n` +
                                             `📉 الرمز: <b>${trade.symbol}</b>\n` +
-                                            `🔍 الإشارة: <b>انحراف سلبي (Bearish Divergence)</b>\n` +
-                                            `🛡️ منطقة الارتداد المتوقعة (Zone):\n` +
+                                            `🔍 الإشارة: <b>${typeMsg}</b>\n` +
+                                            `🛡️ ${zoneMsg} المتوقعة (Zone):\n` +
                                             `🔖 من: <b>$${fib.fib500.toFixed(p)}</b>\n` +
                                             `🔖 إلى: <b>$${fib.fib618.toFixed(p)}</b> (المستوى الذهبي)\n\n` +
-                                            `💡 يمثل هذا النطاق أقوى منطقة دعم يتوقع أن يرتد منها السعر لإكمال الاتجاه.`;
+                                            `💡 يمثل هذا النطاق أقوى منطقة يتوقع أن يرتد منها السعر لإكمال الاتجاه.`;
                                         await this.notifier(telegramId, warningMsg);
                                         trade.correctionWarningSent = true;
                                         await trade.save();
