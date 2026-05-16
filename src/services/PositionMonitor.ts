@@ -17,7 +17,7 @@ export class PositionMonitor {
         this.notifier = notifier;
     }
 
-    start(intervalMs: number = 10000) { // Check every 30s
+    start(intervalMs: number = 30000) { // Check every 30s
         if (this.isRunning) return;
         this.isRunning = true;
         logger.info('Starting Position Monitor...');

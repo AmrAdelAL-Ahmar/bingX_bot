@@ -10,9 +10,11 @@ export class BingXService {
         this.exchange = new ccxt.bingx({
             apiKey: apiKey,
             secret: secretKey,
+            timeout: 30000,
             options: {
                 defaultType: 'swap', // 'swap' for futures/perpetuals
                 adjustForTimeDifference: true,
+                recvWindow: 60000,
             },
             enableRateLimit: true,
         });
