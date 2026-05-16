@@ -372,18 +372,30 @@ export const getBacktestDaysKeyboard = (step: string, mode: string, version: str
     };
 };
 
-export const getBacktestCapitalKeyboard = (days: string, step: string, mode: string, version: string, symbol: string) => {
+export const getBacktestMarginModeKeyboard = (days: string, step: string, mode: string, version: string, symbol: string) => {
     return {
         inline_keyboard: [
             [
-                { text: '100$', callback_data: `btw_c_100_${days}_${step}_${mode}_${version}_${symbol}` },
-                { text: '200$', callback_data: `btw_c_200_${days}_${step}_${mode}_${version}_${symbol}` },
-                { text: '500$', callback_data: `btw_c_500_${days}_${step}_${mode}_${version}_${symbol}` }
+                { text: 'معزول (Isolated)', callback_data: `btw_mm_ISO_${days}_${step}_${mode}_${version}_${symbol}` },
+                { text: 'متبادل (Cross)', callback_data: `btw_mm_CRO_${days}_${step}_${mode}_${version}_${symbol}` }
+            ],
+            [{ text: 'إلغاء ❌', callback_data: 'btw_cancel' }]
+        ]
+    };
+};
+
+export const getBacktestCapitalKeyboard = (mm: string, days: string, step: string, mode: string, version: string, symbol: string) => {
+    return {
+        inline_keyboard: [
+            [
+                { text: '100$', callback_data: `btw_c_100_${mm}_${days}_${step}_${mode}_${version}_${symbol}` },
+                { text: '200$', callback_data: `btw_c_200_${mm}_${days}_${step}_${mode}_${version}_${symbol}` },
+                { text: '500$', callback_data: `btw_c_500_${mm}_${days}_${step}_${mode}_${version}_${symbol}` }
             ],
             [
-                { text: '1,000$', callback_data: `btw_c_1000_${days}_${step}_${mode}_${version}_${symbol}` },
-                { text: '10,000$', callback_data: `btw_c_10000_${days}_${step}_${mode}_${version}_${symbol}` },
-                { text: '100,000$', callback_data: `btw_c_100000_${days}_${step}_${mode}_${version}_${symbol}` }
+                { text: '1,000$', callback_data: `btw_c_1000_${mm}_${days}_${step}_${mode}_${version}_${symbol}` },
+                { text: '10,000$', callback_data: `btw_c_10000_${mm}_${days}_${step}_${mode}_${version}_${symbol}` },
+                { text: '100,000$', callback_data: `btw_c_100000_${mm}_${days}_${step}_${mode}_${version}_${symbol}` }
             ],
             [{ text: 'إلغاء ❌', callback_data: 'btw_cancel' }]
         ]

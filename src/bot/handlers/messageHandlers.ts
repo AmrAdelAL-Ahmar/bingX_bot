@@ -2,7 +2,7 @@ import { Telegraf } from 'telegraf';
 import logger from '../../utils/logger';
 import User from '../../models/User';
 import Trade from '../../models/Trade';
-import { getMainMenuKeyboard, getTraderSettingsKeyboard, getAlgoVersionKeyboard, getAnalysisActionKeyboard, getAnalysisSettingsKeyboard, getTFSelectionKeyboard, getLimitSelectionKeyboard, getRSISelectionKeyboard, getBacktestVersionKeyboard, getBacktestModeKeyboard, getBacktestStepKeyboard, getBacktestDaysKeyboard, getBacktestCapitalKeyboard } from '../keyboards/baseKeyboards';
+import { getMainMenuKeyboard, getTraderSettingsKeyboard, getAlgoVersionKeyboard, getAnalysisActionKeyboard, getAnalysisSettingsKeyboard, getTFSelectionKeyboard, getLimitSelectionKeyboard, getRSISelectionKeyboard, getBacktestVersionKeyboard, getBacktestModeKeyboard, getBacktestStepKeyboard, getBacktestMarginModeKeyboard, getBacktestDaysKeyboard, getBacktestCapitalKeyboard } from '../keyboards/baseKeyboards';
 import { AnalysisService } from '../../services/AnalysisService';
 import { BingXService } from '../../services/BingXService';
 import { BacktestService } from '../../services/BacktestService';
@@ -17,7 +17,7 @@ function generateCSVBuffer(trades: any[]): Buffer {
     const headers = [
         'Type', 'Mode', 'Entry Date', 'Close Date', 'Status', 'Duration (Mins)',
         'Entry Price', 'TP', 'SL', 'Close Price',
-        'Available_Margin_Before', 'Total_Equity_Before', 'Margin_Used', 'Margin_%', 'Leverage', 'PnL_USDT', 'Available_Margin_After', 'Total_Equity_After',
+        'Margin_Mode', 'Available_Margin_Before', 'Total_Equity_Before', 'Margin_Used', 'Margin_%', 'Leverage', 'PnL_USDT', 'PnL_%', 'Available_Margin_After', 'Total_Equity_After',
         'Signal Reason', 'Matrix Score (%)', 'Candles_Analyzed_Quick', 'Candles_Analyzed_Long',
         'Quick_RSI', 'Quick_MACD', 'Quick_MACD_Sig', 'Quick_MACD_Hist',
         'Quick_BB_Up', 'Quick_BB_Low', 'Quick_StochRSI', 'Quick_CCI', 'Quick_WilliamsR', 'Quick_ATR', 'Quick_Trend',
@@ -49,12 +49,14 @@ function generateCSVBuffer(trades: any[]): Buffer {
             t.tp || 0,
             t.sl || 0,
             t.closePrice || '',
+            t.marginMode || 'ISOLATED',
             t.availableCapitalBefore?.toFixed(2) || '',
             t.totalCapitalBefore?.toFixed(2) || '',
             t.marginUsed?.toFixed(2) || '',
             t.marginPercent?.toFixed(2) || '',
             t.leverage || '',
             t.pnlUSDT?.toFixed(2) || '',
+            t.pnlPercent?.toFixed(2) || '',
             t.availableCapitalAfter?.toFixed(2) || '',
             t.totalCapitalAfter?.toFixed(2) || '',
             safeReason,
@@ -731,23 +733,39 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
         const version = ctx.match[4];
         const symbol = ctx.match[5];
         
-        await ctx.editMessageText(`اختر رأس المال الابتدائي المراد اختباره:`, {
-            reply_markup: getBacktestCapitalKeyboard(days, step, mode, version, symbol)
+        await ctx.editMessageText(`اختر وضع الهامش (Margin Mode) للاختبار الرجعي:`, {
+            reply_markup: getBacktestMarginModeKeyboard(days, step, mode, version, symbol)
         });
     });
 
-    bot.action(/^btw_c_(\d+)_(\d+)_(15|30|60)_(SCALP|SWING)_(V[1-6])_(.+)$/, async (ctx) => {
-        const initialCapital = parseInt(ctx.match[1]);
-        const days = parseInt(ctx.match[2]);
-        const stepMinutes = parseInt(ctx.match[3]);
-        const mode = ctx.match[4] as 'SCALP' | 'SWING';
+    bot.action(/^btw_mm_(ISO|CRO)_(\d+)_(15|30|60)_(SCALP|SWING)_(V[1-6])_(.+)$/, async (ctx) => {
+        const mm = ctx.match[1];
+        const days = ctx.match[2];
+        const step = ctx.match[3];
+        const mode = ctx.match[4];
         const version = ctx.match[5];
-        const symbolInput = ctx.match[6];
+        const symbol = ctx.match[6];
+        
+        await ctx.editMessageText(`اختر رأس المال الابتدائي المراد اختباره:`, {
+            reply_markup: getBacktestCapitalKeyboard(mm, days, step, mode, version, symbol)
+        });
+    });
+
+    bot.action(/^btw_c_(\d+)_(ISO|CRO)_(\d+)_(15|30|60)_(SCALP|SWING)_(V[1-6])_(.+)$/, async (ctx) => {
+        const initialCapital = parseInt(ctx.match[1]);
+        const mm = ctx.match[2];
+        const days = parseInt(ctx.match[3]);
+        const stepMinutes = parseInt(ctx.match[4]);
+        const mode = ctx.match[5] as 'SCALP' | 'SWING';
+        const version = ctx.match[6];
+        const symbolInput = ctx.match[7];
         
         const symbol = symbolInput.includes('/') ? symbolInput : `${symbolInput}/USDT:USDT`;
         const modeText = mode === 'SCALP' ? 'سكالبينج ⚡️' : 'سوينج 🌊';
+        const marginModeText = mm === 'CRO' ? 'متبادل (Cross)' : 'معزول (Isolated)';
+        const marginModeVal = mm === 'CRO' ? 'CROSS' : 'ISOLATED';
 
-        await ctx.editMessageText(`⏳ جاري إجراء الاختبار الرجعي المتقدم...\nالعملة: ${symbol}\nالإصدار: ${version}\nالنوع: ${modeText}\nفاصل التحليل: كل ${stepMinutes} دقيقة\nمدة الاختبار: آخر ${days} أيام\nرأس المال: ${initialCapital}$\n\n*(يرجى الانتظار، قد يستغرق سحب البيانات الدقيقة وتحليلها وقتاً طويلاً)*`);
+        await ctx.editMessageText(`⏳ جاري إجراء الاختبار الرجعي المتقدم...\nالعملة: ${symbol}\nالإصدار: ${version}\nالنوع: ${modeText}\nالوضع: ${marginModeText}\nفاصل التحليل: كل ${stepMinutes} دقيقة\nمدة الاختبار: آخر ${days} أيام\nرأس المال: ${initialCapital}$\n\n*(يرجى الانتظار، قد يستغرق سحب البيانات الدقيقة وتحليلها وقتاً طويلاً)*`);
         
         try {
             // Using user's default TFs for quick and long TF
@@ -764,7 +782,8 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                 stepMinutes: stepMinutes,
                 mode: mode,
                 initialCapital: initialCapital,
-                marginPerTradePercentage: 3
+                marginPerTradePercentage: 3,
+                marginMode: marginModeVal
             });
             
             if (user) {

@@ -31,7 +31,7 @@ export class BacktestService {
         private analysisService: AnalysisService
     ) { }
 
-    async runAdvancedBacktest(symbol: string, version: string, options: { quickTF: string, longTF: string, days: number, stepMinutes: number, mode: 'SCALP' | 'SWING', initialCapital?: number, marginPerTradePercentage?: number }): Promise<BacktestResult> {
+    async runAdvancedBacktest(symbol: string, version: string, options: { quickTF: string, longTF: string, days: number, stepMinutes: number, mode: 'SCALP' | 'SWING', initialCapital?: number, marginPerTradePercentage?: number, marginMode?: string }): Promise<BacktestResult> {
         logger.info(`Running Time-Step Backtest for ${symbol} on ${version} over ${options.days} days with step ${options.stepMinutes}m (Mode: ${options.mode})`);
 
         const stepMs = options.stepMinutes * 60 * 1000;
@@ -296,6 +296,7 @@ export class BacktestService {
         let activeCapital = initialCapital; // Liquid balance
         let totalCapital = initialCapital; // Final account size (includes locked margin)
         const riskPercentage = options.marginPerTradePercentage || 3;
+        const marginMode = options.marginMode || 'ISOLATED';
         const defaultLeverage = 10; // For backtesting simulation
         let peakCapital = totalCapital;
         let maxDrawdown = 0;
@@ -317,8 +318,15 @@ export class BacktestService {
             if (event.type === 'OPEN') {
                 const requestedMargin = totalCapital * (riskPercentage / 100);
                 
+                let shouldSkip = false;
+                if (marginMode === 'ISOLATED' && activeCapital < 5) {
+                    shouldSkip = true;
+                } else if (marginMode === 'CROSS' && totalCapital < 5) {
+                    shouldSkip = true;
+                }
+
                 // If we don't have enough available capital, scale it down or skip.
-                if (activeCapital < 5) { // Minimum 5 USDT to trade
+                if (shouldSkip) { // Minimum 5 USDT to trade
                     event.trade.skipped = true;
                     event.trade.skipReason = 'Insufficient Margin';
                     skippedTrades++;
@@ -336,11 +344,19 @@ export class BacktestService {
                     continue;
                 }
 
+                event.trade.marginMode = marginMode;
                 event.trade.availableCapitalBefore = activeCapital;
                 event.trade.totalCapitalBefore = totalCapital;
                 
-                const actualMargin = Math.min(requestedMargin, activeCapital);
-                activeCapital -= actualMargin;
+                let actualMargin = 0;
+                if (marginMode === 'ISOLATED') {
+                    actualMargin = Math.min(requestedMargin, activeCapital);
+                    activeCapital -= actualMargin;
+                } else {
+                    actualMargin = requestedMargin; // In CROSS, total capital acts as backing
+                    activeCapital -= actualMargin;
+                    if (activeCapital < 0) activeCapital = 0; // Prevent negative available balance logic internally
+                }
                 
                 event.trade.marginUsed = actualMargin;
                 event.trade.marginPercent = (actualMargin / totalCapital) * 100;
@@ -358,6 +374,7 @@ export class BacktestService {
                 }
 
                 const pnlUSDT = margin * pnlMultiplier;
+                const pnlPercent = pnlMultiplier * 100;
                 
                 // Free up the margin + PnL
                 activeCapital += (margin + pnlUSDT);
@@ -372,6 +389,7 @@ export class BacktestService {
                 }
 
                 event.trade.pnlUSDT = pnlUSDT;
+                event.trade.pnlPercent = pnlPercent;
                 event.trade.availableCapitalAfter = activeCapital;
                 event.trade.totalCapitalAfter = totalCapital;
             }
@@ -379,6 +397,26 @@ export class BacktestService {
 
         // Adjust stats for skipped trades
         stats.total -= skippedTrades;
+
+        // Calculate average percentages
+        const validTrades = generatedTrades.filter(t => !t.skipped);
+        let totalPnlPercentWin = 0;
+        let totalPnlPercentLoss = 0;
+        let winCount = 0;
+        let lossCount = 0;
+        
+        for (const t of validTrades) {
+            if (t.status === 'WIN' && t.pnlPercent !== undefined) {
+                totalPnlPercentWin += t.pnlPercent;
+                winCount++;
+            } else if (t.status === 'LOSS' && t.pnlPercent !== undefined) {
+                totalPnlPercentLoss += t.pnlPercent;
+                lossCount++;
+            }
+        }
+        
+        const avgWinPercent = winCount > 0 ? (totalPnlPercentWin / winCount) : 0;
+        const avgLossPercent = lossCount > 0 ? (totalPnlPercentLoss / lossCount) : 0;
 
         const totalClosed = stats.total - stats.open;
         const totalWins = stats.longWins + stats.shortWins;
@@ -403,8 +441,11 @@ export class BacktestService {
 صافي الربح/الخسارة: **${netProfit >= 0 ? '+' : ''}${netProfit.toFixed(2)} USDT**
 نسبة نمو الحساب (ROI): **${roi >= 0 ? '+' : ''}${roi.toFixed(2)}%**
 أقصى تراجع (Max Drawdown): **${maxDrawdown.toFixed(2)}%**
+متوسط نسبة الربح للصفقة: **+${avgWinPercent.toFixed(2)}%**
+متوسط نسبة الخسارة للصفقة: **${avgLossPercent.toFixed(2)}%**
 حجم الدخول للصفقة (Margin): **${riskPercentage}% من الرصيد المتوفر**
 الرافعة المالية المفترضة: **${defaultLeverage}x**
+وضع الهامش: **${marginMode === 'CROSS' ? 'متبادل (Cross)' : 'معزول (Isolated)'}**
 
 🔢 **إحصائيات الصفقات:**
 إجمالي الإشارات المنفذة: **${stats.total}**
