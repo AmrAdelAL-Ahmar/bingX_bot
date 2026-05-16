@@ -17,7 +17,8 @@ export const getMainMenuKeyboard = (user: any) => {
                 { text: '❌ إلغاء صفقة محددة' }
             ],
             [
-                { text: '📊 التحليل الذكي (V1/V2)' }
+                { text: '📊 التحليل الذكي (V1/V2)' },
+                { text: '🔬 اختبار الاستراتيجيات' }
             ],
             [
                 { text: '🛑 إلغاء كل الصفقات المفتوحة' }
@@ -315,6 +316,59 @@ export const getAlgoVersionKeyboard = () => {
         ],
         resize_keyboard: true,
         is_persistent: true
+    };
+};
+
+// --- BACKTEST WIZARD KEYBOARDS (INLINE) ---
+export const getBacktestVersionKeyboard = (symbol: string) => {
+    return {
+        inline_keyboard: [
+            [{ text: 'V1 (الأساسي)', callback_data: `btw_v_V1_${symbol}` }, { text: 'V2 (الكمي)', callback_data: `btw_v_V2_${symbol}` }],
+            [{ text: 'V3 (المصفوفة)', callback_data: `btw_v_V3_${symbol}` }, { text: 'V4 (ثنائي الاتجاه)', callback_data: `btw_v_V4_${symbol}` }],
+            [{ text: 'V5 (تنبؤي)', callback_data: `btw_v_V5_${symbol}` }, { text: 'V6 (Sniper)', callback_data: `btw_v_V6_${symbol}` }],
+            [{ text: 'إلغاء ❌', callback_data: 'btw_cancel' }]
+        ]
+    };
+};
+
+export const getBacktestModeKeyboard = (version: string, symbol: string) => {
+    return {
+        inline_keyboard: [
+            [
+                { text: 'سكالبينج (Scalp) ⚡️', callback_data: `btw_m_SCALP_${version}_${symbol}` },
+                { text: 'سوينج (Swing) 🌊', callback_data: `btw_m_SWING_${version}_${symbol}` }
+            ],
+            [{ text: 'إلغاء ❌', callback_data: 'btw_cancel' }]
+        ]
+    };
+};
+
+export const getBacktestStepKeyboard = (mode: string, version: string, symbol: string) => {
+    return {
+        inline_keyboard: [
+            [
+                { text: 'كل 15 دقيقة', callback_data: `btw_s_15_${mode}_${version}_${symbol}` },
+                { text: 'كل 30 دقيقة', callback_data: `btw_s_30_${mode}_${version}_${symbol}` },
+                { text: 'كل 1 ساعة', callback_data: `btw_s_60_${mode}_${version}_${symbol}` }
+            ],
+            [{ text: 'إلغاء ❌', callback_data: 'btw_cancel' }]
+        ]
+    };
+};
+
+export const getBacktestDaysKeyboard = (step: string, mode: string, version: string, symbol: string) => {
+    return {
+        inline_keyboard: [
+            [
+                { text: 'يوم واحد', callback_data: `btw_d_1_${step}_${mode}_${version}_${symbol}` },
+                { text: '3 أيام', callback_data: `btw_d_3_${step}_${mode}_${version}_${symbol}` }
+            ],
+            [
+                { text: '5 أيام', callback_data: `btw_d_5_${step}_${mode}_${version}_${symbol}` },
+                { text: '7 أيام', callback_data: `btw_d_7_${step}_${mode}_${version}_${symbol}` }
+            ],
+            [{ text: 'إلغاء ❌', callback_data: 'btw_cancel' }]
+        ]
     };
 };
 

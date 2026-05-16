@@ -40,12 +40,19 @@ export class V6Engine implements ITradingEngine {
 
     private runSniperLogic(cp: number, data: AnalysisDetails, m: MatrixResult, ohlcv: OHLCV[], vwap: number, mode: 'SCALP' | 'SWING'): TradeRecommendation {
         let score = 0;
+        let reason = [];
         const isAboveVWAP = cp > vwap;
 
-        score += isAboveVWAP ? 25 : -25;
-        score += (m.percentage - 50) * 0.8;
-        if (data.rsi < 35) score += 15;
-        else if (data.rsi > 65) score -= 15;
+        if (isAboveVWAP) { score += 25; reason.push('Price > VWAP (+25)'); }
+        else { score -= 25; reason.push('Price < VWAP (-25)'); }
+
+        const matrixScore = (m.percentage - 50) * 0.8;
+        score += matrixScore;
+        reason.push(`Matrix ${m.percentage}% (${matrixScore > 0 ? '+' : ''}${matrixScore.toFixed(1)})`);
+
+        if (data.rsi < 35) { score += 15; reason.push('RSI < 35 (+15)'); }
+        else if (data.rsi > 65) { score -= 15; reason.push('RSI > 65 (-15)'); }
+        else { reason.push('RSI Neutral (0)'); }
 
         let winRate = Math.min(50 + (Math.abs(score) * 0.6), 96);
         let type: 'LONG' | 'SHORT' | 'NONE' = score >= 0 ? 'LONG' : 'SHORT';
@@ -83,7 +90,8 @@ export class V6Engine implements ITradingEngine {
         if (type === 'NONE') {
             return {
                 status: `🚫 صفقة ملغاة (${rejectionReason})`,
-                type: 'NONE', entry: cp, tp: 0, sl: 0, timeEstimate: 0, winRate: 0, reverseProb: 0, rejectionReason
+                type: 'NONE', entry: cp, tp: 0, sl: 0, timeEstimate: 0, winRate: 0, reverseProb: 0, rejectionReason,
+                signalReason: `Rejected: ${rejectionReason}`
             };
         }
 
@@ -92,6 +100,8 @@ export class V6Engine implements ITradingEngine {
         const sl = type === 'LONG'
             ? Math.min(cp - slDistance, data.levels.lastSwingLow - (data.atr * 0.5))
             : Math.max(cp + slDistance, data.levels.lastSwingHigh + (data.atr * 0.5));
+            
+        const finalReason = `Score: ${score.toFixed(1)} | Factors: [${reason.join(', ')}] | Radar: ${div.detected ? 'Confirmed' : 'Skipped'} -> ${type}`;
 
         return {
             status: `${type === 'LONG' ? '🟢 احتمالية صعود' : '🔴 احتمالية هبوط'} (${winRate.toFixed(1)}%)`,
@@ -99,7 +109,8 @@ export class V6Engine implements ITradingEngine {
             tp, sl,
             timeEstimate: mode === 'SCALP' ? 20 : 120,
             winRate, reverseProb: 100 - winRate,
-            confidenceScore: score
+            confidenceScore: score,
+            signalReason: finalReason
         };
     }
 }

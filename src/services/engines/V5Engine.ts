@@ -41,6 +41,8 @@ export class V5Engine implements ITradingEngine {
         const pred = TechnicalAnalyzer.predictNextPriceLinear(ohlcv, 20);
         const type = pred.predictedPrice > cp ? 'LONG' : 'SHORT';
         const winRate = Math.min(70 + (pred.confidence * 0.1), 96);
+        
+        const finalReason = `Predicted Price: $${pred.predictedPrice.toFixed(2)} vs Current: $${cp.toFixed(2)} (Confidence: ${pred.confidence.toFixed(1)}%) -> ${type}`;
 
         return {
             status: `🔮 V5 PREDICTIVE AI - Expected: $${pred.predictedPrice.toFixed(2)}`,
@@ -48,7 +50,8 @@ export class V5Engine implements ITradingEngine {
             tp: pred.predictedPrice,
             sl: type === 'LONG' ? cp - (data.atr * 4) : cp + (data.atr * 4),
             timeEstimate: data.timeframe.includes('m') ? 30 : 120,
-            winRate, reverseProb: 100 - winRate
+            winRate, reverseProb: 100 - winRate,
+            signalReason: finalReason
         };
     }
 }

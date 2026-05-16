@@ -85,6 +85,7 @@ export interface TradeRecommendation {
     winRate: number;
     reverseProb: number;
     rejectionReason?: string;
+    signalReason?: string; // Add string to explain why this signal was generated
     confidenceScore?: number;
 }
 

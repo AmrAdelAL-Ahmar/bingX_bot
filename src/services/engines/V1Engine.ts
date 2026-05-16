@@ -37,14 +37,23 @@ export class V1Engine implements ITradingEngine {
 
     private runProbabilityLogic(cp: number, data: AnalysisDetails, isAboveVWAP: boolean, m: MatrixResult): TradeRecommendation {
         let score = 0;
-        score += isAboveVWAP ? 25 : -25;
-        score += (m.percentage - 50) * 0.8;
-        if (data.rsi < 35) score += 15;
-        else if (data.rsi > 65) score -= 15;
+        let reason = [];
+        
+        if (isAboveVWAP) { score += 25; reason.push('Price > VWAP (+25)'); }
+        else { score -= 25; reason.push('Price < VWAP (-25)'); }
+
+        const matrixScore = (m.percentage - 50) * 0.8;
+        score += matrixScore;
+        reason.push(`Matrix ${m.percentage}% (${matrixScore > 0 ? '+' : ''}${matrixScore.toFixed(1)})`);
+
+        if (data.rsi < 35) { score += 15; reason.push('RSI < 35 (+15)'); }
+        else if (data.rsi > 65) { score -= 15; reason.push('RSI > 65 (-15)'); }
+        else { reason.push('RSI Neutral (0)'); }
 
         const winRate = Math.min(50 + (Math.abs(score) * 0.6), 96);
         const type = score >= 0 ? 'LONG' : 'SHORT';
         const slDistance = data.atr * 2.5;
+        const finalReason = `Score: ${score.toFixed(1)} | Factors: [${reason.join(', ')}]`;
 
         return {
             status: `${type === 'LONG' ? '🟢 احتمالية صعود' : '🔴 احتمالية هبوط'} (${winRate.toFixed(1)}%)`,
@@ -53,7 +62,8 @@ export class V1Engine implements ITradingEngine {
             sl: type === 'LONG' ? cp - slDistance : cp + slDistance,
             timeEstimate: data.timeframe.includes('m') ? 20 : 90,
             winRate, reverseProb: 100 - winRate,
-            confidenceScore: score
+            confidenceScore: score,
+            signalReason: finalReason
         };
     }
 }

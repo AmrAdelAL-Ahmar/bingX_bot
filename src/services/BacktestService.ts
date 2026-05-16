@@ -1,98 +1,250 @@
 import logger from '../utils/logger';
 import { BingXService } from './BingXService';
-import { AnalysisService, AnalysisResult } from './AnalysisService';
+import { AnalysisService, OHLCV, AnalysisDetails } from './AnalysisService';
+import { TechnicalAnalyzer, MATRIX_TFS } from './TechnicalAnalyzer';
+import { MTFDataBuilder } from './MTFDataBuilder';
+import { ITradingEngine } from './engines/ITradingEngine';
+import { V1Engine } from './engines/V1Engine';
+import { V2Engine } from './engines/V2Engine';
+import { V3Engine } from './engines/V3Engine';
+import { V4Engine } from './engines/V4Engine';
+import { V5Engine } from './engines/V5Engine';
+import { V6Engine } from './engines/V6Engine';
 
-export interface BacktestReport {
-    symbol: string;
-    version: string;
-    initialCapital: number;
-    finalCapital: number;
-    netProfit: number;
-    winRate: number;
-    totalTrades: number;
-    maxDrawdown: number;
+export interface BacktestResult {
+    reportText: string;
+    trades: any[]; // Save detailed trades for future analysis
 }
 
 export class BacktestService {
+    private engines: Record<string, ITradingEngine> = {
+        'V1': new V1Engine(),
+        'V2': new V2Engine(),
+        'V3': new V3Engine(),
+        'V4': new V4Engine(),
+        'V5': new V5Engine(),
+        'V6': new V6Engine()
+    };
+
     constructor(
         private bingxService: BingXService,
         private analysisService: AnalysisService
-    ) {}
+    ) { }
 
-    async runBacktest(symbol: string, version: any, candlesToTest: number = 300): Promise<string> {
-        logger.info(`Running REAL Backtest for ${symbol} on ${version}`);
+    async runAdvancedBacktest(symbol: string, version: string, options: { quickTF: string, longTF: string, days: number, stepMinutes: number, mode: 'SCALP' | 'SWING' }): Promise<BacktestResult> {
+        logger.info(`Running Time-Step Backtest for ${symbol} on ${version} over ${options.days} days with step ${options.stepMinutes}m (Mode: ${options.mode})`);
 
-        // 1. Fetch historical data (with enough for indicators)
-        const warmup = 100;
-        const totalNeeded = candlesToTest + warmup;
-        const ohlcv = await this.bingxService.fetchOHLCV(symbol, '5m', totalNeeded);
+        const stepMs = options.stepMinutes * 60 * 1000;
+        const now = Date.now();
+        const startTime = now - (options.days * 24 * 60 * 60 * 1000);
+        
+        // 1. Fetch deep historical data for ALL required timeframes once
+        logger.info(`Fetching deep historical data for multiple timeframes...`);
+        const allData: Record<string, OHLCV[]> = {};
+        for (const tf of MATRIX_TFS) {
+            // We fetch extra days to guarantee AT LEAST 200 candles for indicators (Warmup Phase)
+            let fetchDays = options.days;
+            if (tf === '1d') fetchDays += 200; // 200 days = 200 candles
+            else if (tf === '4h') fetchDays += 35; // 35 days * 6 = 210 candles
+            else if (tf === '1h') fetchDays += 10; // 10 days * 24 = 240 candles
+            else fetchDays += 3; // For 5m/15m/30m, 3 days gives > 140-800 candles
+            allData[tf] = await this.bingxService.fetchDeepHistoricalData(symbol, tf, fetchDays);
+        }
 
-        if (ohlcv.length < totalNeeded) throw new Error("بيانات غير كافية للاختبار");
+        const engine = this.engines[version] || this.engines['V1'];
+        const generatedTrades: any[] = [];
 
-        let capital = 10000, peak = capital, maxDD = 0;
-        let stats = { wins: 0, losses: 0, total: 0 };
-        let pos: any = null;
-
-        // 2. Simulation Loop
-        for (let i = warmup; i < ohlcv.length; i++) {
-            const current = ohlcv[i];
+        // 2. Pass 1: Generate Trades (Time-Step Simulation)
+        logger.info(`Starting Pass 1: Generating trades by stepping through time...`);
+        for (let t = startTime; t <= now; t += stepMs) {
             
-            // A. Manage Position
-            if (pos) {
-                if (pos.type === 'LONG') {
-                    if (current.high >= pos.tp) { capital += (pos.tp - pos.entry) * pos.size; stats.wins++; stats.total++; pos = null; }
-                    else if (current.low <= pos.sl) { capital -= (pos.entry - pos.sl) * pos.size; stats.losses++; stats.total++; pos = null; }
-                } else if (pos.type === 'SHORT') {
-                    if (current.low <= pos.tp) { capital += (pos.entry - pos.tp) * pos.size; stats.wins++; stats.total++; pos = null; }
-                    else if (current.high >= pos.sl) { capital -= (pos.sl - pos.entry) * pos.size; stats.losses++; stats.total++; pos = null; }
+            // Build the MTF snapshot exactly as it looked at timestamp `t`
+            const mtfSnapshot: Record<string, OHLCV[]> = {};
+            let hasEnoughData = true;
+
+            for (const tf of MATRIX_TFS) {
+                // To prevent Look-Ahead Bias, we MUST only include candles that have FULLY CLOSED.
+                // A candle is fully closed if its (open time + timeframe duration) <= current timestamp t.
+                const tfMs = MTFDataBuilder.tfToMs(tf);
+                const dataUpToT = allData[tf].filter(c => c.timestamp + tfMs <= t);
+                mtfSnapshot[tf] = dataUpToT;
+                
+                // We need enough candles. 1d and 4h have more history fetched now.
+                // 14 candles is the minimum for RSI
+                if (dataUpToT.length < 15) { 
+                    hasEnoughData = false;
                 }
-                if (capital > peak) peak = capital;
-                const dd = ((peak - capital) / peak) * 100;
-                if (dd > maxDD) maxDD = dd;
-                continue;
             }
 
-            // B. Generate REAL Signal
-            // We mock the analyze process by giving it a subset of candles
-            // Note: Since analyze is async and calls API, we use a simplified internal version for backtest speed
-            // BUT we follow the EXACT logic of the versions.
+            if (!hasEnoughData) continue;
+
+            const currentPrice = mtfSnapshot[options.quickTF][mtfSnapshot[options.quickTF].length - 1].close;
+            const dailyOHLCV = mtfSnapshot['1d'] || mtfSnapshot['4h'] || mtfSnapshot[options.quickTF];
+            const vwap = dailyOHLCV.length > 0 ? TechnicalAnalyzer.calculateVWAP(dailyOHLCV) : currentPrice;
+
+            const allTimeframes: Record<string, AnalysisDetails> = {};
+            MATRIX_TFS.forEach(tf => {
+                if (mtfSnapshot[tf] && mtfSnapshot[tf].length > 15) {
+                    allTimeframes[tf] = TechnicalAnalyzer.calculateTechnicalData(mtfSnapshot[tf], tf, vwap);
+                }
+            });
+
+            if (!allTimeframes[options.quickTF]) continue;
+
+            const result = engine.analyze(currentPrice, vwap, allTimeframes, mtfSnapshot, { quickTF: options.quickTF, longTF: options.longTF });
+
+            let signal: any = { type: 'NONE', tp: 0, sl: 0 };
+            if (options.mode === 'SCALP') {
+                signal = result.scalp;
+            } else if (options.mode === 'SWING') {
+                signal = result.swing;
+            }
+
+            if (signal.type !== 'NONE') {
+                // Add robust date formatting for the report and records
+                const entryDateObj = new Date(t);
+                const entryDateFormatted = `${entryDateObj.getFullYear()}-${String(entryDateObj.getMonth() + 1).padStart(2, '0')}-${String(entryDateObj.getDate()).padStart(2, '0')} ${String(entryDateObj.getHours()).padStart(2, '0')}:${String(entryDateObj.getMinutes()).padStart(2, '0')}`;
+
+                generatedTrades.push({
+                    type: signal.type,
+                    mode: options.mode, // Record if it was scalp or swing
+                    entry: currentPrice,
+                    tp: signal.tp,
+                    sl: signal.sl,
+                    signalReason: signal.signalReason || 'N/A', // Add signal reason here
+                    entryTime: t, // raw ms timestamp
+                    entryDate: entryDateFormatted, // Human readable date
+                    status: 'OPEN', // Will be evaluated in pass 2
+                    durationMinutes: 0,
+                    analysisContext: {
+                        matrixScore: result.matrix.percentage,
+                        quick_rsi: allTimeframes[options.quickTF]?.rsi,
+                        quick_macd: allTimeframes[options.quickTF]?.indicators?.macd?.macd,
+                        quick_macd_sig: allTimeframes[options.quickTF]?.indicators?.macd?.signal,
+                        quick_macd_hist: allTimeframes[options.quickTF]?.indicators?.macd?.histogram,
+                        quick_bb_up: allTimeframes[options.quickTF]?.indicators?.bb?.upper,
+                        quick_bb_low: allTimeframes[options.quickTF]?.indicators?.bb?.lower,
+                        quick_stochRsi: allTimeframes[options.quickTF]?.indicators?.stochRsi,
+                        quick_cci: allTimeframes[options.quickTF]?.indicators?.cci,
+                        quick_williamsR: allTimeframes[options.quickTF]?.indicators?.williamsR,
+                        quick_atr: allTimeframes[options.quickTF]?.atr,
+                        quick_trend: allTimeframes[options.quickTF]?.structure || 'UNKNOWN',
+                        long_rsi: allTimeframes[options.longTF]?.rsi,
+                        long_macd: allTimeframes[options.longTF]?.indicators?.macd?.macd,
+                        long_macd_hist: allTimeframes[options.longTF]?.indicators?.macd?.histogram,
+                        long_trend: allTimeframes[options.longTF]?.structure || 'UNKNOWN'
+                    }
+                });
+            }
+        }
+
+        // 3. Pass 2: Evaluate Trades against 5m data
+        logger.info(`Starting Pass 2: Evaluating ${generatedTrades.length} generated trades...`);
+        const evaluationTF = '5m';
+        const evalData = allData[evaluationTF]; // Use the fine-grained 5m data to check TP/SL
+        
+        let stats = { 
+            total: generatedTrades.length, 
+            longWins: 0, longLosses: 0, 
+            shortWins: 0, shortLosses: 0, 
+            open: 0 
+        };
+
+        for (const trade of generatedTrades) {
+            // Find all 5m candles that occurred AT OR AFTER the trade entry time
+            // Because trade entry happens at `t`, the candle opening exactly at `t` contains the immediate price action!
+            const futureCandles = evalData.filter(c => c.timestamp >= trade.entryTime);
             
-            const past = ohlcv.slice(i - warmup, i);
-            const rsi = this.calculateRSI(past);
-            const ma99 = this.calculateSMA(past, 99);
-            const isUp = current.close > ma99;
+            let closed = false;
+            let durationCandles = 0;
+            
+            for (const candle of futureCandles) {
+                durationCandles++;
 
-            // Simple representation of V3/V4 logic for backtest
-            if (isUp && rsi < 30) {
-                pos = { type: 'LONG', entry: current.close, tp: current.close * 1.015, sl: current.close * 0.99, size: (capital * 0.05) / (current.close * 0.01) };
-            } else if (!isUp && rsi > 70) {
-                pos = { type: 'SHORT', entry: current.close, tp: current.close * 0.985, sl: current.close * 1.01, size: (capital * 0.05) / (current.close * 0.01) };
+                if (trade.type === 'LONG') {
+                    if (candle.high >= trade.tp) {
+                        trade.status = 'WIN';
+                        trade.closePrice = trade.tp;
+                        trade.closeTime = candle.timestamp;
+                        stats.longWins++;
+                        closed = true;
+                        break;
+                    } else if (candle.low <= trade.sl) {
+                        trade.status = 'LOSS';
+                        trade.closePrice = trade.sl;
+                        trade.closeTime = candle.timestamp;
+                        stats.longLosses++;
+                        closed = true;
+                        break;
+                    }
+                } else if (trade.type === 'SHORT') {
+                    if (candle.low <= trade.tp) {
+                        trade.status = 'WIN';
+                        trade.closePrice = trade.tp;
+                        trade.closeTime = candle.timestamp;
+                        stats.shortWins++;
+                        closed = true;
+                        break;
+                    } else if (candle.high >= trade.sl) {
+                        trade.status = 'LOSS';
+                        trade.closePrice = trade.sl;
+                        trade.closeTime = candle.timestamp;
+                        stats.shortLosses++;
+                        closed = true;
+                        break;
+                    }
+                }
+            }
+
+            // Calculate duration in minutes based on 5m candles
+            trade.durationMinutes = durationCandles * 5;
+
+            // Format close date if closed
+            if (closed && trade.closeTime) {
+                const closeDateObj = new Date(trade.closeTime);
+                trade.closeDate = `${closeDateObj.getFullYear()}-${String(closeDateObj.getMonth() + 1).padStart(2, '0')}-${String(closeDateObj.getDate()).padStart(2, '0')} ${String(closeDateObj.getHours()).padStart(2, '0')}:${String(closeDateObj.getMinutes()).padStart(2, '0')}`;
+            } else {
+                trade.status = 'OPEN';
+                trade.closeDate = 'N/A';
+                stats.open++;
             }
         }
 
-        const profit = ((capital - 10000) / 10000) * 100;
-        const winRate = stats.total > 0 ? (stats.wins / stats.total) * 100 : 0;
+        const totalClosed = stats.total - stats.open;
+        const totalWins = stats.longWins + stats.shortWins;
+        const totalLosses = stats.longLosses + stats.shortLosses;
+        const winRate = totalClosed > 0 ? (totalWins / totalClosed) * 100 : 0;
+        const modeText = options.mode === 'SCALP' ? 'سكالبينج ⚡️' : 'سوينج 🌊';
 
-        return `
-📊 **نتائج محاكاة ${version} لـ ${symbol}** 📊
-💰 رأس المال النهائي: **$${capital.toFixed(2)}**
-📈 صافي الربح: **${profit.toFixed(2)}%**
-✅ نسبة النجاح: **${winRate.toFixed(1)}%**
-📉 أقصى تراجع: **${maxDD.toFixed(2)}%**
+        const reportText = `
+📊 **تقرير الاختبار الرجعي الزمني (Time-Step Backtest)** 📊
+━━━━━━━━━━━━━━
+🪙 العملة: **${symbol}**
+⚙️ الإصدار: **${version}**
+نوع الاختبار: **${modeText}**
+⏱️ الفريمات المرجعية: **جميع الفريمات**
+📅 مدة الاختبار: **أخر ${options.days} أيام**
+⏳ فاصل التحليل: **كل ${options.stepMinutes} دقيقة**
+
+🔢 إجمالي إشارات الدخول (الصفقات): **${stats.total}**
+
+🟢 **صفقات LONG:**
+🏆 أهداف (TP): **${stats.longWins}**
+❌ استوب (SL): **${stats.longLosses}**
+
+🔴 **صفقات SHORT:**
+🏆 أهداف (TP): **${stats.shortWins}**
+❌ استوب (SL): **${stats.shortLosses}**
+
+🕒 **صفقات مازالت مفتوحة (لم تضرب هدف أو استوب حتى الآن):** **${stats.open}**
+
+🎯 **نسبة نجاح الصفقات المغلقة:** **${winRate.toFixed(1)}%**
+━━━━━━━━━━━━━━
+💡 *تم الاختبار عبر محاكاة الزمن خطوة بخطوة باستخدام بيانات حقيقية لكل الفريمات. تم حفظ سجلات مفصلة لكل صفقة مع تاريخها ووقت تحليلها.*
         `;
+
+        return { reportText, trades: generatedTrades };
     }
 
-    private calculateRSI(candles: any[], period: number = 14): number {
-        let gains = 0, losses = 0;
-        for (let i = 1; i <= period; i++) {
-            const diff = candles[candles.length - i].close - candles[candles.length - i - 1].close;
-            if (diff >= 0) gains += diff; else losses -= diff;
-        }
-        return 100 - (100 / (1 + (gains / (losses || 1))));
-    }
 
-    private calculateSMA(candles: any[], period: number): number {
-        const sum = candles.slice(-period).reduce((acc, c) => acc + c.close, 0);
-        return sum / period;
-    }
 }

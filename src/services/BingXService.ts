@@ -141,6 +141,59 @@ export class BingXService {
         }
     }
 
+    async fetchDeepHistoricalData(symbol: string, timeframe: string, days: number = 7) {
+        try {
+            await this.exchange.loadMarkets();
+            const now = Date.now();
+            let since = now - (days * 24 * 60 * 60 * 1000);
+            const allCandles: any[] = [];
+            const limit = 500; // Safe limit for CCXT/BingX usually
+
+            logger.info(`Fetching deep historical data for ${symbol} (${timeframe}) for the last ${days} days...`);
+
+            while (since < now) {
+                const ohlcv = await this.exchange.fetchOHLCV(symbol, timeframe, since, limit);
+                if (!ohlcv || ohlcv.length === 0) break;
+
+                const mapped = ohlcv.map((candle: any) => ({
+                    timestamp: candle[0],
+                    open: candle[1],
+                    high: candle[2],
+                    low: candle[3],
+                    close: candle[4],
+                    volume: candle[5]
+                }));
+
+                allCandles.push(...mapped);
+                
+                const lastCandleTime = ohlcv[ohlcv.length - 1][0];
+                
+                // If the last candle time is not progressing, break to avoid infinite loop
+                if (lastCandleTime <= since) {
+                    break;
+                }
+                
+                since = lastCandleTime + 1; // move to next ms
+
+                // Small delay to avoid rate limits
+                await new Promise(resolve => setTimeout(resolve, 200));
+            }
+
+            // CCXT might return overlapping or duplicate candles if we fetch exactly by timestamp, so let's deduplicate
+            const uniqueCandles = Array.from(new Map(allCandles.map(item => [item.timestamp, item])).values());
+            
+            // Sort to ensure chronological order
+            uniqueCandles.sort((a, b) => a.timestamp - b.timestamp);
+
+            logger.info(`Successfully fetched ${uniqueCandles.length} candles for ${symbol} (${timeframe})`);
+            return uniqueCandles;
+
+        } catch (error) {
+            logger.error(`Error fetching deep OHLCV for ${symbol} (${timeframe}): `, error);
+            throw error;
+        }
+    }
+
     /*
      * Place an order
      * @param symbol e.g., 'BTC/USDT:USDT'

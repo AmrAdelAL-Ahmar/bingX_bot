@@ -60,13 +60,21 @@ export class V2Engine implements ITradingEngine {
         const winRate = Math.min(60 + Math.abs(mfi - 50) * 0.8, 92);
         const slDistance = data.atr * 3;
 
+        let reason = [];
+        reason.push(`MFI: ${mfi.toFixed(1)}`);
+        if (mfi < 30) reason.push('Oversold (LONG bias)');
+        else if (mfi > 70) reason.push('Overbought (SHORT bias)');
+        else reason.push(`Matrix ${m.percentage.toFixed(1)}% -> ${type}`);
+        const finalReason = `Factors: [${reason.join(', ')}]`;
+
         return {
             status: `📊 V2 QUANT (${type}) - MFI: ${mfi.toFixed(0)}`,
             type, entry: cp,
             tp: type === 'LONG' ? cp + (slDistance * 1.5) : cp - (slDistance * 1.5),
             sl: type === 'LONG' ? cp - slDistance : cp + slDistance,
             timeEstimate: data.timeframe.includes('m') ? 60 : 240,
-            winRate, reverseProb: 100 - winRate
+            winRate, reverseProb: 100 - winRate,
+            signalReason: finalReason
         };
     }
 }

@@ -2,7 +2,7 @@ import { Telegraf } from 'telegraf';
 import logger from '../../utils/logger';
 import User from '../../models/User';
 import Trade from '../../models/Trade';
-import { getMainMenuKeyboard, getTraderSettingsKeyboard, getAlgoVersionKeyboard, getAnalysisActionKeyboard, getAnalysisSettingsKeyboard, getTFSelectionKeyboard, getLimitSelectionKeyboard, getRSISelectionKeyboard } from '../keyboards/baseKeyboards';
+import { getMainMenuKeyboard, getTraderSettingsKeyboard, getAlgoVersionKeyboard, getAnalysisActionKeyboard, getAnalysisSettingsKeyboard, getTFSelectionKeyboard, getLimitSelectionKeyboard, getRSISelectionKeyboard, getBacktestVersionKeyboard, getBacktestModeKeyboard, getBacktestStepKeyboard, getBacktestDaysKeyboard } from '../keyboards/baseKeyboards';
 import { AnalysisService } from '../../services/AnalysisService';
 import { BingXService } from '../../services/BingXService';
 import { BacktestService } from '../../services/BacktestService';
@@ -10,6 +10,60 @@ import { BacktestService } from '../../services/BacktestService';
 import { SignalParser } from '../../services/SignalParser';
 import { TradeManager } from '../../services/TradeManager';
 import { sendTelegramMessage } from '../../utils/telegram';
+
+function generateCSVBuffer(trades: any[]): Buffer {
+    if (!trades || trades.length === 0) return Buffer.from('');
+
+    const headers = [
+        'Type', 'Mode', 'Entry Date', 'Close Date', 'Status', 'Duration (Mins)',
+        'Entry Price', 'TP', 'SL', 'Close Price',
+        'Signal Reason', 'Matrix Score (%)',
+        'Quick_RSI', 'Quick_MACD', 'Quick_MACD_Sig', 'Quick_MACD_Hist',
+        'Quick_BB_Up', 'Quick_BB_Low', 'Quick_StochRSI', 'Quick_CCI', 'Quick_WilliamsR', 'Quick_ATR', 'Quick_Trend',
+        'Long_RSI', 'Long_MACD', 'Long_MACD_Hist', 'Long_Trend'
+    ];
+
+    let csvContent = headers.join(',') + '\n';
+
+    for (const t of trades) {
+        // Enclose signalReason in quotes to handle commas within the reason string
+        const safeReason = t.signalReason ? `"${t.signalReason}"` : '""';
+        
+        const row = [
+            t.type,
+            t.mode || 'UNKNOWN',
+            t.entryDate || '',
+            t.closeDate || '',
+            t.status || '',
+            t.durationMinutes || 0,
+            t.entry || 0,
+            t.tp || 0,
+            t.sl || 0,
+            t.closePrice || '',
+            safeReason,
+            t.analysisContext?.matrixScore?.toFixed(2) || '',
+            t.analysisContext?.quick_rsi?.toFixed(2) || '',
+            t.analysisContext?.quick_macd?.toFixed(4) || '',
+            t.analysisContext?.quick_macd_sig?.toFixed(4) || '',
+            t.analysisContext?.quick_macd_hist?.toFixed(4) || '',
+            t.analysisContext?.quick_bb_up?.toFixed(4) || '',
+            t.analysisContext?.quick_bb_low?.toFixed(4) || '',
+            t.analysisContext?.quick_stochRsi?.toFixed(2) || '',
+            t.analysisContext?.quick_cci?.toFixed(2) || '',
+            t.analysisContext?.quick_williamsR?.toFixed(2) || '',
+            t.analysisContext?.quick_atr?.toFixed(4) || '',
+            t.analysisContext?.quick_trend || '',
+            t.analysisContext?.long_rsi?.toFixed(2) || '',
+            t.analysisContext?.long_macd?.toFixed(4) || '',
+            t.analysisContext?.long_macd_hist?.toFixed(4) || '',
+            t.analysisContext?.long_trend || ''
+        ];
+        csvContent += row.join(',') + '\n';
+    }
+
+    // Prepend BOM for Excel utf-8 rendering
+    return Buffer.from('\uFEFF' + csvContent, 'utf-8');
+}
 
 export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManager) => {
     const bingxService = new BingXService();
@@ -350,6 +404,28 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                 });
             }
 
+            if (message === '🔬 اختبار الاستراتيجيات') {
+                user.botState = 'AWAITING_BT_SYMBOL';
+                await user.save();
+                return ctx.reply('يرجى إرسال رمز العملة الذي تريد اختباره (مثال: BTC):', {
+                    reply_markup: { keyboard: [[{ text: 'إلغاء ❌' }]], resize_keyboard: true }
+                });
+            }
+
+            if (user.botState === 'AWAITING_BT_SYMBOL') {
+                if (message === 'إلغاء ❌' || message === 'رجوع للقائمة الرئيسية 🔙') {
+                    user.botState = 'NONE';
+                    await user.save();
+                    return ctx.reply('تم الإلغاء.', { reply_markup: getMainMenuKeyboard(user) });
+                }
+                const symbol = message.toUpperCase();
+                user.botState = 'NONE';
+                await user.save();
+                return ctx.reply(`اختر إصدار الخوارزمية لاختبار ${symbol}:`, {
+                    reply_markup: getBacktestVersionKeyboard(symbol)
+                });
+            }
+
             if (user.botState && user.botState.startsWith('AWAITING_ANALYSIS_SYMBOL_')) {
                 if (message === 'إلغاء ❌' || message === 'رجوع للقائمة الرئيسية 🔙') {
                     user.botState = 'NONE';
@@ -508,6 +584,89 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
         }
     });
 
+    // --- BACKTEST WIZARD CALLBACKS ---
+    bot.action('btw_cancel', async (ctx) => {
+        await ctx.answerCbQuery('تم الإلغاء');
+        await ctx.deleteMessage().catch(() => {});
+    });
+
+    bot.action(/^btw_v_(V[1-6])_(.+)$/, async (ctx) => {
+        const version = ctx.match[1];
+        const symbol = ctx.match[2];
+        await ctx.editMessageText(`اختر نوع الاختبار (هل تريد اختبار الصفقات السريعة أم الاستثمارية؟)\nالإصدار: ${version} - العملة: ${symbol}:`, {
+            reply_markup: getBacktestModeKeyboard(version, symbol)
+        });
+    });
+
+    bot.action(/^btw_m_(SCALP|SWING)_(V[1-6])_(.+)$/, async (ctx) => {
+        const mode = ctx.match[1];
+        const version = ctx.match[2];
+        const symbol = ctx.match[3];
+        const modeText = mode === 'SCALP' ? 'سكالبينج ⚡️' : 'سوينج 🌊';
+        
+        await ctx.editMessageText(`اختر الفاصل الزمني للتحليل (كل كم دقيقة تريد أن يحلل البوت؟)\nالنوع: ${modeText} - الإصدار: ${version} - العملة: ${symbol}:`, {
+            reply_markup: getBacktestStepKeyboard(mode, version, symbol)
+        });
+    });
+
+    bot.action(/^btw_s_(15|30|60)_(SCALP|SWING)_(V[1-6])_(.+)$/, async (ctx) => {
+        const step = ctx.match[1];
+        const mode = ctx.match[2];
+        const version = ctx.match[3];
+        const symbol = ctx.match[4];
+        await ctx.editMessageText(`اختر مدة الاختبار (كم يوم للوراء؟)\nالفاصل: كل ${step} دقيقة - الإصدار: ${version} - العملة: ${symbol}:`, {
+            reply_markup: getBacktestDaysKeyboard(step, mode, version, symbol)
+        });
+    });
+
+    bot.action(/^btw_d_(\d+)_(15|30|60)_(SCALP|SWING)_(V[1-6])_(.+)$/, async (ctx) => {
+        const days = parseInt(ctx.match[1]);
+        const stepMinutes = parseInt(ctx.match[2]);
+        const mode = ctx.match[3] as 'SCALP' | 'SWING';
+        const version = ctx.match[4];
+        const symbolInput = ctx.match[5];
+        
+        const symbol = symbolInput.includes('/') ? symbolInput : `${symbolInput}/USDT:USDT`;
+        const modeText = mode === 'SCALP' ? 'سكالبينج ⚡️' : 'سوينج 🌊';
+
+        await ctx.editMessageText(`⏳ جاري إجراء الاختبار الرجعي المتقدم...\nالعملة: ${symbol}\nالإصدار: ${version}\nالنوع: ${modeText}\nفاصل التحليل: كل ${stepMinutes} دقيقة\nمدة الاختبار: آخر ${days} أيام\n\n*(يرجى الانتظار، قد يستغرق سحب البيانات الدقيقة وتحليلها وقتاً طويلاً)*`);
+        
+        try {
+            // Using user's default TFs for quick and long TF
+            const quickTF = '5m';
+            const longTF = '1h';
+
+            const telegramId = ctx.from?.id.toString();
+            const user = await User.findOne({ telegramId });
+            
+            const result = await backtestService.runAdvancedBacktest(symbol, version, {
+                quickTF: quickTF,
+                longTF: longTF,
+                days: days,
+                stepMinutes: stepMinutes,
+                mode: mode
+            });
+            
+            if (user) {
+                await ctx.reply(result.reportText, { parse_mode: 'Markdown', reply_markup: getMainMenuKeyboard(user) });
+            } else {
+                await ctx.reply(result.reportText, { parse_mode: 'Markdown' });
+            }
+
+            if (result.trades && result.trades.length > 0) {
+                const csvBuffer = generateCSVBuffer(result.trades);
+                const safeSymbol = symbol.replace(/[\/:]/g, '_');
+                const fileName = `Backtest_${version}_${mode}_${safeSymbol}.csv`;
+                await ctx.replyWithDocument({ source: csvBuffer, filename: fileName });
+            }
+            
+            // Note: The `result.trades` array is saved and available here for future JSON/CSV export functionality.
+        } catch (error: any) {
+            logger.error('Error in advanced backtest wizard:', error);
+            await ctx.reply(`❌ فشل الاختبار: ${error.message}`);
+        }
+    });
+
     // --- CALLBACK HANDLERS FOR ANALYSIS ACTIONS ---
     bot.action(/^cp_(sc|sw)_(.+)$/, async (ctx) => {
         try {
@@ -568,12 +727,35 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
             const [_, type, rest] = ctx.match;
             const [s, version] = rest.split('_');
             const symbol = `${s}/USDT:USDT`;
-            
+
             await ctx.answerCbQuery(`⏳ جاري تشغيل الاختبار الرجعي (${version || 'V6'})...`);
             await ctx.reply(`🔍 جاري تحليل البيانات التاريخية لـ ${symbol}... قد يستغرق ذلك بضع ثوانٍ.`);
 
-            const report = await backtestService.runBacktest(symbol, type === 'sc' ? 'Scalp' : 'Swing');
-            await ctx.reply(report, { parse_mode: 'Markdown' });
+            const telegramId = ctx.from?.id.toString();
+            const user = await User.findOne({ telegramId });
+
+            const mode: 'SCALP' | 'SWING' = type === 'sc' ? 'SCALP' : 'SWING';
+
+            const result = await backtestService.runAdvancedBacktest(symbol, version, {
+                quickTF: '5m',
+                longTF: '1h',
+                days: 1, // Quick test uses 1 day
+                stepMinutes: 30, // Default to 30 mins
+                mode: mode
+            });
+            
+            if (user) {
+                await ctx.reply(result.reportText, { parse_mode: 'Markdown', reply_markup: getMainMenuKeyboard(user) });
+            } else {
+                await ctx.reply(result.reportText, { parse_mode: 'Markdown' });
+            }
+
+            if (result.trades && result.trades.length > 0) {
+                const csvBuffer = generateCSVBuffer(result.trades);
+                const safeSymbol = symbol.replace(/[\/:]/g, '_');
+                const fileName = `Backtest_${version}_${mode}_${safeSymbol}.csv`;
+                await ctx.replyWithDocument({ source: csvBuffer, filename: fileName });
+            }
 
         } catch (error: any) {
             logger.error('Error in backtest action:', error);
@@ -589,7 +771,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
             const d = parts[1] === 'L' ? 'LONG' : 'SHORT';
             const v = parts[2] || 'V6';
             const symbol = `${s}/USDT:USDT`;
-            
+
             await ctx.answerCbQuery(`⏳ جاري جلب التقرير التفصيلي (${v})...`);
 
             // Re-run analysis to get the latest details

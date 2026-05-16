@@ -38,6 +38,8 @@ export class V3Engine implements ITradingEngine {
         const type = m.percentage >= 50 ? 'LONG' : 'SHORT';
         const winRate = Math.min(m.percentage + 10, 98);
         const slDistance = Math.max(data.atr * 3, cp * 0.01);
+        
+        const finalReason = `Matrix Score: ${m.percentage.toFixed(1)}% -> ${type}`;
 
         return {
             status: `🏛 V3 MATRIX ${type} ${m.decision}`,
@@ -46,7 +48,8 @@ export class V3Engine implements ITradingEngine {
             sl: type === 'LONG' ? cp - slDistance : cp + slDistance,
             timeEstimate: data.timeframe.includes('m') ? 60 : 240,
             winRate, reverseProb: 100 - winRate,
-            confidenceScore: m.percentage
+            confidenceScore: m.percentage,
+            signalReason: finalReason
         };
     }
 }
