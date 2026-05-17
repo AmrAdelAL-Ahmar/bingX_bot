@@ -100,8 +100,8 @@ export class V6Engine implements ITradingEngine {
         const sl = type === 'LONG'
             ? Math.min(cp - slDistance, data.levels.lastSwingLow - (data.atr * 0.5))
             : Math.max(cp + slDistance, data.levels.lastSwingHigh + (data.atr * 0.5));
-            
-        const finalReason = `Score: ${score.toFixed(1)} | Factors: [${reason.join(', ')}] | Radar: ${div.detected ? 'Confirmed' : 'Skipped'} -> ${type}`;
+
+        const finalReason = `Score: ${score.toFixed(1)} | Factors: [${reason.join(', ')}] | Radar: ${div.detected ? 'Confirmed' : 'Skipped'} -> ${type}    |Rejected: ${rejectionReason.length > 0 ? rejectionReason : "None"}`;
 
         return {
             status: `${type === 'LONG' ? '🟢 احتمالية صعود' : '🔴 احتمالية هبوط'} (${winRate.toFixed(1)}%)`,

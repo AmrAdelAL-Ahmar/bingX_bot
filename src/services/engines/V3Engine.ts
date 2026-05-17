@@ -1,58 +1,3 @@
-// import { AnalysisDetails, MatrixResult, OHLCV, TradeRecommendation } from '../AnalysisService';
-// import { ITradingEngine, EngineResult } from './ITradingEngine';
-// import { TechnicalAnalyzer } from '../TechnicalAnalyzer';
-
-// export class V3Engine implements ITradingEngine {
-//     analyze(
-//         cp: number, 
-//         vwap: number, 
-//         allTimeframes: Record<string, AnalysisDetails>, 
-//         mtfOHLCV: Record<string, OHLCV[]>,
-//         options: { quickTF: string, longTF: string }
-//     ): EngineResult {
-//         const matrix = this.calculateMatrix(allTimeframes);
-
-//         const scalpData = allTimeframes[options.quickTF] || allTimeframes['5m'];
-//         const swingData = allTimeframes[options.longTF] || allTimeframes['1h'];
-
-//         return {
-//             matrix,
-//             scalp: this.analyzeScalp(cp, scalpData, matrix),
-//             swing: this.analyzeSwing(cp, swingData, matrix)
-//         };
-//     }
-
-//     private calculateMatrix(allTimeframes: Record<string, AnalysisDetails>): MatrixResult {
-//         return TechnicalAnalyzer.calculateMatrix(allTimeframes);
-//     }
-
-//     private analyzeScalp(cp: number, data: AnalysisDetails, m: MatrixResult): TradeRecommendation {
-//         return this.runMatrixLogic(cp, data, m);
-//     }
-
-//     private analyzeSwing(cp: number, data: AnalysisDetails, m: MatrixResult): TradeRecommendation {
-//         return this.runMatrixLogic(cp, data, m);
-//     }
-
-//     private runMatrixLogic(cp: number, data: AnalysisDetails, m: MatrixResult): TradeRecommendation {
-//         const type = m.percentage >= 50 ? 'LONG' : 'SHORT';
-//         const winRate = Math.min(m.percentage + 10, 98);
-//         const slDistance = Math.max(data.atr * 3, cp * 0.01);
-
-//         const finalReason = `Matrix Score: ${m.percentage.toFixed(1)}% -> ${type}`;
-
-//         return {
-//             status: `🏛 V3 MATRIX ${type} ${m.decision}`,
-//             type, entry: cp,
-//             tp: type === 'LONG' ? cp + (slDistance * 2) : cp - (slDistance * 2),
-//             sl: type === 'LONG' ? cp - slDistance : cp + slDistance,
-//             timeEstimate: data.timeframe.includes('m') ? 60 : 240,
-//             winRate, reverseProb: 100 - winRate,
-//             confidenceScore: m.percentage,
-//             signalReason: finalReason
-//         };
-//     }
-// }
 import { AnalysisDetails, MatrixResult, OHLCV, TradeRecommendation } from '../AnalysisService';
 import { ITradingEngine, EngineResult } from './ITradingEngine';
 import { TechnicalAnalyzer } from '../TechnicalAnalyzer';
@@ -67,20 +12,19 @@ export class V3Engine implements ITradingEngine {
     ): EngineResult {
         const matrix = this.calculateMatrix(allTimeframes);
 
-        // استخراج بيانات الفريم اللحظي (السكالبينج) والفريم الأكبر (للتأكيد)
         const scalpData = allTimeframes[options.quickTF] || allTimeframes['5m'];
         const scalpOHLCV = mtfOHLCV[options.quickTF] || mtfOHLCV['5m'];
         const swingData = allTimeframes[options.longTF] || allTimeframes['1h'];
         const swingOHLCV = mtfOHLCV[options.longTF] || mtfOHLCV['1h'];
 
-        // فريم التأكيد (Macro) للسكالب هو الساعة، وللسوينج هو 4 ساعات (إن وجد)
-        const scalpMacroData = allTimeframes['1h'];
-        const swingMacroData = allTimeframes['4h'];
+        // Macro confirmation frames
+        const scalpMacro = allTimeframes['1h'];
+        const swingMacro = allTimeframes['4h'] || allTimeframes['1h'];
 
         return {
             matrix,
-            scalp: this.runProbabilityLogic(cp, scalpData, scalpOHLCV, scalpMacroData, vwap, matrix, 'SCALP'),
-            swing: this.runProbabilityLogic(cp, swingData, swingOHLCV, swingMacroData, vwap, matrix, 'SWING')
+            scalp: this.runProbabilityLogic(cp, scalpData, scalpOHLCV, scalpMacro, vwap, matrix, 'SCALP'),
+            swing: this.runProbabilityLogic(cp, swingData, swingOHLCV, swingMacro, vwap, matrix, 'SWING'),
         };
     }
 
@@ -98,144 +42,220 @@ export class V3Engine implements ITradingEngine {
         mode: string
     ): TradeRecommendation {
         let score = 0;
-        let reason: string[] = [];
+        const reason: string[] = [];
         let type: 'LONG' | 'SHORT' | 'NEUTRAL' = 'NEUTRAL';
 
-        // ==========================================
-        // 1. طبقة فلتر الهيكل (Market Structure)
-        // ==========================================
-        const isBullishStruct = data.structure.includes('صاعد');
-        const isBearishStruct = data.structure.includes('هابط');
-        const isSideways = data.structure.includes('عرضي');
+        // ==========================================================
+        // LAYER 1 — Market Structure Filter (حاكم أول)
+        // ==========================================================
+        const struct = data.structure;
+        const isBullish = struct.includes('صاعد');
+        const isBearish = struct.includes('هابط');
+        const isSideways = struct.includes('عرضي');
+        const isBOS = struct.includes('كسر هيكل');
 
-        // تحديد الاتجاه المبدئي بناءً على الهيكل
-        if (isBullishStruct || (isSideways && cp > data.levels.pivot)) {
-            type = 'LONG';
-        } else if (isBearishStruct || (isSideways && cp < data.levels.pivot)) {
-            type = 'SHORT';
-        }
+        if (isBullish) type = 'LONG';
+        else if (isBearish) type = 'SHORT';
+        else if (isSideways && cp > data.levels.pivot) type = 'LONG';
+        else if (isSideways && cp < data.levels.pivot) type = 'SHORT';
+        else if (isBOS) type = cp > vwap ? 'LONG' : 'SHORT';
 
-        // إذا كان الهيكل غير صالح للتداول
         if (type === 'NEUTRAL') {
-            return this.createCancelResponse(cp, '⚪ محايد (هيكل غير واضح أو متضارب)', type, 0, mode);
+            return this.cancel(cp, '⚪ محايد (هيكل غير واضح)', 'NEUTRAL', 0, mode);
         }
 
-        // ==========================================
-        // 2. طبقة درع الانحراف (Divergence Shield)
-        // ==========================================
-        const divergence = TechnicalAnalyzer.detectDivergence(ohlcv, type);
-        if (divergence.detected) {
-            // إلغاء الصفقة فوراً لتجنب فخ الانعكاس
-            return this.createCancelResponse(cp, `⚠️ ملغاة: ${divergence.description}`, type, 0, mode);
+        // Structural bonus
+        if (isBullish && type === 'LONG') { score += 15; reason.push('هيكل صاعد (+15)'); }
+        if (isBearish && type === 'SHORT') { score += 15; reason.push('هيكل هابط (+15)'); }
+        if (isBOS) { score += 8; reason.push('كسر هيكل BOS (+8)'); }
+
+        // ==========================================================
+        // LAYER 2 — Divergence Shield (فلتر الانعكاس)
+        // ==========================================================
+        const div = TechnicalAnalyzer.detectDivergence(ohlcv, type);
+        if (div.detected) {
+            return this.cancel(cp, `⚠️ ملغاة: ${div.description}`, type, score, mode);
         }
 
-        // ==========================================
-        // 3. تأكيد الفريم الأكبر (MTF Validation)
-        // ==========================================
+        // ==========================================================
+        // RSI EXTREME REVERSAL BLOCK (حاجز التشبع المطلق)
+        // RSI < 25 = تشبع بيعي حاد → السوق متهيئ للارتداد → إلغاء SHORT فوراً
+        // RSI > 75 = تشبع شرائي حاد → السوق متهيئ للتصحيح → إلغاء LONG فوراً
+        if (type === 'SHORT' && data.rsi < 25) {
+            return this.cancel(cp, `❌ محظور: RSI تشبع بيعي (${data.rsi.toFixed(1)}) - خطر انعكاس مرتفع`, type, score, mode);
+        }
+        if (type === 'LONG' && data.rsi > 75) {
+            return this.cancel(cp, `❌ محظور: RSI تشبع شرائي (${data.rsi.toFixed(1)}) - خطر انعكاس مرتفع`, type, score, mode);
+        }
+
+        // ==========================================================
+        // LAYER 3 — Macro Timeframe Confirmation
+        // ==========================================================
         if (macroData) {
+            const macroIsBullish = macroData.structure.includes('صاعد');
+            const macroIsBearish = macroData.structure.includes('هابط');
+
             if (type === 'LONG') {
-                if (macroData.structure.includes('هابط')) {
-                    score -= 20; reason.push('تحذير: الفريم الأكبر هابط (-20)');
-                } else if (macroData.structure.includes('صاعد')) {
-                    score += 20; reason.push('توافق الهيكل مع الفريم الأكبر (+20)');
-                }
+                if (macroIsBullish) { score += 20; reason.push('توافق الفريم الأكبر (+20)'); }
+                else if (macroIsBearish) { score -= 20; reason.push('الفريم الأكبر معاكس (-20)'); }
             } else {
-                if (macroData.structure.includes('صاعد')) {
-                    score -= 20; reason.push('تحذير: الفريم الأكبر صاعد (-20)');
-                } else if (macroData.structure.includes('هابط')) {
-                    score += 20; reason.push('توافق الهيكل مع الفريم الأكبر (+20)');
-                }
+                if (macroIsBearish) { score += 20; reason.push('توافق الفريم الأكبر (+20)'); }
+                else if (macroIsBullish) { score -= 20; reason.push('الفريم الأكبر معاكس (-20)'); }
             }
+
+            // Macro RSI extreme penalty
+            if (type === 'LONG' && macroData.rsi > 75) { score -= 15; reason.push('RSI ماكرو تشبع شرائي (-15)'); }
+            if (type === 'SHORT' && macroData.rsi < 25) { score -= 15; reason.push('RSI ماكرو تشبع بيعي (-15)'); }
         }
 
-        // ==========================================
-        // 4. دمج السيولة والزخم (VWAP & RSI)
-        // ==========================================
-        const isAboveVWAP = cp > vwap;
-        if (type === 'LONG') {
-            if (isAboveVWAP) { score += 15; reason.push('فوق VWAP (+15)'); }
-            else { score -= 10; reason.push('تحت VWAP (-10)'); }
-
-            if (data.rsi < 45 && cp > data.levels.s1) {
-                score += 20; reason.push('RSI ارتداد من الدعم (+20)');
-            } else if (data.rsi > 70) {
-                score -= 20; reason.push('RSI تشبع شرائي خطير (-20)');
-            }
-        } else { // SHORT
-            if (!isAboveVWAP) { score += 15; reason.push('تحت VWAP (+15)'); }
-            else { score -= 10; reason.push('فوق VWAP (-10)'); }
-
-            if (data.rsi > 55 && cp < data.levels.r1) {
-                score += 20; reason.push('RSI ارتداد من المقاومة (+20)');
-            } else if (data.rsi < 30) {
-                score -= 20; reason.push('RSI تشبع بيعي خطير (-20)');
-            }
-        }
-
-        // تأثير الماتريكس (مُخفف لتجنب التضارب)
-        const matrixScore = (m.percentage - 50) * 0.5;
-        score += matrixScore;
-        reason.push(`الماتريكس ${m.percentage.toFixed(1)}% (${matrixScore > 0 ? '+' : ''}${matrixScore.toFixed(1)})`);
-
-        // ==========================================
-        // 5. الأهداف الديناميكية (Dynamic TP/SL & RR)
-        // ==========================================
-        let sl = 0, tp = 0;
-        const safetyBuffer = data.atr * 0.5; // مسافة أمان إضافية لتجنب ضرب الاستوب العشوائي
+        // ==========================================================
+        // LAYER 4 — VWAP + RSI Confluence (دمج السيولة والزخم)
+        // ==========================================================
+        const aboveVWAP = cp > vwap;
+        const vwapDist = Math.abs(cp - vwap) / vwap * 100; // distance %
 
         if (type === 'LONG') {
-            // الاستوب تحت أدنى قاع سابق أو تحت مستوى دعم S2 (أيهما أأمن)
-            sl = Math.min(data.levels.lastSwingLow - safetyBuffer, data.levels.s2);
-
-            // الهدف عند المقاومة الأولى أو هدف الفيبوناتشي
-            tp = Math.max(data.levels.r1, data.levels.fibTarget || (cp + data.atr * 3));
-
-            // ضمان أن العائد مقابل المخاطرة (R/R) منطقي (1:1.5 على الأقل)
-            const risk = cp - sl;
-            const reward = tp - cp;
-            if (reward < risk * 1.5) {
-                tp = cp + (risk * 1.5);
-                reason.push('تعديل TP لضمان نسبة 1:1.5 للمخاطرة');
+            if (aboveVWAP) {
+                score += vwapDist < 0.3 ? 10 : 15;  // close to VWAP = stronger break signal
+                reason.push(`فوق VWAP بـ ${vwapDist.toFixed(2)}% (+${vwapDist < 0.3 ? 10 : 15})`);
+            } else {
+                score -= 10; reason.push('تحت VWAP (-10)');
             }
+            // RSI Zones
+            if (data.rsi < 30) { score += 25; reason.push('RSI ذعر بيعي (+25)'); }
+            else if (data.rsi < 45 && cp > data.levels.s1) { score += 15; reason.push('RSI ارتداد من دعم (+15)'); }
+            else if (data.rsi > 75) { score -= 25; reason.push('RSI تشبع شرائي خطر (-25)'); }
+            else if (data.rsi > 60) { score -= 10; reason.push('RSI مرتفع (-10)'); }
         } else {
-            // SHORT
-            sl = Math.max(data.levels.lastSwingHigh + safetyBuffer, data.levels.r2);
-            tp = Math.min(data.levels.s1, data.levels.fib382 || (cp - data.atr * 3));
+            if (!aboveVWAP) {
+                score += vwapDist < 0.3 ? 10 : 15;
+                reason.push(`تحت VWAP بـ ${vwapDist.toFixed(2)}% (+${vwapDist < 0.3 ? 10 : 15})`);
+            } else {
+                score -= 10; reason.push('فوق VWAP (-10)');
+            }
+            // RSI Zones
+            if (data.rsi > 70) { score += 25; reason.push('RSI ذعر شرائي (+25)'); }
+            else if (data.rsi > 55 && cp < data.levels.r1) { score += 15; reason.push('RSI ارتداد من مقاومة (+15)'); }
+            else if (data.rsi < 25) { score -= 25; reason.push('RSI تشبع بيعي خطر (-25)'); }
+            else if (data.rsi < 40) { score -= 10; reason.push('RSI منخفض (-10)'); }
+        }
 
-            const risk = sl - cp;
-            const reward = cp - tp;
-            if (reward < risk * 1.5) {
-                tp = cp - (risk * 1.5);
-                reason.push('تعديل TP لضمان نسبة 1:1.5 للمخاطرة');
+        // ==========================================================
+        // LAYER 5 — MACD Momentum Check (زخم MACD)
+        // ==========================================================
+        if (data.indicators?.macd) {
+            const macdDiff = data.indicators.macd.macd - data.indicators.macd.signal;
+            if (type === 'LONG') {
+                if (macdDiff > 0) { score += 10; reason.push('MACD تصاعدي (+10)'); }
+                else { score -= 8; reason.push('MACD تنازلي (-8)'); }
+            } else {
+                if (macdDiff < 0) { score += 10; reason.push('MACD تنازلي (+10)'); }
+                else { score -= 8; reason.push('MACD تصاعدي (-8)'); }
             }
         }
 
-        // ==========================================
-        // 6. القرار النهائي وتقييم الصفقة
-        // ==========================================
-        const winRate = Math.max(0, Math.min(50 + (score * 0.8), 95));
-        const finalReason = `Score: ${score.toFixed(1)} | Factors: [${reason.join(', ')}]`;
-
-        // فلتر الأمان النهائي: عدم الدخول إذا كانت نسبة النجاح المتوقعة ضعيفة
-        if (winRate < 60) {
-            return this.createCancelResponse(cp, `⚪ إشارة ضعيفة (${winRate.toFixed(1)}%)`, type, score, mode, finalReason);
+        // ==========================================================
+        // LAYER 6 — Matrix Direction Alignment
+        // Direction-aware: matrix bullish helps LONG, hurts SHORT
+        // ==========================================================
+        const matrixBias = (m.percentage - 50); // positive = bullish bias
+        if (type === 'LONG') {
+            const matBonus = matrixBias * 0.5;
+            score += matBonus;
+            reason.push(`ماتريكس ${m.percentage.toFixed(0)}% (${matBonus >= 0 ? '+' : ''}${matBonus.toFixed(1)})`);
+        } else {
+            const matBonus = -matrixBias * 0.5; // invert: bullish matrix hurts SHORT
+            score += matBonus;
+            reason.push(`ماتريكس ${m.percentage.toFixed(0)}% (${matBonus >= 0 ? '+' : ''}${matBonus.toFixed(1)})`);
         }
 
-        return {
-            status: `${type === 'LONG' ? '🟢 شراء' : '🔴 بيع'} (${winRate.toFixed(1)}%)`,
-            type, entry: cp, tp, sl,
-            timeEstimate: mode === 'SCALP' ? 20 : 90,
-            winRate, reverseProb: 100 - winRate,
-            confidenceScore: score,
-            signalReason: finalReason
-        };
+        // ==========================================================
+        // LAYER 7 — Dynamic SL / TP (based on technical levels)
+        // ==========================================================
+        const safetyBuffer = Math.max(data.atr * 0.5, cp * 0.002); // at least 0.2% safety
+        let sl = 0, tp = 0;
+
+        if (type === 'LONG') {
+            // SL: highest of (lastSwingLow - buffer) or s2 — nearest to price below it
+            const candidateSL1 = data.levels.lastSwingLow - safetyBuffer;
+            const candidateSL2 = data.levels.s2;
+            sl = Math.max(candidateSL1, candidateSL2);
+            sl = Math.min(sl, cp * 0.994); // guarantee at least 0.6% below price
+
+            // TP: farthest of r1 or fibTarget above price
+            const candidateTP1 = data.levels.r1;
+            const candidateTP2 = data.levels.fibTarget || 0;
+            tp = Math.max(candidateTP1, candidateTP2, cp + data.atr * 2);
+
+        } else {
+            // SL: lowest of (lastSwingHigh + buffer) or r2 — nearest to price above it
+            const candidateSL1 = data.levels.lastSwingHigh + safetyBuffer;
+            const candidateSL2 = data.levels.r2;
+            sl = Math.min(candidateSL1, candidateSL2);
+            sl = Math.max(sl, cp * 1.006); // guarantee at least 0.6% above price
+
+            // TP: lowest valid level below cp (s1 or fib382)
+            const shortTPCandidates = [
+                data.levels.s1,
+                data.levels.fib382 || 0
+            ].filter(v => v > 0 && v < cp);
+
+            tp = shortTPCandidates.length > 0
+                ? Math.min(...shortTPCandidates)
+                : cp - data.atr * 2; // safe fallback
+        }
+
+        // Ensure minimum 1:1.5 R/R
+        const riskDist = Math.abs(cp - sl);
+        const rewardDist = Math.abs(tp - cp);
+        if (riskDist <= 0 || rewardDist < riskDist * 1.5) {
+            const minRisk = Math.max(riskDist, cp * 0.005);
+            tp = type === 'LONG' ? cp + minRisk * 1.5 : cp - minRisk * 1.5;
+            reason.push('تعديل TP لضمان R/R 1:1.5');
+        }
+
+        // ==========================================================
+        // LAYER 8 — Final Decision (tiered confidence)
+        // ==========================================================
+        const winRate = Math.max(0, Math.min(50 + score * 0.75, 95));
+        const finalReason = `Score: ${score.toFixed(1)} | [${reason.join(' | ')}]`;
+
+        // Tiered signal response
+        if (winRate >= 72) {
+            return {
+                status: `${type === 'LONG' ? '🟢 شراء قوي' : '🔴 بيع قوي'} (${winRate.toFixed(1)}%)`,
+                type, entry: cp, tp, sl,
+                timeEstimate: mode === 'SCALP' ? 20 : 90,
+                winRate, reverseProb: 100 - winRate,
+                confidenceScore: score,
+                signalReason: finalReason
+            };
+        } else if (winRate >= 60) {
+            return {
+                status: `${type === 'LONG' ? '🟡 شراء' : '🟠 بيع'} (${winRate.toFixed(1)}%)`,
+                type, entry: cp, tp, sl,
+                timeEstimate: mode === 'SCALP' ? 20 : 90,
+                winRate, reverseProb: 100 - winRate,
+                confidenceScore: score,
+                signalReason: finalReason
+            };
+        } else {
+            // Weak signal — still show real SL/TP for reference
+            return this.cancel(cp, `⚪ إشارة ضعيفة (${winRate.toFixed(1)}%)`, type, score, mode, finalReason, sl, tp);
+        }
     }
 
-    // دالة مساعدة لترتيب الردود الملغاة بشكل أنظف
-    private createCancelResponse(cp: number, statusText: string, type: string, score: number, mode: string, reason: string = ''): TradeRecommendation {
+    private cancel(
+        cp: number, statusText: string, type: string,
+        score: number, mode: string,
+        reason = '', sl = 0, tp = 0
+    ): TradeRecommendation {
         return {
             status: statusText,
-            type: type as any, entry: cp, tp: cp, sl: cp,
+            type: type as any,
+            entry: cp,
+            tp: tp || cp,
+            sl: sl || cp,
             timeEstimate: mode === 'SCALP' ? 20 : 90,
             winRate: 0, reverseProb: 0,
             confidenceScore: score,
