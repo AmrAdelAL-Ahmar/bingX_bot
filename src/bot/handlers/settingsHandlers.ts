@@ -1,7 +1,7 @@
 import { Telegraf } from 'telegraf';
 import logger from '../../utils/logger';
 import User from '../../models/User';
-import { ALL_TP_THRESHOLDS, buildAlertSettingsKeyboard, buildCapitalProtectionKeyboard, buildLeverageKeyboard, getMainMenuKeyboard, buildVolatilitySlKeyboard, buildHitlarSettingsKeyboard, getHiddenMenuKeyboard, getTraderSettingsKeyboard, buildStrategySettingsKeyboard } from '../keyboards/baseKeyboards';
+import { ALL_TP_THRESHOLDS, buildAlertSettingsKeyboard, buildCapitalProtectionKeyboard, buildLeverageKeyboard, getMainMenuKeyboard, buildVolatilitySlKeyboard, buildHitlarSettingsKeyboard, getHiddenMenuKeyboard, getTraderSettingsKeyboard, buildStrategySettingsKeyboard, getBacktestSettingsKeyboard, getBacktestSettingsIntervals } from '../keyboards/baseKeyboards';
 
 
 
@@ -44,6 +44,23 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             });
         } catch (e) {
             ctx.reply('حدث خطأ أثناء فتح إعدادات المتداول.');
+        }
+    });
+
+    bot.hears('⚙️ إعدادات الاختبار الرجعي', async (ctx) => {
+        try {
+            if (!ctx.from) return;
+            const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+            if (!user) return;
+
+            const msg = `⚙️ <b>لوحة تحكم الاختبار الرجعي (Backtest Settings)</b>\n\n` +
+                `من هنا يمكنك ضبط المعايير الافتراضية وإدارة المخاطر لمحرك الاختبار بدقة متناهية.`;
+
+            await ctx.replyWithHTML(msg, {
+                reply_markup: getBacktestSettingsKeyboard(user)
+            });
+        } catch (e) {
+            ctx.reply('حدث خطأ أثناء فتح إعدادات الاختبار الرجعي.');
         }
     });
 
@@ -775,6 +792,129 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             });
         } catch (e) { }
         await ctx.answerCbQuery('✅ تم التحديث').catch(() => { });
+    });
+
+    // --- BACKTEST SETTINGS Callbacks ---
+    bot.action(/^bts_/, async (ctx) => {
+        const data = (ctx.callbackQuery as any).data as string;
+        if (!ctx.from) return;
+
+        const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+        if (!user) return;
+        
+        // Ensure bs object exists
+        if (!user.backtestSettings) {
+            user.backtestSettings = {
+                interval: '15m', initialCapital: 1000, marginMode: 'ISOLATED', leverage: 10,
+                riskSizingEnabled: false, riskPercentage: 3, maxSlCapEnabled: false, maxSlPercentage: 5, fullReportEnabled: false
+            };
+        }
+
+        if (data === 'bts_close') {
+            await ctx.deleteMessage().catch(() => { });
+            return ctx.answerCbQuery('✅ تم إغلاق لوحة الإعدادات').catch(() => { });
+        }
+
+        if (data === 'bts_set_interval') {
+            await ctx.answerCbQuery().catch(() => { });
+            return ctx.editMessageText('⏱ <b>تعديل الفاصل الزمني (Step Interval)</b>\nاختر الفاصل من القائمة أدناه:', {
+                parse_mode: 'HTML',
+                reply_markup: getBacktestSettingsIntervals()
+            });
+        }
+
+        if (data.startsWith('bts_val_int_')) {
+            const val = data.replace('bts_val_int_', '');
+            user.backtestSettings.interval = val;
+            await user.save();
+        }
+
+        if (data === 'bts_cancel') {
+            // just re-render
+        }
+
+        if (data === 'bts_toggle_risksizing') {
+            user.backtestSettings.riskSizingEnabled = !user.backtestSettings.riskSizingEnabled;
+            await user.save();
+        }
+        
+        if (data === 'bts_toggle_maxslcap') {
+            user.backtestSettings.maxSlCapEnabled = !user.backtestSettings.maxSlCapEnabled;
+            await user.save();
+        }
+        
+        if (data === 'bts_toggle_fullreport') {
+            user.backtestSettings.fullReportEnabled = !user.backtestSettings.fullReportEnabled;
+            await user.save();
+        }
+
+        if (data === 'bts_set_marginmode') {
+            user.backtestSettings.marginMode = user.backtestSettings.marginMode === 'CROSS' ? 'ISOLATED' : 'CROSS';
+            await user.save();
+        }
+
+        if (data === 'bts_sync_live') {
+            user.backtestSettings.initialCapital = 1000; // Reset to 1000 for safety, we can't sync actual wallet balance easily here without API call, and usually user wants simulated balance
+            user.backtestSettings.riskPercentage = user.riskPercentage || 3;
+            user.backtestSettings.leverage = user.fixedLeverageValue || 10;
+            user.backtestSettings.maxSlCapEnabled = user.enforceMaxSlLoss || false;
+            user.backtestSettings.maxSlPercentage = user.maxSlRiskPercentage || 5;
+            user.backtestSettings.riskSizingEnabled = true; // Typically live uses risk sizing
+            await user.save();
+            await ctx.answerCbQuery('✅ تم استنساخ إعداداتك الحية بنجاح').catch(() => { });
+        }
+
+        if (data === 'bts_set_capital') {
+            user.botState = 'AWAITING_BTS_CAPITAL';
+            await user.save();
+            await ctx.answerCbQuery().catch(() => { });
+            return ctx.reply('يرجى إدخال رأس المال الابتدائي للاختبار (رقم فقط، مثال: 5000):', {
+                reply_markup: { keyboard: [[{ text: 'رجوع 🔙' }]], resize_keyboard: true }
+            });
+        }
+
+        if (data === 'bts_set_leverage') {
+            user.botState = 'AWAITING_BTS_LEVERAGE';
+            await user.save();
+            await ctx.answerCbQuery().catch(() => { });
+            return ctx.reply('يرجى إدخال الرافعة المالية الافتراضية للاختبار (مثال: 20):', {
+                reply_markup: { keyboard: [[{ text: 'رجوع 🔙' }]], resize_keyboard: true }
+            });
+        }
+
+        if (data === 'bts_set_riskpercentage') {
+            user.botState = 'AWAITING_BTS_RISK';
+            await user.save();
+            await ctx.answerCbQuery().catch(() => { });
+            return ctx.reply('يرجى إدخال النسبة (دخول/مخاطرة) للاختبار (مثال: 3):', {
+                reply_markup: { keyboard: [[{ text: 'رجوع 🔙' }]], resize_keyboard: true }
+            });
+        }
+
+        if (data === 'bts_set_maxslpercentage') {
+            user.botState = 'AWAITING_BTS_MAX_SL';
+            await user.save();
+            await ctx.answerCbQuery().catch(() => { });
+            return ctx.reply('يرجى إدخال أقصى نسبة خسارة للاستوب (مثال: 5):', {
+                reply_markup: { keyboard: [[{ text: 'رجوع 🔙' }]], resize_keyboard: true }
+            });
+        }
+
+        const msg = `⚙️ <b>لوحة تحكم الاختبار الرجعي (Backtest Settings)</b>\n\n` +
+            `من هنا يمكنك ضبط المعايير الافتراضية وإدارة المخاطر لمحرك الاختبار بدقة متناهية.`;
+
+        try {
+            await ctx.editMessageText(msg, {
+                parse_mode: 'HTML',
+                reply_markup: getBacktestSettingsKeyboard(user)
+            });
+        } catch (e) { }
+        
+        if (!['bts_set_interval', 'bts_cancel'].includes(data) && !data.startsWith('bts_val_')) {
+            await ctx.answerCbQuery('✅ تم التحديث').catch(() => { });
+        } else if (data.startsWith('bts_val_')) {
+            await ctx.answerCbQuery('✅ تم حفظ الفاصل الزمني').catch(() => { });
+        }
     });
 
 };

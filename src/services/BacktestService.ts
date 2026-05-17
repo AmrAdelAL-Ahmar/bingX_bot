@@ -31,13 +31,13 @@ export class BacktestService {
         private analysisService: AnalysisService
     ) { }
 
-    async runAdvancedBacktest(symbol: string, version: string, options: { quickTF: string, longTF: string, days: number, stepMinutes: number, mode: 'SCALP' | 'SWING', initialCapital?: number, marginPerTradePercentage?: number, marginMode?: string }): Promise<BacktestResult> {
+    async runAdvancedBacktest(symbol: string, version: string, options: { quickTF: string, longTF: string, days: number, stepMinutes: number, mode: 'SCALP' | 'SWING', initialCapital?: number, marginPerTradePercentage?: number, marginMode?: string, leverage?: number, riskSizingEnabled?: boolean, maxSlCapEnabled?: boolean, maxSlPercentage?: number, fullReportEnabled?: boolean }): Promise<BacktestResult> {
         logger.info(`Running Time-Step Backtest for ${symbol} on ${version} over ${options.days} days with step ${options.stepMinutes}m (Mode: ${options.mode})`);
 
         const stepMs = options.stepMinutes * 60 * 1000;
         const now = Date.now();
         const startTime = now - (options.days * 24 * 60 * 60 * 1000);
-        
+
         // 1. Fetch deep historical data for ALL required timeframes once
         logger.info(`Fetching deep historical data for multiple timeframes...`);
         const allData: Record<string, OHLCV[]> = {};
@@ -57,7 +57,7 @@ export class BacktestService {
         // 2. Pass 1: Generate Trades (Time-Step Simulation)
         logger.info(`Starting Pass 1: Generating trades by stepping through time...`);
         for (let t = startTime; t <= now; t += stepMs) {
-            
+
             // Build the MTF snapshot exactly as it looked at timestamp `t`
             const mtfSnapshot: Record<string, OHLCV[]> = {};
             let hasEnoughData = true;
@@ -68,10 +68,10 @@ export class BacktestService {
                 const tfMs = MTFDataBuilder.tfToMs(tf);
                 const dataUpToT = allData[tf].filter(c => c.timestamp + tfMs <= t);
                 mtfSnapshot[tf] = dataUpToT;
-                
+
                 // We need enough candles. 1d and 4h have more history fetched now.
                 // 14 candles is the minimum for RSI
-                if (dataUpToT.length < 15) { 
+                if (dataUpToT.length < 15) {
                     hasEnoughData = false;
                 }
             }
@@ -132,7 +132,7 @@ export class BacktestService {
                         quick_williamsR: allTimeframes[options.quickTF]?.indicators?.williamsR,
                         quick_atr: allTimeframes[options.quickTF]?.atr,
                         quick_trend: allTimeframes[options.quickTF]?.structure || 'UNKNOWN',
-                        
+
                         // Quick TF Levels
                         quick_pivot: allTimeframes[options.quickTF]?.levels?.pivot,
                         quick_r1: allTimeframes[options.quickTF]?.levels?.r1,
@@ -146,7 +146,7 @@ export class BacktestService {
                         long_macd: allTimeframes[options.longTF]?.indicators?.macd?.macd,
                         long_macd_hist: allTimeframes[options.longTF]?.indicators?.macd?.histogram,
                         long_trend: allTimeframes[options.longTF]?.structure || 'UNKNOWN',
-                        
+
                         // Long TF Levels
                         long_pivot: allTimeframes[options.longTF]?.levels?.pivot,
                         long_r1: allTimeframes[options.longTF]?.levels?.r1,
@@ -223,22 +223,22 @@ export class BacktestService {
         logger.info(`Starting Pass 2: Evaluating ${generatedTrades.length} generated trades...`);
         const evaluationTF = '5m';
         const evalData = allData[evaluationTF]; // Use the fine-grained 5m data to check TP/SL
-        
-        let stats = { 
-            total: generatedTrades.length, 
-            longWins: 0, longLosses: 0, 
-            shortWins: 0, shortLosses: 0, 
-            open: 0 
+
+        let stats = {
+            total: generatedTrades.length,
+            longWins: 0, longLosses: 0,
+            shortWins: 0, shortLosses: 0,
+            open: 0
         };
 
         for (const trade of generatedTrades) {
             // Find all 5m candles that occurred AT OR AFTER the trade entry time
             // Because trade entry happens at `t`, the candle opening exactly at `t` contains the immediate price action!
             const futureCandles = evalData.filter(c => c.timestamp >= trade.entryTime);
-            
+
             let closed = false;
             let durationCandles = 0;
-            
+
             for (const candle of futureCandles) {
                 durationCandles++;
 
@@ -297,7 +297,11 @@ export class BacktestService {
         let totalCapital = initialCapital; // Final account size (includes locked margin)
         const riskPercentage = options.marginPerTradePercentage || 3;
         const marginMode = options.marginMode || 'ISOLATED';
-        const defaultLeverage = 10; // For backtesting simulation
+        const defaultLeverage = options.leverage || 10;
+        const riskSizingEnabled = options.riskSizingEnabled || false;
+        const maxSlCapEnabled = options.maxSlCapEnabled || false;
+        const maxSlPercentage = options.maxSlPercentage || 5;
+
         let peakCapital = totalCapital;
         let maxDrawdown = 0;
         let skippedTrades = 0;
@@ -310,18 +314,36 @@ export class BacktestService {
                 events.push({ type: 'CLOSE', time: trade.closeTime, trade });
             }
         }
-        
+
         // Sort chronologically
         events.sort((a, b) => a.time - b.time);
 
         for (const event of events) {
             if (event.type === 'OPEN') {
-                const requestedMargin = totalCapital * (riskPercentage / 100);
-                
+                let slDistancePercentage = 0;
+                if (event.trade.entry && event.trade.sl) {
+                    slDistancePercentage = Math.abs(event.trade.entry - event.trade.sl) / event.trade.entry * 100;
+                }
+
+                // --- BUTTON 1: Fixed Entry Sizing ---
+                // Always enter with riskPercentage% of total capital as margin.
+                // Simple and fixed — has nothing to do with SL distance.
+                let requestedMargin = totalCapital * (riskPercentage / 100);
+
+                // --- BUTTON 2: Max SL Loss Cap (independent safety check) ---
+                // After fixing the margin, check if the potential SL loss exceeds the cap.
+                // If so, proportionally reduce the margin until potential loss == cap.
+                if (maxSlCapEnabled && slDistancePercentage > 0) {
+                    const potentialLossAmount = requestedMargin * defaultLeverage * (slDistancePercentage / 100);
+                    const maxAllowedLoss = totalCapital * (maxSlPercentage / 100);
+                    if (potentialLossAmount > maxAllowedLoss) {
+                        // Reduce margin so that: margin * leverage * slDist% == maxAllowedLoss
+                        requestedMargin = maxAllowedLoss / (defaultLeverage * (slDistancePercentage / 100));
+                    }
+                }
+
                 let shouldSkip = false;
-                if (marginMode === 'ISOLATED' && activeCapital < 5) {
-                    shouldSkip = true;
-                } else if (marginMode === 'CROSS' && totalCapital < 5) {
+                if (activeCapital < 5) {
                     shouldSkip = true;
                 }
 
@@ -330,7 +352,7 @@ export class BacktestService {
                     event.trade.skipped = true;
                     event.trade.skipReason = 'Insufficient Margin';
                     skippedTrades++;
-                    
+
                     // Undo stats contribution
                     if (event.trade.status === 'WIN') {
                         if (event.trade.type === 'LONG') stats.longWins--;
@@ -347,17 +369,10 @@ export class BacktestService {
                 event.trade.marginMode = marginMode;
                 event.trade.availableCapitalBefore = activeCapital;
                 event.trade.totalCapitalBefore = totalCapital;
-                
-                let actualMargin = 0;
-                if (marginMode === 'ISOLATED') {
-                    actualMargin = Math.min(requestedMargin, activeCapital);
-                    activeCapital -= actualMargin;
-                } else {
-                    actualMargin = requestedMargin; // In CROSS, total capital acts as backing
-                    activeCapital -= actualMargin;
-                    if (activeCapital < 0) activeCapital = 0; // Prevent negative available balance logic internally
-                }
-                
+
+                let actualMargin = Math.min(requestedMargin, activeCapital);
+                activeCapital -= actualMargin;
+
                 event.trade.marginUsed = actualMargin;
                 event.trade.marginPercent = (actualMargin / totalCapital) * 100;
                 event.trade.leverage = defaultLeverage;
@@ -366,20 +381,26 @@ export class BacktestService {
 
                 const margin = event.trade.marginUsed;
                 let pnlMultiplier = 0;
-                
+
                 if (event.trade.type === 'LONG') {
                     pnlMultiplier = ((event.trade.closePrice - event.trade.entry) / event.trade.entry) * defaultLeverage;
                 } else {
                     pnlMultiplier = ((event.trade.entry - event.trade.closePrice) / event.trade.entry) * defaultLeverage;
                 }
 
-                const pnlUSDT = margin * pnlMultiplier;
-                const pnlPercent = pnlMultiplier * 100;
-                
+                let pnlUSDT = margin * pnlMultiplier;
+
+                // In ISOLATED mode, maximum loss is restricted to the margin used (Liquidation)
+                if (event.trade.marginMode === 'ISOLATED' && pnlUSDT < -margin) {
+                    pnlUSDT = -margin;
+                }
+
+                const pnlPercent = (pnlUSDT / margin) * 100;
+
                 // Free up the margin + PnL
                 activeCapital += (margin + pnlUSDT);
                 totalCapital += pnlUSDT;
-                
+
                 if (totalCapital > peakCapital) {
                     peakCapital = totalCapital;
                 }
@@ -404,7 +425,7 @@ export class BacktestService {
         let totalPnlPercentLoss = 0;
         let winCount = 0;
         let lossCount = 0;
-        
+
         for (const t of validTrades) {
             if (t.status === 'WIN' && t.pnlPercent !== undefined) {
                 totalPnlPercentWin += t.pnlPercent;
@@ -414,7 +435,7 @@ export class BacktestService {
                 lossCount++;
             }
         }
-        
+
         const avgWinPercent = winCount > 0 ? (totalPnlPercentWin / winCount) : 0;
         const avgLossPercent = lossCount > 0 ? (totalPnlPercentLoss / lossCount) : 0;
 

@@ -46,6 +46,18 @@ export interface IUser extends Document {
         candleLimit: number;
         rsiThreshold: number;
     };
+    // Backtest Settings
+    backtestSettings: {
+        interval: string;
+        initialCapital: number;
+        marginMode: 'ISOLATED' | 'CROSS';
+        leverage: number;
+        riskSizingEnabled: boolean;
+        riskPercentage: number;
+        maxSlCapEnabled: boolean;
+        maxSlPercentage: number;
+        fullReportEnabled: boolean;
+    };
 }
 
 const UserSchema: Schema = new Schema({
@@ -93,6 +105,17 @@ const UserSchema: Schema = new Schema({
         candleLimit: { type: Number, default: 200 },
         rsiThreshold: { type: Number, default: 30 },
     },
+    backtestSettings: {
+        interval: { type: String, default: '15m' },
+        initialCapital: { type: Number, default: 1000 },
+        marginMode: { type: String, enum: ['ISOLATED', 'CROSS'], default: 'ISOLATED' },
+        leverage: { type: Number, default: 10 },
+        riskSizingEnabled: { type: Boolean, default: false },
+        riskPercentage: { type: Number, default: 3 },
+        maxSlCapEnabled: { type: Boolean, default: false },
+        maxSlPercentage: { type: Number, default: 5 },
+        fullReportEnabled: { type: Boolean, default: false }
+    }
 });
 
 export default mongoose.model<IUser>('User', UserSchema);

@@ -21,6 +21,9 @@ export const getMainMenuKeyboard = (user: any) => {
                 { text: '🔬 اختبار الاستراتيجيات' }
             ],
             [
+                { text: '⚙️ إعدادات الاختبار الرجعي' }
+            ],
+            [
                 { text: '🛑 إلغاء كل الصفقات المفتوحة' }
             ],
             [
@@ -331,6 +334,8 @@ export const getBacktestVersionKeyboard = (symbol: string) => {
     };
 };
 
+
+
 export const getBacktestModeKeyboard = (version: string, symbol: string) => {
     return {
         inline_keyboard: [
@@ -343,61 +348,106 @@ export const getBacktestModeKeyboard = (version: string, symbol: string) => {
     };
 };
 
-export const getBacktestStepKeyboard = (mode: string, version: string, symbol: string) => {
+export const getBacktestIntervalKeyboard = (mode: string, version: string, symbol: string) => {
     return {
         inline_keyboard: [
             [
-                { text: 'كل 15 دقيقة', callback_data: `btw_s_15_${mode}_${version}_${symbol}` },
-                { text: 'كل 30 دقيقة', callback_data: `btw_s_30_${mode}_${version}_${symbol}` },
-                { text: 'كل 1 ساعة', callback_data: `btw_s_60_${mode}_${version}_${symbol}` }
+                { text: '1m', callback_data: `btw_i_1m_${mode}_${version}_${symbol}` },
+                { text: '2m', callback_data: `btw_i_2m_${mode}_${version}_${symbol}` },
+                { text: '3m', callback_data: `btw_i_3m_${mode}_${version}_${symbol}` }
+            ],
+            [
+                { text: '5m', callback_data: `btw_i_5m_${mode}_${version}_${symbol}` },
+                { text: '10m', callback_data: `btw_i_10m_${mode}_${version}_${symbol}` },
+                { text: '15m', callback_data: `btw_i_15m_${mode}_${version}_${symbol}` }
+            ],
+            [
+                { text: '30m', callback_data: `btw_i_30m_${mode}_${version}_${symbol}` },
+                { text: '1h', callback_data: `btw_i_1h_${mode}_${version}_${symbol}` }
             ],
             [{ text: 'إلغاء ❌', callback_data: 'btw_cancel' }]
         ]
     };
 };
 
-export const getBacktestDaysKeyboard = (step: string, mode: string, version: string, symbol: string) => {
+export const getBacktestDaysKeyboard = (interval: string, mode: string, version: string, symbol: string) => {
+    const isSmallTF = ['1m', '2m', '3m', '5m', '10m'].includes(interval);
+    
+    if (isSmallTF) {
+        return {
+            inline_keyboard: [
+                [
+                    { text: 'نصف يوم (12h)', callback_data: `btw_d_0.5_${interval}_${mode}_${version}_${symbol}` },
+                    { text: 'يوم واحد', callback_data: `btw_d_1_${interval}_${mode}_${version}_${symbol}` }
+                ],
+                [{ text: 'يومين (Max)', callback_data: `btw_d_2_${interval}_${mode}_${version}_${symbol}` }],
+                [{ text: 'إلغاء ❌', callback_data: 'btw_cancel' }]
+            ]
+        };
+    } else {
+        return {
+            inline_keyboard: [
+                [
+                    { text: 'يوم واحد', callback_data: `btw_d_1_${interval}_${mode}_${version}_${symbol}` },
+                    { text: '3 أيام', callback_data: `btw_d_3_${interval}_${mode}_${version}_${symbol}` }
+                ],
+                [
+                    { text: '5 أيام', callback_data: `btw_d_5_${interval}_${mode}_${version}_${symbol}` },
+                    { text: '7 أيام', callback_data: `btw_d_7_${interval}_${mode}_${version}_${symbol}` }
+                ],
+                [
+                    { text: '14 يوم', callback_data: `btw_d_14_${interval}_${mode}_${version}_${symbol}` },
+                    { text: '30 يوم', callback_data: `btw_d_30_${interval}_${mode}_${version}_${symbol}` }
+                ],
+                [{ text: 'إلغاء ❌', callback_data: 'btw_cancel' }]
+            ]
+        };
+    }
+};
+
+export const getBacktestSettingsKeyboard = (user: any) => {
+    const bs = user.backtestSettings || {};
+    const isRiskFixed = bs.riskSizingEnabled ? '✅ مفعل' : '❌ معطل';
+    const isMaxSlCap = bs.maxSlCapEnabled ? '✅ مفعل' : '❌ معطل';
+    const isFullReport = bs.fullReportEnabled ? '✅ كامل (جميع الأعمدة)' : '❌ أساسي (23 عمود)';
+    
     return {
         inline_keyboard: [
+            [{ text: `[ ${bs.interval || '15m'} ] الفاصل الزمني ⏱`, callback_data: 'bts_set_interval' }],
+            [{ text: `[ ${bs.initialCapital || 1000}$ ] رأس المال 💰`, callback_data: 'bts_set_capital' }],
             [
-                { text: 'يوم واحد', callback_data: `btw_d_1_${step}_${mode}_${version}_${symbol}` },
-                { text: '3 أيام', callback_data: `btw_d_3_${step}_${mode}_${version}_${symbol}` }
+                { text: `[ ${bs.marginMode === 'CROSS' ? 'متبادل' : 'معزول'} ] وضع الهامش`, callback_data: 'bts_set_marginmode' },
+                { text: `[ ${bs.leverage || 10}x ] الرافعة`, callback_data: 'bts_set_leverage' }
             ],
-            [
-                { text: '5 أيام', callback_data: `btw_d_5_${step}_${mode}_${version}_${symbol}` },
-                { text: '7 أيام', callback_data: `btw_d_7_${step}_${mode}_${version}_${symbol}` }
-            ],
-            [{ text: 'إلغاء ❌', callback_data: 'btw_cancel' }]
+            [{ text: `حجم الدخول بناءً على مخاطرة الاستوب: ${isRiskFixed}`, callback_data: 'bts_toggle_risksizing' }],
+            [{ text: `[ ${bs.riskPercentage || 3}% ] النسبة (${bs.riskSizingEnabled ? 'مخاطرة' : 'دخول'})`, callback_data: 'bts_set_riskpercentage' }],
+            [{ text: `تقييد أقصى مسافة للاستوب: ${isMaxSlCap}`, callback_data: 'bts_toggle_maxslcap' }],
+            [{ text: `[ ${bs.maxSlPercentage || 5}% ] أقصى مسافة للاستوب`, callback_data: 'bts_set_maxslpercentage' }],
+            [{ text: `نوع التقرير (CSV): ${isFullReport}`, callback_data: 'bts_toggle_fullreport' }],
+            [{ text: '🔄 استنساخ إعدادات التداول الحي', callback_data: 'bts_sync_live' }],
+            [{ text: '✅ إغلاق لوحة الإعدادات', callback_data: 'bts_close' }]
         ]
     };
 };
 
-export const getBacktestMarginModeKeyboard = (days: string, step: string, mode: string, version: string, symbol: string) => {
+export const getBacktestSettingsIntervals = () => {
     return {
         inline_keyboard: [
             [
-                { text: 'معزول (Isolated)', callback_data: `btw_mm_ISO_${days}_${step}_${mode}_${version}_${symbol}` },
-                { text: 'متبادل (Cross)', callback_data: `btw_mm_CRO_${days}_${step}_${mode}_${version}_${symbol}` }
-            ],
-            [{ text: 'إلغاء ❌', callback_data: 'btw_cancel' }]
-        ]
-    };
-};
-
-export const getBacktestCapitalKeyboard = (mm: string, days: string, step: string, mode: string, version: string, symbol: string) => {
-    return {
-        inline_keyboard: [
-            [
-                { text: '100$', callback_data: `btw_c_100_${mm}_${days}_${step}_${mode}_${version}_${symbol}` },
-                { text: '200$', callback_data: `btw_c_200_${mm}_${days}_${step}_${mode}_${version}_${symbol}` },
-                { text: '500$', callback_data: `btw_c_500_${mm}_${days}_${step}_${mode}_${version}_${symbol}` }
+                { text: '1m', callback_data: 'bts_val_int_1m' },
+                { text: '2m', callback_data: 'bts_val_int_2m' },
+                { text: '3m', callback_data: 'bts_val_int_3m' }
             ],
             [
-                { text: '1,000$', callback_data: `btw_c_1000_${mm}_${days}_${step}_${mode}_${version}_${symbol}` },
-                { text: '10,000$', callback_data: `btw_c_10000_${mm}_${days}_${step}_${mode}_${version}_${symbol}` },
-                { text: '100,000$', callback_data: `btw_c_100000_${mm}_${days}_${step}_${mode}_${version}_${symbol}` }
+                { text: '5m', callback_data: 'bts_val_int_5m' },
+                { text: '10m', callback_data: 'bts_val_int_10m' },
+                { text: '15m', callback_data: 'bts_val_int_15m' }
             ],
-            [{ text: 'إلغاء ❌', callback_data: 'btw_cancel' }]
+            [
+                { text: '30m', callback_data: 'bts_val_int_30m' },
+                { text: '1h', callback_data: 'bts_val_int_1h' }
+            ],
+            [{ text: 'إلغاء ❌', callback_data: 'bts_cancel' }]
         ]
     };
 };

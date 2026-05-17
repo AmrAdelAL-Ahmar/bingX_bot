@@ -2,7 +2,7 @@ import { Telegraf } from 'telegraf';
 import logger from '../../utils/logger';
 import User from '../../models/User';
 import Trade from '../../models/Trade';
-import { getMainMenuKeyboard, getTraderSettingsKeyboard, getAlgoVersionKeyboard, getAnalysisActionKeyboard, getAnalysisSettingsKeyboard, getTFSelectionKeyboard, getLimitSelectionKeyboard, getRSISelectionKeyboard, getBacktestVersionKeyboard, getBacktestModeKeyboard, getBacktestStepKeyboard, getBacktestMarginModeKeyboard, getBacktestDaysKeyboard, getBacktestCapitalKeyboard } from '../keyboards/baseKeyboards';
+import { getMainMenuKeyboard, getTraderSettingsKeyboard, getAlgoVersionKeyboard, getAnalysisActionKeyboard, getAnalysisSettingsKeyboard, getTFSelectionKeyboard, getLimitSelectionKeyboard, getRSISelectionKeyboard, getBacktestVersionKeyboard, getBacktestModeKeyboard, getBacktestIntervalKeyboard, getBacktestDaysKeyboard, getBacktestSettingsKeyboard } from '../keyboards/baseKeyboards';
 import { AnalysisService } from '../../services/AnalysisService';
 import { BingXService } from '../../services/BingXService';
 import { BacktestService } from '../../services/BacktestService';
@@ -11,7 +11,7 @@ import { SignalParser } from '../../services/SignalParser';
 import { TradeManager } from '../../services/TradeManager';
 import { sendTelegramMessage } from '../../utils/telegram';
 
-function generateCSVBuffer(trades: any[]): Buffer {
+function generateCSVBuffer(trades: any[], fullReportEnabled: boolean = false): Buffer {
     if (!trades || trades.length === 0) return Buffer.from('');
 
     const headers = [
@@ -32,12 +32,18 @@ function generateCSVBuffer(trades: any[]): Buffer {
         '1D_RSI', '1D_Trend', '1D_Pivot', '1D_R1', '1D_S1', '1D_Fib382', '1D_Fib618', '1D_SwingHigh', '1D_SwingLow'
     ];
 
+    if (!fullReportEnabled) {
+        headers.splice(24); // Keep only the first 24 basic columns
+    }
+
     let csvContent = headers.join(',') + '\n';
 
     for (const t of trades) {
+        if (t.skipped) continue;
+
         // Enclose signalReason in quotes to handle commas within the reason string
         const safeReason = t.signalReason ? `"${t.signalReason}"` : '""';
-        
+
         const row = [
             t.type,
             t.mode || 'UNKNOWN',
@@ -152,6 +158,11 @@ function generateCSVBuffer(trades: any[]): Buffer {
             t.analysisContext?.tf1d_lastSwingHigh?.toFixed(2) || '',
             t.analysisContext?.tf1d_lastSwingLow?.toFixed(2) || ''
         ];
+
+        if (!fullReportEnabled) {
+            row.splice(24);
+        }
+
         csvContent += row.join(',') + '\n';
     }
 
@@ -439,6 +450,82 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                 }
             }
 
+            if (user.botState === 'AWAITING_BTS_CAPITAL') {
+                if (message === 'رجوع 🔙') {
+                    user.botState = 'NONE';
+                    await user.save();
+                    return ctx.reply('تم الإلغاء.', { reply_markup: getBacktestSettingsKeyboard(user) });
+                }
+
+                const val = parseInt(message);
+                if (!isNaN(val) && val >= 10) {
+                    if (!user.backtestSettings) user.backtestSettings = { interval: '15m', initialCapital: 1000, marginMode: 'ISOLATED', leverage: 10, riskSizingEnabled: false, riskPercentage: 3, maxSlCapEnabled: false, maxSlPercentage: 5, fullReportEnabled: false };
+                    user.backtestSettings.initialCapital = val;
+                    user.botState = 'NONE';
+                    await user.save();
+                    return ctx.reply(`✅ تم تحديث رأس مال الاختبار الرجعي إلى ${val}$.`, { reply_markup: getBacktestSettingsKeyboard(user) });
+                } else {
+                    return ctx.reply('يرجى إدخال رقم صحيح أكبر من 10 (مثال: 5000):');
+                }
+            }
+
+            if (user.botState === 'AWAITING_BTS_LEVERAGE') {
+                if (message === 'رجوع 🔙') {
+                    user.botState = 'NONE';
+                    await user.save();
+                    return ctx.reply('تم الإلغاء.', { reply_markup: getBacktestSettingsKeyboard(user) });
+                }
+
+                const val = parseInt(message.replace('x', ''));
+                if (!isNaN(val) && val >= 1 && val <= 150) {
+                    if (!user.backtestSettings) user.backtestSettings = { interval: '15m', initialCapital: 1000, marginMode: 'ISOLATED', leverage: 10, riskSizingEnabled: false, riskPercentage: 3, maxSlCapEnabled: false, maxSlPercentage: 5, fullReportEnabled: false };
+                    user.backtestSettings.leverage = val;
+                    user.botState = 'NONE';
+                    await user.save();
+                    return ctx.reply(`✅ تم تحديث رافعة الاختبار الرجعي إلى x${val}.`, { reply_markup: getBacktestSettingsKeyboard(user) });
+                } else {
+                    return ctx.reply('يرجى إدخال رقم صحيح بين 1 و 150 (مثال: 20):');
+                }
+            }
+
+            if (user.botState === 'AWAITING_BTS_RISK') {
+                if (message === 'رجوع 🔙') {
+                    user.botState = 'NONE';
+                    await user.save();
+                    return ctx.reply('تم الإلغاء.', { reply_markup: getBacktestSettingsKeyboard(user) });
+                }
+
+                const val = parseInt(message.replace('%', ''));
+                if (!isNaN(val) && val >= 1 && val <= 100) {
+                    if (!user.backtestSettings) user.backtestSettings = { interval: '15m', initialCapital: 1000, marginMode: 'ISOLATED', leverage: 10, riskSizingEnabled: false, riskPercentage: 3, maxSlCapEnabled: false, maxSlPercentage: 5, fullReportEnabled: false };
+                    user.backtestSettings.riskPercentage = val;
+                    user.botState = 'NONE';
+                    await user.save();
+                    return ctx.reply(`✅ تم تحديث نسبة الدخول/المخاطرة للاختبار إلى ${val}%.`, { reply_markup: getBacktestSettingsKeyboard(user) });
+                } else {
+                    return ctx.reply('يرجى إدخال رقم صحيح بين 1 و 100 (مثال: 3):');
+                }
+            }
+
+            if (user.botState === 'AWAITING_BTS_MAX_SL') {
+                if (message === 'رجوع 🔙') {
+                    user.botState = 'NONE';
+                    await user.save();
+                    return ctx.reply('تم الإلغاء.', { reply_markup: getBacktestSettingsKeyboard(user) });
+                }
+
+                const val = parseInt(message.replace('%', ''));
+                if (!isNaN(val) && val >= 1 && val <= 100) {
+                    if (!user.backtestSettings) user.backtestSettings = { interval: '15m', initialCapital: 1000, marginMode: 'ISOLATED', leverage: 10, riskSizingEnabled: false, riskPercentage: 3, maxSlCapEnabled: false, maxSlPercentage: 5, fullReportEnabled: false };
+                    user.backtestSettings.maxSlPercentage = val;
+                    user.botState = 'NONE';
+                    await user.save();
+                    return ctx.reply(`✅ تم تحديث أقصى نسبة للاستوب إلى ${val}%.`, { reply_markup: getBacktestSettingsKeyboard(user) });
+                } else {
+                    return ctx.reply('يرجى إدخال رقم صحيح بين 1 و 100 (مثال: 5):');
+                }
+            }
+
             // --- SMART ANALYSIS FLOW ---
             if (message === '📊 التحليل الذكي (V1/V2)') {
                 return ctx.reply('الرجاء اختيار إصدار خوارزمية التحليل التي تود استخدامها:', {
@@ -688,8 +775,8 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
     // --- BACKTEST WIZARD CALLBACKS ---
     bot.action('btw_cancel', async (ctx) => {
         await ctx.answerCbQuery('تم الإلغاء');
-        await ctx.deleteMessage().catch(() => {});
-        
+        await ctx.deleteMessage().catch(() => { });
+
         const telegramId = ctx.from?.id.toString();
         const user = await User.findOne({ telegramId });
         if (user) {
@@ -710,99 +797,92 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
         const version = ctx.match[2];
         const symbol = ctx.match[3];
         const modeText = mode === 'SCALP' ? 'سكالبينج ⚡️' : 'سوينج 🌊';
-        
+
         await ctx.editMessageText(`اختر الفاصل الزمني للتحليل (كل كم دقيقة تريد أن يحلل البوت؟)\nالنوع: ${modeText} - الإصدار: ${version} - العملة: ${symbol}:`, {
-            reply_markup: getBacktestStepKeyboard(mode, version, symbol)
+            reply_markup: getBacktestIntervalKeyboard(mode, version, symbol)
         });
     });
 
-    bot.action(/^btw_s_(15|30|60)_(SCALP|SWING)_(V[1-6])_(.+)$/, async (ctx) => {
-        const step = ctx.match[1];
+    bot.action(/^btw_i_([0-9]+[mh])_(SCALP|SWING)_(V[1-6])_(.+)$/, async (ctx) => {
+        const interval = ctx.match[1];
         const mode = ctx.match[2];
         const version = ctx.match[3];
         const symbol = ctx.match[4];
-        await ctx.editMessageText(`اختر مدة الاختبار (كم يوم للوراء؟)\nالفاصل: كل ${step} دقيقة - الإصدار: ${version} - العملة: ${symbol}:`, {
-            reply_markup: getBacktestDaysKeyboard(step, mode, version, symbol)
+
+        await ctx.editMessageText(`اختر مدة الاختبار (كم يوم للوراء؟)\nالفاصل: كل ${interval} - الإصدار: ${version} - العملة: ${symbol}:`, {
+            reply_markup: getBacktestDaysKeyboard(interval, mode, version, symbol)
         });
     });
 
-    bot.action(/^btw_d_(\d+)_(15|30|60)_(SCALP|SWING)_(V[1-6])_(.+)$/, async (ctx) => {
-        const days = ctx.match[1];
-        const step = ctx.match[2];
-        const mode = ctx.match[3];
+    bot.action(/^btw_d_([0-9.]+)_([0-9]+[mh])_(SCALP|SWING)_(V[1-6])_(.+)$/, async (ctx) => {
+        const days = parseFloat(ctx.match[1]);
+        const interval = ctx.match[2];
+        const mode = ctx.match[3] as 'SCALP' | 'SWING';
         const version = ctx.match[4];
-        const symbol = ctx.match[5];
-        
-        await ctx.editMessageText(`اختر وضع الهامش (Margin Mode) للاختبار الرجعي:`, {
-            reply_markup: getBacktestMarginModeKeyboard(days, step, mode, version, symbol)
-        });
-    });
+        const symbolInput = ctx.match[5];
 
-    bot.action(/^btw_mm_(ISO|CRO)_(\d+)_(15|30|60)_(SCALP|SWING)_(V[1-6])_(.+)$/, async (ctx) => {
-        const mm = ctx.match[1];
-        const days = ctx.match[2];
-        const step = ctx.match[3];
-        const mode = ctx.match[4];
-        const version = ctx.match[5];
-        const symbol = ctx.match[6];
-        
-        await ctx.editMessageText(`اختر رأس المال الابتدائي المراد اختباره:`, {
-            reply_markup: getBacktestCapitalKeyboard(mm, days, step, mode, version, symbol)
-        });
-    });
-
-    bot.action(/^btw_c_(\d+)_(ISO|CRO)_(\d+)_(15|30|60)_(SCALP|SWING)_(V[1-6])_(.+)$/, async (ctx) => {
-        const initialCapital = parseInt(ctx.match[1]);
-        const mm = ctx.match[2];
-        const days = parseInt(ctx.match[3]);
-        const stepMinutes = parseInt(ctx.match[4]);
-        const mode = ctx.match[5] as 'SCALP' | 'SWING';
-        const version = ctx.match[6];
-        const symbolInput = ctx.match[7];
-        
         const symbol = symbolInput.includes('/') ? symbolInput : `${symbolInput}/USDT:USDT`;
+
+        // Parse stepMinutes from interval
+        let stepMinutes = 15;
+        if (interval.endsWith('m')) stepMinutes = parseInt(interval.replace('m', ''));
+        if (interval.endsWith('h')) stepMinutes = parseInt(interval.replace('h', '')) * 60;
+
         const modeText = mode === 'SCALP' ? 'سكالبينج ⚡️' : 'سوينج 🌊';
-        const marginModeText = mm === 'CRO' ? 'متبادل (Cross)' : 'معزول (Isolated)';
-        const marginModeVal = mm === 'CRO' ? 'CROSS' : 'ISOLATED';
 
-        await ctx.editMessageText(`⏳ جاري إجراء الاختبار الرجعي المتقدم...\nالعملة: ${symbol}\nالإصدار: ${version}\nالنوع: ${modeText}\nالوضع: ${marginModeText}\nفاصل التحليل: كل ${stepMinutes} دقيقة\nمدة الاختبار: آخر ${days} أيام\nرأس المال: ${initialCapital}$\n\n*(يرجى الانتظار، قد يستغرق سحب البيانات الدقيقة وتحليلها وقتاً طويلاً)*`);
-        
+        const telegramId = ctx.from?.id.toString();
+        const user = await User.findOne({ telegramId });
+
+        const bs = user?.backtestSettings || {
+            initialCapital: 1000, marginMode: 'ISOLATED', leverage: 10,
+            riskSizingEnabled: false, riskPercentage: 3, maxSlCapEnabled: false, maxSlPercentage: 5, fullReportEnabled: false
+        };
+
+        const marginModeText = bs.marginMode === 'CROSS' ? 'متبادل (Cross)' : 'معزول (Isolated)';
+
         try {
-            // Using user's default TFs for quick and long TF
-            const quickTF = '5m';
-            const longTF = '1h';
+            await ctx.editMessageText(`⏳ جاري إجراء الاختبار الرجعي المتقدم...\nالعملة: ${symbol}\nالإصدار: ${version}\nالنوع: ${modeText}\nالوضع: ${marginModeText}\nإدارة المخاطر بالاستوب: ${bs.riskSizingEnabled ? '✅' : '❌'}\nفاصل التحليل: كل ${stepMinutes} دقيقة\nمدة الاختبار: آخر ${days} أيام\nرأس المال: ${bs.initialCapital}$\n\n*(يرجى الانتظار، قد يستغرق الأمر بعض الوقت...)*`);
+        } catch (e) { }
 
-            const telegramId = ctx.from?.id.toString();
-            const user = await User.findOne({ telegramId });
-            
-            const result = await backtestService.runAdvancedBacktest(symbol, version, {
-                quickTF: quickTF,
-                longTF: longTF,
-                days: days,
-                stepMinutes: stepMinutes,
-                mode: mode,
-                initialCapital: initialCapital,
-                marginPerTradePercentage: 3,
-                marginMode: marginModeVal
-            });
-            
-            if (user) {
-                await ctx.reply(result.reportText, { parse_mode: 'Markdown', reply_markup: getMainMenuKeyboard(user) });
-            } else {
-                await ctx.reply(result.reportText, { parse_mode: 'Markdown' });
-            }
+        await ctx.answerCbQuery('بدأ الاختبار الرجعي...').catch(() => { });
 
-            if (result.trades && result.trades.length > 0) {
-                const csvBuffer = generateCSVBuffer(result.trades);
-                const safeSymbol = symbol.replace(/[\/:]/g, '_');
-                const fileName = `Backtest_${version}_${mode}_${safeSymbol}.csv`;
-                await ctx.replyWithDocument({ source: csvBuffer, filename: fileName });
+        // Execute backtest asynchronously to prevent Telegram Webhook timeouts
+        (async () => {
+            try {
+                const result = await backtestService.runAdvancedBacktest(symbol, version, {
+                    quickTF: user?.analysisSettings?.scalpTF || '5m',
+                    longTF: user?.analysisSettings?.swingTF || '1h',
+                    days: days,
+                    stepMinutes: stepMinutes,
+                    mode: mode,
+                    initialCapital: bs.initialCapital,
+                    marginPerTradePercentage: bs.riskPercentage,
+                    marginMode: bs.marginMode,
+                    leverage: bs.leverage,
+                    riskSizingEnabled: bs.riskSizingEnabled,
+                    maxSlCapEnabled: bs.maxSlCapEnabled,
+                    maxSlPercentage: bs.maxSlPercentage,
+                    fullReportEnabled: bs.fullReportEnabled
+                });
+
+                if (user) {
+                    await ctx.reply(result.reportText, { parse_mode: 'Markdown', reply_markup: getMainMenuKeyboard(user) });
+                } else {
+                    await ctx.reply(result.reportText, { parse_mode: 'Markdown' });
+                }
+
+                if (result.trades && result.trades.length > 0) {
+                    const csvBuffer = generateCSVBuffer(result.trades, bs.fullReportEnabled);
+                    const safeSymbol = symbol.replace(/[\/:]/g, '_');
+                    const fileName = `Backtest_${version}_${mode}_${safeSymbol}.csv`;
+                    await ctx.replyWithDocument({ source: csvBuffer, filename: fileName });
+                }
+
+            } catch (error: any) {
+                logger.error('Error in advanced backtest wizard:', error);
+                await ctx.reply(`❌ فشل الاختبار: ${error.message}`);
             }
-            
-        } catch (error: any) {
-            logger.error('Error in advanced backtest wizard:', error);
-            await ctx.reply(`❌ فشل الاختبار: ${error.message}`);
-        }
+        })();
     });
 
     // --- CALLBACK HANDLERS FOR ANALYSIS ACTIONS ---
@@ -881,7 +961,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                 stepMinutes: 30, // Default to 30 mins
                 mode: mode
             });
-            
+
             if (user) {
                 await ctx.reply(result.reportText, { parse_mode: 'Markdown', reply_markup: getMainMenuKeyboard(user) });
             } else {
