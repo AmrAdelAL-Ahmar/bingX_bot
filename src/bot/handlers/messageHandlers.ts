@@ -874,7 +874,9 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                 if (result.trades && result.trades.length > 0) {
                     const csvBuffer = generateCSVBuffer(result.trades, bs.fullReportEnabled);
                     const safeSymbol = symbol.replace(/[\/:]/g, '_');
-                    const fileName = `Backtest_${version}_${mode}_${safeSymbol}.csv`;
+                    const now = new Date();
+                    const dateStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}-${String(now.getMinutes()).padStart(2,'0')}`;
+                    const fileName = `Backtest_${version}_${mode}_${safeSymbol}_${dateStr}.csv`;
                     await ctx.replyWithDocument({ source: csvBuffer, filename: fileName });
                 }
 
