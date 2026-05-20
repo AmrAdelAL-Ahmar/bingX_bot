@@ -175,6 +175,64 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
     const analysisService = new AnalysisService(bingxService);
     const backtestService = new BacktestService(bingxService, analysisService);
 
+    // ── نظام الاقتناص الذكي — فتح اللوحة الرئيسية ─────────────────────────────
+    // يُرسل رسالة تحتوي زر inline يُفتح بـ snp_open (معالَج في sniperHandlers)
+    bot.hears('🎯 نظام الاقتناص الذكي', async (ctx) => {
+        try {
+            const telegramId = ctx.from?.id.toString();
+            if (!telegramId) return;
+            const SniperWatch = require('../../models/SniperWatch').default;
+            const { getSniperMainKeyboard } = require('../keyboards/sniperKeyboards');
+            const user = await User.findOne({ telegramId });
+            const count = user ? await SniperWatch.countDocuments({ userId: user._id, status: 'ACTIVE' }) : 0;
+            await ctx.reply('🎯 *نظام الاقتناص الذكي*\n\nاختر ما تريد:', {
+                parse_mode: 'Markdown',
+                reply_markup: getSniperMainKeyboard(count)
+            });
+        } catch (e) { logger.error('sniper main menu error:', e); }
+    });
+
+    // ── مراقبة الصفقات الحية — فتح لوحة الرادار ───────────────────────────────
+    bot.hears('📡 مراقبة الصفقات الحية', async (ctx) => {
+        try {
+            const telegramId = ctx.from?.id.toString();
+            if (!telegramId) return;
+            const user = await User.findOne({ telegramId });
+            if (!user) return;
+
+            const TradeModel = require('../../models/Trade').default;
+            const TradeRadarModel = require('../../models/TradeRadar').default;
+
+            const activeTrades = await TradeModel.find({
+                // userId: user._id,
+                currentStatus: { $in: ['OPEN', 'TP1_HIT', 'TP2_HIT'] }
+            });
+            const activeRadars = await TradeRadarModel.find({ userId: user._id, isActive: true });
+            const monitoredIds = activeRadars.map((r: any) => r.tradeId.toString());
+
+            const tradeRows = activeTrades.length > 0
+                ? activeTrades.map((trade: any) => {
+                    const isMonitored = monitoredIds.includes(trade._id.toString());
+                    const sym = trade.symbol.split('/')[0];
+                    const dirEmoji = trade.direction === 'LONG' ? '🟢' : '🔴';
+                    const statusEmoji = isMonitored ? '📡' : '⭕';
+                    return [{ text: `${statusEmoji} ${dirEmoji} ${sym} ${isMonitored ? '(مراقب)' : ''}`, callback_data: `radar_trade_${trade._id}` }];
+                })
+                : [[{ text: '📭 لا توجد صفقات مفتوحة', callback_data: 'radar_noop' }]];
+
+            await ctx.reply('📡 *مراقبة الصفقات الحية*\n\nاختر صفقة لإدارة مراقبتها:', {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        ...tradeRows,
+                        [{ text: '⚙️ إعدادات المراقبة', callback_data: 'radar_default_settings' }],
+                        [{ text: '🔙 إغلاق', callback_data: 'radar_close' }]
+                    ]
+                }
+            });
+        } catch (e) { logger.error('radar main menu error:', e); }
+    });
+
     bot.start(async (ctx) => {
         const user = await User.findOne({ telegramId: ctx.from.id.toString() });
         const welcomeMsg = `🤖 <b>مرحباً بك في بوت التداول الآلي!</b>\n\n` +
@@ -224,6 +282,88 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
             }
 
             // 1. Check AWAITING States
+            if (user.botState && user.botState.startsWith('AWAITING_SNIPER_SYMBOL')) {
+                if (message === 'رجوع 🔙' || message === 'إلغاء ❌') {
+                    user.botState = 'NONE';
+                    await user.save();
+                    const count = await require('../../models/SniperWatch').default.countDocuments({ userId: user._id, status: 'ACTIVE' });
+                    const { getSniperMainKeyboard } = require('../keyboards/sniperKeyboards');
+                    return ctx.reply('🎯 *نظام الاقتناص الذكي*\n\nاختر ما تريد:', {
+                        parse_mode: 'Markdown',
+                        reply_markup: getSniperMainKeyboard(count)
+                    });
+                }
+
+                const symbolClean = message.trim().toUpperCase().replace('/USDT', '').replace(':USDT', '');
+                if (symbolClean.length < 2 || symbolClean.length > 10) {
+                    return ctx.reply('⚠️ رمز العملة غير صحيح. يرجى إدخال رمز صحيح (مثل: BTC أو ETH):');
+                }
+
+                const fullSymbol = `${symbolClean}/USDT:USDT`;
+                const state = user.botState;
+                user.botState = 'NONE';
+                await user.save();
+
+                if (state === 'AWAITING_SNIPER_SYMBOL') {
+                    const { getSniperEngineKeyboard } = require('../keyboards/sniperKeyboards');
+                    return ctx.reply(
+                        `🎯 *اقتناص ${symbolClean}*\nاختر محرك الاقتناص:`,
+                        {
+                            parse_mode: 'Markdown',
+                            reply_markup: getSniperEngineKeyboard(fullSymbol)
+                        }
+                    );
+                } else {
+                    // Format: AWAITING_SNIPER_SYMBOL_${actionType}_${engineId}
+                    const parts = state.split('_');
+                    const actionType = parts[3]; // 'instant' or 'add'
+                    const engineId = parts[4]; // e.g. 'V8-SCALP'
+
+                    if (actionType === 'instant') {
+                        ctx.reply(`⏳ جاري تحليل ${symbolClean}...`);
+                        const sniperManager = (bot as any).sniperManager;
+                        if (!sniperManager) {
+                            return ctx.reply('❌ فشل النظام، حاول مرة أخرى.');
+                        }
+                        const report = await sniperManager.instantReport(fullSymbol, engineId);
+                        if (!report) {
+                            return ctx.reply('❌ فشل جلب البيانات، حاول مرة أخرى.');
+                        }
+                        return ctx.reply(report.details, {
+                            parse_mode: 'Markdown',
+                            reply_markup: {
+                                inline_keyboard: [
+                                    ...(report.readyToFire ? [[
+                                        { text: '⚡ تنفيذ فوري', callback_data: `snp_direct_exec_${fullSymbol}_${engineId}` }
+                                    ]] : []),
+                                    [{ text: `⏱ مراقبة واقتناص الفرص`, callback_data: `snp_watch_${fullSymbol}_${engineId}` }],
+                                    [{ text: '🔙 القائمة الرئيسية', callback_data: 'snp_open' }]
+                                ]
+                            }
+                        });
+                    } else if (actionType === 'backtest') {
+                        const { getSniperBacktestDaysKeyboard } = require('../keyboards/sniperKeyboards');
+                        const engine = require('../../services/sniper/SniperRegistry').getSniperEngine(engineId);
+                        return ctx.reply(
+                            `🧪 *تحديد مدة الاختبار الرجعي*\nالمحرك: ${engine?.displayName || engineId}\nالعملة: ${symbolClean}/USDT:USDT\n\nاختر مدة الاختبار الرجعي:`,
+                            {
+                                parse_mode: 'Markdown',
+                                reply_markup: getSniperBacktestDaysKeyboard(engineId, fullSymbol)
+                            }
+                        );
+                    } else {
+                        const { getSniperDurationKeyboard } = require('../keyboards/sniperKeyboards');
+                        return ctx.reply(
+                            `⏱ *تحديد مدة الاقتناص*\nالعملة: ${symbolClean}\nالمحرك: ${engineId}`,
+                            {
+                                parse_mode: 'Markdown',
+                                reply_markup: getSniperDurationKeyboard(engineId, fullSymbol)
+                            }
+                        );
+                    }
+                }
+            }
+
             if (user.botState === 'AWAITING_RISK_PERCENTAGE') {
                 if (message === 'رجوع 🔙') {
                     user.botState = 'NONE';
@@ -534,13 +674,14 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
             }
 
             if (message === 'دليل الخوارزميات 📖') {
-                const guide = `📖 **دليل الخوارزميات (V1-V6):**\n\n` +
+                const guide = `📖 **دليل الخوارزميات (V1-V7):**\n\n` +
                     `${analysisService.getAlgorithmExplanation('V1')}\n\n` +
                     `${analysisService.getAlgorithmExplanation('V2')}\n\n` +
                     `${analysisService.getAlgorithmExplanation('V3')}\n\n` +
                     `${analysisService.getAlgorithmExplanation('V4')}\n\n` +
                     `${analysisService.getAlgorithmExplanation('V5')}\n\n` +
-                    `${analysisService.getAlgorithmExplanation('V6')}`;
+                    `${analysisService.getAlgorithmExplanation('V6')}\n\n` +
+                    `${analysisService.getAlgorithmExplanation('V7')}`;
                 return ctx.reply(guide);
             }
 
@@ -584,10 +725,18 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                 });
             }
 
-            if (message === 'الخوارزمية V6 (Sniper V7) 🎯') {
+            if (message === 'الخوارزمية V6 (Sniper) 🎯') {
                 user.botState = 'AWAITING_ANALYSIS_SYMBOL_V6';
                 await user.save();
-                return ctx.reply('يرجى إرسال رمز العملة للتحليل باستخدام V6 (Sniper V7) 🎯 (مثال: BTC):', {
+                return ctx.reply('يرجى إرسال رمز العملة للتحليل باستخدام V6 (Sniper) 🎯 (مثال: BTC):', {
+                    reply_markup: { keyboard: [[{ text: 'إلغاء ❌' }]], resize_keyboard: true }
+                });
+            }
+
+            if (message === 'الخوارزمية V7 (القناص الهجيني) 🏹') {
+                user.botState = 'AWAITING_ANALYSIS_SYMBOL_V7';
+                await user.save();
+                return ctx.reply('يرجى إرسال رمز العملة للتحليل باستخدام V7 (القناص الهجيني) 🏹 (مثال: BTC):', {
                     reply_markup: { keyboard: [[{ text: 'إلغاء ❌' }]], resize_keyboard: true }
                 });
             }
@@ -621,7 +770,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                     return ctx.reply('تم الإلغاء.', { reply_markup: getMainMenuKeyboard(user) });
                 }
 
-                const version = user.botState.split('_').pop() as 'V1' | 'V2' | 'V3' | 'V4' | 'V5' | 'V6';
+                const version = user.botState.split('_').pop() as 'V1' | 'V2' | 'V3' | 'V4' | 'V5' | 'V6' | 'V7';
                 const symbol = message.toUpperCase();
                 ctx.reply(`⏳ جاري تحليل ${symbol} باستخدام ${version}... (TF: ${user.analysisSettings?.scalpTF || '5m'}/${user.analysisSettings?.swingTF || '1h'})`);
 
@@ -784,7 +933,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
         }
     });
 
-    bot.action(/^btw_v_(V[1-6])_(.+)$/, async (ctx) => {
+    bot.action(/^btw_v_(V[1-7])_(.+)$/, async (ctx) => {
         const version = ctx.match[1];
         const symbol = ctx.match[2];
         await ctx.editMessageText(`اختر نوع الاختبار (هل تريد اختبار الصفقات السريعة أم الاستثمارية؟)\nالإصدار: ${version} - العملة: ${symbol}:`, {
@@ -792,7 +941,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
         });
     });
 
-    bot.action(/^btw_m_(SCALP|SWING)_(V[1-6])_(.+)$/, async (ctx) => {
+    bot.action(/^btw_m_(SCALP|SWING)_(V[1-7])_(.+)$/, async (ctx) => {
         const mode = ctx.match[1];
         const version = ctx.match[2];
         const symbol = ctx.match[3];
@@ -803,7 +952,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
         });
     });
 
-    bot.action(/^btw_i_([0-9]+[mh])_(SCALP|SWING)_(V[1-6])_(.+)$/, async (ctx) => {
+    bot.action(/^btw_i_([0-9]+[mh])_(SCALP|SWING)_(V[1-7])_(.+)$/, async (ctx) => {
         const interval = ctx.match[1];
         const mode = ctx.match[2];
         const version = ctx.match[3];
@@ -814,7 +963,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
         });
     });
 
-    bot.action(/^btw_d_([0-9.]+)_([0-9]+[mh])_(SCALP|SWING)_(V[1-6])_(.+)$/, async (ctx) => {
+    bot.action(/^btw_d_([0-9.]+)_([0-9]+[mh])_(SCALP|SWING)_(V[1-7])_(.+)$/, async (ctx) => {
         const days = parseFloat(ctx.match[1]);
         const interval = ctx.match[2];
         const mode = ctx.match[3] as 'SCALP' | 'SWING';
@@ -875,7 +1024,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                     const csvBuffer = generateCSVBuffer(result.trades, bs.fullReportEnabled);
                     const safeSymbol = symbol.replace(/[\/:]/g, '_');
                     const now = new Date();
-                    const dateStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}-${String(now.getMinutes()).padStart(2,'0')}`;
+                    const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}`;
                     const fileName = `Backtest_${version}_${mode}_${safeSymbol}_${dateStr}.csv`;
                     await ctx.replyWithDocument({ source: csvBuffer, filename: fileName });
                 }
@@ -957,8 +1106,8 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
             const mode: 'SCALP' | 'SWING' = type === 'sc' ? 'SCALP' : 'SWING';
 
             const result = await backtestService.runAdvancedBacktest(symbol, version, {
-                quickTF: '5m',
-                longTF: '1h',
+                quickTF: user?.analysisSettings?.scalpTF || '5m',
+                longTF: user?.analysisSettings?.swingTF || '1h',
                 days: 1, // Quick test uses 1 day
                 stepMinutes: 30, // Default to 30 mins
                 mode: mode
@@ -973,7 +1122,9 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
             if (result.trades && result.trades.length > 0) {
                 const csvBuffer = generateCSVBuffer(result.trades);
                 const safeSymbol = symbol.replace(/[\/:]/g, '_');
-                const fileName = `Backtest_${version}_${mode}_${safeSymbol}.csv`;
+                const now = new Date();
+                const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}`;
+                const fileName = `Backtest_${version}_${mode}_${safeSymbol}_${dateStr}.csv`;
                 await ctx.replyWithDocument({ source: csvBuffer, filename: fileName });
             }
 

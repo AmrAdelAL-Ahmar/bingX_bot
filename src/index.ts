@@ -18,6 +18,9 @@ import { registerPortfolioHandlers } from './bot/handlers/portfolioHandlers';
 import { registerReportHandlers } from './bot/handlers/reportHandlers';
 import { registerTradingHandlers } from './bot/handlers/tradingHandlers';
 import { registerSettingsHandlers } from './bot/handlers/settingsHandlers';
+import { registerSniperHandlers } from './bot/handlers/sniperHandlers';
+import { registerRadarHandlers } from './bot/handlers/radarHandlers';
+import { SniperManager } from './services/SniperManager';
 
 dotenv.config();
 
@@ -36,6 +39,15 @@ const positionMonitor = new PositionMonitor(bingXService, analysisService, async
     }
 });
 
+// Initialize SniperManager
+const sniperManager = new SniperManager(bingXService, async (telegramId, msg, extra) => {
+    try {
+        await (bot.telegram.sendMessage as any)(telegramId, msg, extra || { parse_mode: 'Markdown' });
+    } catch (error: any) {
+        logger.error(`SniperManager notifier error: ${error.message}`);
+    }
+});
+
 // Setup bot middlewares
 bot.use(ensureUser);
 
@@ -44,6 +56,9 @@ registerPortfolioHandlers(bot, bingXService);
 registerReportHandlers(bot, bingXService);
 registerTradingHandlers(bot, bingXService);
 registerSettingsHandlers(bot);
+(bot as any).sniperManager = sniperManager;
+registerSniperHandlers(bot, sniperManager);
+registerRadarHandlers(bot);
 registerMessageHandlers(bot, tradeManager);
 
 const start = async () => {
@@ -56,6 +71,10 @@ const start = async () => {
     // Start Monitor before bot launch
     positionMonitor.start();
     logger.info('Position Monitor Started');
+
+    // Start SniperManager
+    sniperManager.start();
+    logger.info('🎯 Sniper Manager Started');
 
     bot.launch().then(() => {
         logger.info('Telegram Bot Started Successfully');

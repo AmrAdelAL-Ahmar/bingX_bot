@@ -8,6 +8,7 @@ import { V3Engine } from './engines/V3Engine';
 import { V4Engine } from './engines/V4Engine';
 import { V5Engine } from './engines/V5Engine';
 import { V6Engine } from './engines/V6Engine';
+import { V7Engine } from './engines/V7Engine';
 
 // --- Types & Interfaces ---
 
@@ -50,6 +51,8 @@ export interface TechnicalLevels {
     fibTarget: number;
     ma99: number;
     ma20: number;
+    ma50: number;
+    ma200: number;
     ma7: number;
     lastSwingHigh: number;
     lastSwingLow: number;
@@ -130,7 +133,8 @@ const ENGINES: Record<string, ITradingEngine> = {
     'V3': new V3Engine(),
     'V4': new V4Engine(),
     'V5': new V5Engine(),
-    'V6': new V6Engine()
+    'V6': new V6Engine(),
+    'V7': new V7Engine()
 };
 
 // --- Report Formatter ---
@@ -394,7 +398,7 @@ export class AnalysisService {
 
     async analyze(
         symbolInput: string,
-        version: 'V1' | 'V2' | 'V3' | 'V4' | 'V5' | 'V6' = 'V1',
+        version: 'V1' | 'V2' | 'V3' | 'V4' | 'V5' | 'V6' | 'V7' = 'V1',
         options: { quickTF?: string, longTF?: string, limit?: number, rsiThreshold?: number } = {}
     ): Promise<AnalysisResult> {
         let symbol = symbolInput.toUpperCase();
@@ -537,7 +541,8 @@ export class AnalysisService {
     }
 
     getAlgorithmExplanation(v: string): string {
-        if (v === 'V6') return "🎯 **V6 Sniper V7:** الإصدار الأقوى. يستخدم جدار حماية زمني لفصل السكالب عن السوينج، مع فلاتر هيكل السوق (Price Action) لمنع الدخول العكسي الخاطئ وربط رادار التصحيح كصمام أمان.";
-        return "📘 **نظام التداول المتعدد الاستراتيجيات:** يضم 6 محركات تحليل مختلفة لتغطية كافة ظروف السوق.";
+        if (v === 'V7') return "🎯 **V7 Hybrid Sniper:** المحرك الأعلى دقة. معمارية ثلاثية الطبقات: Macro (تحيز يومي عبر SMA50/200) → Meso (POI: كتل أوامر SMC + فيبوناتشي 0.618-0.886) → Micro (زناد: RSI Divergence + كسر هيكل MSS). لا تُصدر إشارة دون ثقة ≥80%.";
+        if (v === 'V6') return "🎯 **V6 Sniper:** يستخدم جدار حماية زمني لفصل السكالب عن السوينج، مع فلاتر هيكل السوق (Price Action) لمنع الدخول العكسي الخاطئ وربط رادار التصحيح كصمام أمان.";
+        return "📘 **نظام التداول المتعدد الاستراتيجيات:** يضم 7 محركات تحليل مختلفة لتغطية كافة ظروف السوق.";
     }
 }

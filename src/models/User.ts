@@ -58,6 +58,16 @@ export interface IUser extends Document {
         maxSlPercentage: number;
         fullReportEnabled: boolean;
     };
+    sniperSettings?: {
+        autoExecute: boolean;
+        notifyOnce: boolean;
+    };
+    radarSettings?: {
+        wickSweepAlert: boolean;
+        reversalAlert: boolean;
+        trailingEnabled: boolean;
+        notifyOnce: boolean;
+    };
 }
 
 const UserSchema: Schema = new Schema({
@@ -99,6 +109,18 @@ const UserSchema: Schema = new Schema({
     tpSplitMode: { type: String, enum: ['auto', 'manual'], default: 'auto' },
     tpProfitSplits: { type: [Number], default: [50, 50] },
     errorMitigationEnabled: { type: Boolean, default: true },
+    // Sniper settings
+    sniperSettings: {
+        autoExecute: { type: Boolean, default: false },
+        notifyOnce: { type: Boolean, default: false }
+    },
+    // Default Radar settings
+    radarSettings: {
+        wickSweepAlert: { type: Boolean, default: true },
+        reversalAlert: { type: Boolean, default: true },
+        trailingEnabled: { type: Boolean, default: false },
+        notifyOnce: { type: Boolean, default: true }
+    },
     analysisSettings: {
         scalpTF: { type: String, default: '5m' },
         swingTF: { type: String, default: '1h' },

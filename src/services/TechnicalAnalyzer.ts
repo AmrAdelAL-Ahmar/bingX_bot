@@ -67,7 +67,9 @@ export class TechnicalAnalyzer {
             r1: 0, s1: 0, r2: 0, s2: 0,
             ma7: SMA.calculate({ period: 7, values: closes }).slice(-1)[0],
             ma20: ma20,
+            ma50: SMA.calculate({ period: 50, values: closes }).slice(-1)[0] || 0,
             ma99: SMA.calculate({ period: 99, values: closes }).slice(-1)[0],
+            ma200: closes.length >= 200 ? SMA.calculate({ period: 200, values: closes }).slice(-1)[0] : 0,
             fib618: 0, fib382: 0, fibTarget: 0,
             lastSwingHigh,
             lastSwingLow
@@ -228,6 +230,149 @@ export class TechnicalAnalyzer {
                 fib500: minLow + (diff * 0.500),
                 fib618: minLow + (diff * 0.618),
                 type: 'RESISTANCE'
+            };
+        }
+    }
+
+    /**
+     * كشف كتلة الأوامر (Order Block)
+     * هي آخر شمعة معاكسة للاتجاه قبل حركة دافعة قوية، ولم يُختبر فيها السعر بعد.
+     */
+    static detectOrderBlock(
+        ohlcv: OHLCV[],
+        direction: 'LONG' | 'SHORT'
+    ): { found: boolean; top: number; bottom: number; description: string } {
+        const candles = ohlcv.slice(-30);
+        if (candles.length < 5) return { found: false, top: 0, bottom: 0, description: 'بيانات غير كافية' };
+
+        const latestClose = candles[candles.length - 1].close;
+        const MIN_IMPULSE = 0.002; // 0.2% minimum impulse move
+
+        for (let i = candles.length - 4; i >= 1; i--) {
+            const c = candles[i];
+            const next = candles[i + 1];
+
+            if (direction === 'LONG') {
+                // Bullish OB: last bearish candle before a strong bullish impulse
+                const isBearish = c.close < c.open;
+                const nextIsBullish = next.close > next.open;
+                const impulse = next.open > 0 && (next.close - next.open) / next.open > MIN_IMPULSE;
+                if (isBearish && nextIsBullish && impulse) {
+                    const top = Math.max(c.open, c.close);
+                    const bottom = Math.min(c.open, c.close);
+                    if (latestClose > top) { // Still untested
+                        return { found: true, top, bottom, description: `Bullish OB [${bottom.toFixed(4)}–${top.toFixed(4)}]` };
+                    }
+                }
+            } else {
+                // Bearish OB: last bullish candle before a strong bearish impulse
+                const isBullish = c.close > c.open;
+                const nextIsBearish = next.close < next.open;
+                const impulse = next.open > 0 && (next.open - next.close) / next.open > MIN_IMPULSE;
+                if (isBullish && nextIsBearish && impulse) {
+                    const top = Math.max(c.open, c.close);
+                    const bottom = Math.min(c.open, c.close);
+                    if (latestClose < bottom) { // Still untested
+                        return { found: true, top, bottom, description: `Bearish OB [${bottom.toFixed(4)}–${top.toFixed(4)}]` };
+                    }
+                }
+            }
+        }
+        return { found: false, top: 0, bottom: 0, description: 'لا يوجد OB صالح' };
+    }
+
+    /**
+     * كشف الفجوة السعرية العادلة (Fair Value Gap)
+     * نمط ثلاث شموع: فجوة بين قمة الشمعة الأولى وقاع الشمعة الثالثة (صاعد) أو العكس.
+     */
+    static detectFVG(
+        ohlcv: OHLCV[],
+        direction: 'LONG' | 'SHORT'
+    ): { found: boolean; top: number; bottom: number; description: string } {
+        const candles = ohlcv.slice(-20);
+        if (candles.length < 3) return { found: false, top: 0, bottom: 0, description: 'بيانات غير كافية' };
+
+        const latestClose = candles[candles.length - 1].close;
+
+        // Scan most recent FVGs first
+        for (let i = candles.length - 1; i >= 2; i--) {
+            const c1 = candles[i - 2];
+            const c3 = candles[i];
+
+            if (direction === 'LONG') {
+                // Bullish FVG: gap between c1.high and c3.low
+                if (c1.high < c3.low) {
+                    const bottom = c1.high;
+                    const top = c3.low;
+                    if (latestClose > top) { // Unfilled
+                        return { found: true, top, bottom, description: `Bullish FVG [${bottom.toFixed(4)}–${top.toFixed(4)}]` };
+                    }
+                }
+            } else {
+                // Bearish FVG: gap between c3.high and c1.low
+                if (c1.low > c3.high) {
+                    const bottom = c3.high;
+                    const top = c1.low;
+                    if (latestClose < bottom) { // Unfilled
+                        return { found: true, top, bottom, description: `Bearish FVG [${bottom.toFixed(4)}–${top.toFixed(4)}]` };
+                    }
+                }
+            }
+        }
+        return { found: false, top: 0, bottom: 0, description: 'لا يوجد FVG صالح' };
+    }
+
+    /**
+     * كشف كسر هيكل السوق (Market Structure Shift / CHoCH)
+     * المعيار الثلاثي: إغلاق الجسم خارج الهيكل + حجم أعلى + عدم رفض فوري
+     * الذيول (Wicks) تُتجاهل تماماً لتجنب مصايد السيولة.
+     */
+    static detectMSS(
+        ohlcv: OHLCV[],
+        direction: 'LONG' | 'SHORT'
+    ): { detected: boolean; breakLevel: number; description: string } {
+        const candles = ohlcv.slice(-20);
+        if (candles.length < 5) return { detected: false, breakLevel: 0, description: 'بيانات غير كافية' };
+
+        // Average volume (excluding last 2 candles)
+        const lookback = candles.slice(0, -2);
+        const avgVolume = lookback.reduce((s, c) => s + c.volume, 0) / lookback.length;
+
+        const last = candles[candles.length - 1];
+        const prev = candles[candles.length - 2];
+
+        if (direction === 'LONG') {
+            // Structure high = max HIGH of all candles except last 3 (avoid counting current move)
+            const structureHigh = Math.max(...candles.slice(0, -3).map(c => c.high));
+
+            const bodyCloseAbove = last.close > structureHigh;           // ✅ Body, not wick
+            const volumeConfirmed = last.volume > avgVolume * 1.2;       // ✅ Volume surge
+            const noRejection = prev.close > structureHigh               // ✅ Prev also closed above
+                || (last.close > last.open && (last.close - last.open) / last.open > 0.001);
+
+            const detected = bodyCloseAbove && volumeConfirmed && noRejection;
+            return {
+                detected,
+                breakLevel: structureHigh,
+                description: detected
+                    ? `✅ MSS صاعد: إغلاق فوق ${structureHigh.toFixed(4)} | حجم ${((last.volume / avgVolume) * 100).toFixed(0)}%`
+                    : `❌ MSS غير مؤكد (LONG): جسم:${bodyCloseAbove} | حجم:${volumeConfirmed} | عدم رفض:${noRejection}`
+            };
+        } else {
+            const structureLow = Math.min(...candles.slice(0, -3).map(c => c.low));
+
+            const bodyCloseBelow = last.close < structureLow;
+            const volumeConfirmed = last.volume > avgVolume * 1.2;
+            const noRejection = prev.close < structureLow
+                || (last.open > last.close && (last.open - last.close) / last.open > 0.001);
+
+            const detected = bodyCloseBelow && volumeConfirmed && noRejection;
+            return {
+                detected,
+                breakLevel: structureLow,
+                description: detected
+                    ? `✅ MSS هابط: إغلاق تحت ${structureLow.toFixed(4)} | حجم ${((last.volume / avgVolume) * 100).toFixed(0)}%`
+                    : `❌ MSS غير مؤكد (SHORT): جسم:${bodyCloseBelow} | حجم:${volumeConfirmed} | عدم رفض:${noRejection}`
             };
         }
     }

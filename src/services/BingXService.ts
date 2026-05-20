@@ -239,16 +239,33 @@ export class BingXService {
         }
     }
 
-    async setStopLoss(symbol: string, stopPrice: number, side: 'LONG' | 'SHORT') {
+    async setStopLoss(symbol: string, stopPrice: number, side: 'LONG' | 'SHORT', amount?: number) {
         try {
             await this.exchange.loadMarkets();
             const orderSide = side === 'LONG' ? 'sell' : 'buy';
+            
+            let finalAmount = amount;
+            if (!finalAmount || finalAmount <= 0) {
+                const positions = await this.getPositions(symbol);
+                const matchingPos = positions.find((p: any) =>
+                    ((side === 'LONG' && p.side.toLowerCase() === 'long') ||
+                        (side === 'SHORT' && p.side.toLowerCase() === 'short')) &&
+                    parseFloat(p.contracts || '0') > 0
+                );
+                if (matchingPos) {
+                    finalAmount = parseFloat(matchingPos.contracts);
+                }
+            }
+
+            if (!finalAmount || finalAmount <= 0) {
+                throw new Error(`No active position found for ${symbol} to set stop loss.`);
+            }
+
             const params = {
                 stopPrice: stopPrice,
-                positionSide: side,
-                type: 'STOP'
+                positionSide: side
             };
-            return await this.exchange.createOrder(symbol, 'STOP', orderSide, 0, undefined, params);
+            return await this.exchange.createOrder(symbol, 'TRIGGER_MARKET', orderSide, finalAmount, undefined, params);
         } catch (error) {
             logger.error(`Error setting stop loss for ${symbol}: `, error);
             throw error;

@@ -10,6 +10,7 @@ import { V3Engine } from './engines/V3Engine';
 import { V4Engine } from './engines/V4Engine';
 import { V5Engine } from './engines/V5Engine';
 import { V6Engine } from './engines/V6Engine';
+import { V7Engine } from './engines/V7Engine';
 
 export interface BacktestResult {
     reportText: string;
@@ -23,7 +24,8 @@ export class BacktestService {
         'V3': new V3Engine(),
         'V4': new V4Engine(),
         'V5': new V5Engine(),
-        'V6': new V6Engine()
+        'V6': new V6Engine(),
+        'V7': new V7Engine()
     };
 
     constructor(

@@ -50,7 +50,7 @@ export const registerPortfolioHandlers = (bot: Telegraf, BingXService: BingXServ
             }
 
             const openTrades = await Trade.find({
-                userId: user._id,
+                // userId: user._id,
                 currentStatus: { $in: ['OPEN', 'TP1_HIT', 'TP2_HIT'] }
             });
 

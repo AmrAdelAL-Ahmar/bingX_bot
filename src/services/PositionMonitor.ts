@@ -2,6 +2,8 @@ import { BingXService } from './BingXService';
 import { AnalysisService } from './AnalysisService';
 import Trade from '../models/Trade';
 import User from '../models/User';
+import TradeRadar, { ITradeRadar } from '../models/TradeRadar';
+import { TechnicalAnalyzer } from './TechnicalAnalyzer';
 import logger from '../utils/logger';
 
 export class PositionMonitor {
@@ -256,6 +258,9 @@ export class PositionMonitor {
                             }
                         }
 
+                        // ── RADAR SYSTEM ─────────────────────────────────────────────────────
+                        await this.runRadarChecks(trade._id.toString(), trade.symbol, trade.direction as 'LONG' | 'SHORT', trade.stopLoss, currentPrice);
+
                         continue;
 
                     } else {
@@ -326,6 +331,179 @@ export class PositionMonitor {
 
         } catch (error) {
             logger.error('Error in PositionMonitor:', error);
+        }
+    }
+
+    // =========================================================================
+    // RADAR SYSTEM — مراقبة متقدمة للصفقات
+    // =========================================================================
+
+    /**
+     * نقطة الدخول الرئيسية للـ Radar — يُستدعى لكل صفقة نشطة
+     */
+    private async runRadarChecks(
+        tradeId: string,
+        symbol: string,
+        direction: 'LONG' | 'SHORT',
+        stopLoss: number,
+        currentPrice: number
+    ): Promise<void> {
+        try {
+            const radar = await TradeRadar.findOne({ tradeId, isActive: true });
+            if (!radar) return;
+
+            // جلب شموع 5m للتحليل
+            const ohlcv5m = await this.bingx.fetchOHLCV(symbol, '5m', 30);
+            if (ohlcv5m.length < 10) return;
+
+            radar.lastCheckedAt = new Date();
+
+            // ── 1. كشف الكسر الكاذب (Wick Sweep) ───────────────────────────────
+            if (radar.settings.wickSweepAlert) {
+                await this.detectWickSweep(radar, ohlcv5m, stopLoss, direction, currentPrice);
+            }
+
+            // ── 2. تنبيه الانعكاس المبكر (CHoCH + Divergence) ───────────────────
+            if (radar.settings.reversalAlert) {
+                await this.detectEarlyReversal(radar, ohlcv5m, direction);
+            }
+
+            // ── 3. Trailing Stop الديناميكي ──────────────────────────────────────
+            if (radar.settings.trailingEnabled) {
+                await this.updateTrailingStop(radar, ohlcv5m, direction, currentPrice, symbol);
+            }
+
+            await radar.save();
+        } catch (err) {
+            logger.error(`Radar check error for ${symbol}:`, err);
+        }
+    }
+
+    /**
+     * كشف الكسر الكاذب: ذيل اخترق SL وجسم الشمعة ارتد داخل الأمان
+     */
+    private async detectWickSweep(
+        radar: ITradeRadar,
+        ohlcv: any[],
+        stopLoss: number,
+        direction: 'LONG' | 'SHORT',
+        currentPrice: number
+    ): Promise<void> {
+        const lastCandle = ohlcv[ohlcv.length - 1];
+        if (!lastCandle) return;
+
+        // هل الذيل اخترق الـ SL؟
+        const wickBrokeSL = direction === 'LONG'
+            ? lastCandle.low <= stopLoss
+            : lastCandle.high >= stopLoss;
+
+        // هل الجسم بقي بأمان؟
+        const bodyIntact = direction === 'LONG'
+            ? lastCandle.close > stopLoss
+            : lastCandle.close < stopLoss;
+
+        if (!wickBrokeSL || !bodyIntact) return;
+
+        // هل أُرسل هذا الحدث مسبقاً؟ (notifyOnce)
+        if (radar.settings.notifyOnce) {
+            const alreadySent = radar.sentEvents.some(e => e.type === 'WICK_SWEEP');
+            if (alreadySent) return;
+        }
+
+        logger.info(`Radar: Wick Sweep detected for ${radar.symbol}`);
+        const msg = `⚠️ <b>تحذير: سحب سيولة (Wick Sweep)!</b>\n\n` +
+            `📍 الرمز: <b>${radar.symbol}</b> (${direction})\n` +
+            `📉 الذيل اخترق وقف الخسارة: <b>$${stopLoss.toFixed(4)}</b>\n` +
+            `✅ جسم الشمعة أُغلق خارج خطر الخسارة\n\n` +
+            `<i>هذا سحب سيولة محتمل — الصفقة لا تزال صالحة هيكلياً. راقب الإغلاق القادم.</i>`;
+
+        await this.notifier(radar.telegramId, msg);
+        radar.sentEvents.push({ type: 'WICK_SWEEP', sentAt: new Date(), details: `SL=${stopLoss}, low=${lastCandle.low}` });
+    }
+
+    /**
+     * كشف الانعكاس المبكر: CHoCH عكسي + RSI Divergence
+     */
+    private async detectEarlyReversal(
+        radar: ITradeRadar,
+        ohlcv: any[],
+        direction: 'LONG' | 'SHORT'
+    ): Promise<void> {
+        // هل أُرسل هذا الحدث مسبقاً؟
+        if (radar.settings.notifyOnce) {
+            const alreadySent = radar.sentEvents.some(e => e.type === 'REVERSAL_WARNING');
+            if (alreadySent) return;
+        }
+
+        // MSS عكسي: نبحث عن كسر هيكل في الاتجاه المعاكس
+        const reverseDir = direction === 'LONG' ? 'SHORT' : 'LONG';
+        const mss = TechnicalAnalyzer.detectMSS(ohlcv, reverseDir);
+        const div = TechnicalAnalyzer.detectDivergence(ohlcv, direction);
+
+        // يتطلب كلا الشرطين للتأكيد
+        if (!mss.detected || !div.detected) return;
+
+        logger.info(`Radar: Early Reversal Warning for ${radar.symbol}`);
+        const actionMsg = direction === 'LONG'
+            ? 'يُنصح بإغلاق 50% من المركز أو نقل SL لنقطة الدخول (Break-Even)'
+            : 'يُنصح بإغلاق 50% من المركز أو نقل SL لنقطة الدخول (Break-Even)';
+
+        const msg = `🚨 <b>تنبيه انعكاس مبكر!</b>\n\n` +
+            `📍 الرمز: <b>${radar.symbol}</b> (${direction})\n` +
+            `⚡ كسر هيكل عكسي: <b>${mss.description}</b>\n` +
+            `📊 Divergence: <b>${direction === 'LONG' ? 'Bearish Divergence' : 'Bullish Divergence'} ✅</b>\n\n` +
+            `💡 <i>${actionMsg}</i>`;
+
+        await this.notifier(radar.telegramId, msg);
+        radar.sentEvents.push({ type: 'REVERSAL_WARNING', sentAt: new Date(), details: mss.description });
+    }
+
+    /**
+     * Trailing Stop ديناميكي: يرفع/يخفض SL مع كل Higher Low / Lower High جديد
+     */
+    private async updateTrailingStop(
+        radar: ITradeRadar,
+        ohlcv: any[],
+        direction: 'LONG' | 'SHORT',
+        currentPrice: number,
+        symbol: string
+    ): Promise<void> {
+        if (ohlcv.length < 5) return;
+
+        const recent = ohlcv.slice(-5);
+        let newSL: number;
+
+        if (direction === 'LONG') {
+            // نُحرك SL للأعلى مع كل قاع أعلى (Higher Low)
+            const newSwingLow = Math.min(...recent.map((c: any) => c.low));
+            newSL = newSwingLow;
+            // لا نُحرك SL للأسفل أبداً
+            if (newSL <= radar.currentSL) return;
+        } else {
+            // نُحرك SL للأسفل مع كل قمة أدنى (Lower High)
+            const newSwingHigh = Math.max(...recent.map((c: any) => c.high));
+            newSL = newSwingHigh;
+            // لا نُحرك SL للأعلى أبداً
+            if (newSL >= radar.currentSL) return;
+        }
+
+        logger.info(`Radar: Trailing SL update for ${symbol}: ${radar.currentSL} → ${newSL}`);
+
+        try {
+            // تطبيق الـ SL الجديد على المنصة
+            await this.bingx.setStopLoss(symbol, newSL, direction);
+
+            const msg = `📈 <b>تحديث Trailing Stop</b>\n\n` +
+                `📍 الرمز: <b>${symbol}</b> (${direction})\n` +
+                `🔄 وقف الخسارة السابق: <b>$${radar.currentSL.toFixed(4)}</b>\n` +
+                `✅ وقف الخسارة الجديد: <b>$${newSL.toFixed(4)}</b>\n\n` +
+                `<i>تم رفع الحماية تلقائياً مع الحركة</i>`;
+
+            await this.notifier(radar.telegramId, msg);
+            radar.sentEvents.push({ type: 'TRAILING_UPDATE', sentAt: new Date(), details: `${radar.currentSL} → ${newSL}` });
+            radar.currentSL = newSL;
+        } catch (err) {
+            logger.error(`Radar: Failed to set trailing SL for ${symbol}:`, err);
         }
     }
 }
