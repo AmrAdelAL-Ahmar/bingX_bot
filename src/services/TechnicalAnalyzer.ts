@@ -23,22 +23,22 @@ export class TechnicalAnalyzer {
 
     static calculateIndicators(data: CandleData): IndicatorData {
         const { closes, highs, lows, volumes } = data;
-        
-        const macdArr = MACD.calculate({ 
-            values: closes, 
-            fastPeriod: 12, 
-            slowPeriod: 26, 
-            signalPeriod: 9, 
-            SimpleMAOscillator: false, 
-            SimpleMASignal: false 
+
+        const macdArr = MACD.calculate({
+            values: closes,
+            fastPeriod: 12,
+            slowPeriod: 26,
+            signalPeriod: 9,
+            SimpleMAOscillator: false,
+            SimpleMASignal: false
         });
         const lastMACD = macdArr[macdArr.length - 1];
 
         return {
-            macd: { 
-                macd: lastMACD?.MACD || 0, 
-                signal: lastMACD?.signal || 0, 
-                histogram: lastMACD?.histogram || 0 
+            macd: {
+                macd: lastMACD?.MACD || 0,
+                signal: lastMACD?.signal || 0,
+                histogram: lastMACD?.histogram || 0
             },
             bb: BollingerBands.calculate({ period: 20, values: closes, stdDev: 2 }).slice(-1)[0],
             stochRsi: StochasticRSI.calculate({ values: closes, rsiPeriod: 14, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 }).slice(-1)[0]?.k || 50,
@@ -106,7 +106,7 @@ export class TechnicalAnalyzer {
         const recent = data.all.slice(-30);
         const highs = recent.map(c => c.high);
         const lows = recent.map(c => c.low);
-        
+
         const lastH = highs[highs.length - 1];
         const prevH = Math.max(...highs.slice(-10, -1));
         const lastL = lows[lows.length - 1];
@@ -158,7 +158,7 @@ export class TechnicalAnalyzer {
         let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
         const n = Math.min(period, pastCandles.length);
         const recent = pastCandles.slice(-n);
-        
+
         for (let i = 0; i < n; i++) {
             const x = i + 1;
             const y = recent[i].close;
@@ -167,7 +167,7 @@ export class TechnicalAnalyzer {
             sumXY += (x * y);
             sumXX += (x * x);
         }
-        
+
         const m = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
         const b = (sumY - m * sumX) / n;
         const predictedPrice = (m * (n + 1)) + b;
@@ -183,7 +183,7 @@ export class TechnicalAnalyzer {
     static detectDivergence(ohlcv: OHLCV[], direction: 'LONG' | 'SHORT' = 'LONG'): { detected: boolean, description: string } {
         const closes = ohlcv.map(c => c.close);
         const rsiValues = RSI.calculate({ period: 14, values: closes });
-        
+
         if (closes.length < 20 || rsiValues.length < 20) {
             return { detected: false, description: "بيانات غير كافية" };
         }
@@ -196,16 +196,16 @@ export class TechnicalAnalyzer {
         if (direction === 'LONG') {
             // Bearish Divergence: Price higher high, RSI lower high
             const isDivergent = p2 > p1 && r2 < r1;
-            return { 
-                detected: isDivergent, 
-                description: isDivergent ? "⚠️ انحراف سلبي (Bearish): السعر يصعد والزخم يضعف" : "✅ لا يوجد انحراف سلبي حالياً" 
+            return {
+                detected: isDivergent,
+                description: isDivergent ? "⚠️ انحراف سلبي (Bearish): السعر يصعد والزخم يضعف" : "✅ لا يوجد انحراف سلبي حالياً"
             };
         } else {
             // Bullish Divergence: Price lower low, RSI higher low
             const isDivergent = p2 < p1 && r2 > r1;
-            return { 
-                detected: isDivergent, 
-                description: isDivergent ? "⚠️ انحراف إيجابي (Bullish): السعر يهبط وقوة الشراء تزداد" : "✅ لا يوجد انحراف إيجابي حالياً" 
+            return {
+                detected: isDivergent,
+                description: isDivergent ? "⚠️ انحراف إيجابي (Bullish): السعر يهبط وقوة الشراء تزداد" : "✅ لا يوجد انحراف إيجابي حالياً"
             };
         }
     }
@@ -375,5 +375,240 @@ export class TechnicalAnalyzer {
                     : `❌ MSS غير مؤكد (SHORT): جسم:${bodyCloseBelow} | حجم:${volumeConfirmed} | عدم رفض:${noRejection}`
             };
         }
+    }
+
+    /**
+     * حساب Volume Profile وتحديد POC (Point of Control)
+     * POC هو السعر الذي تتركز فيه أعلى نسبة سيولة خلال فترة زمنية.
+     */
+    static calculateVolumeProfile(ohlcv: OHLCV[], binsCount: number = 30): { poc: number; profile: { price: number; volume: number }[] } {
+        if (ohlcv.length === 0) return { poc: 0, profile: [] };
+        const highs = ohlcv.map(c => c.high);
+        const lows = ohlcv.map(c => c.low);
+        const minLow = Math.min(...lows);
+        const maxHigh = Math.max(...highs);
+        const range = maxHigh - minLow;
+        if (range === 0) return { poc: minLow, profile: [] };
+
+        const binSize = range / binsCount;
+        const bins = Array.from({ length: binsCount }, (_, i) => {
+            const price = minLow + (i + 0.5) * binSize;
+            return { price, volume: 0 };
+        });
+
+        ohlcv.forEach(c => {
+            const lowBin = Math.max(0, Math.floor((c.low - minLow) / binSize));
+            const highBin = Math.min(binsCount - 1, Math.floor((c.high - minLow) / binSize));
+            const numBins = (highBin - lowBin) + 1;
+            const volPerBin = c.volume / numBins;
+            for (let i = lowBin; i <= highBin; i++) {
+                bins[i].volume += volPerBin;
+            }
+        });
+
+        let maxVol = -1;
+        let poc = minLow;
+        bins.forEach(b => {
+            if (b.volume > maxVol) {
+                maxVol = b.volume;
+                poc = b.price;
+            }
+        });
+
+        return { poc, profile: bins };
+    }
+
+    /**
+     * حساب شموع الـ Heikin-Ashi لفلترة الضوضاء وتأكيد الاتجاه الحقيقي.
+     */
+    static calculateHeikinAshi(ohlcv: OHLCV[]): OHLCV[] {
+        if (ohlcv.length === 0) return [];
+        const haData: OHLCV[] = [];
+
+        const first = ohlcv[0];
+        let prevHAOpen = first.open;
+        let prevHAClose = (first.open + first.high + first.low + first.close) / 4;
+        haData.push({
+            timestamp: first.timestamp,
+            open: prevHAOpen,
+            high: Math.max(first.high, prevHAOpen, prevHAClose),
+            low: Math.min(first.low, prevHAOpen, prevHAClose),
+            close: prevHAClose,
+            volume: first.volume
+        });
+
+        for (let i = 1; i < ohlcv.length; i++) {
+            const c = ohlcv[i];
+            const close = (c.open + c.high + c.low + c.close) / 4;
+            const open = (prevHAOpen + prevHAClose) / 2;
+            const high = Math.max(c.high, open, close);
+            const low = Math.min(c.low, open, close);
+
+            haData.push({
+                timestamp: c.timestamp,
+                open,
+                high,
+                low,
+                close,
+                volume: c.volume
+            });
+
+            prevHAOpen = open;
+            prevHAClose = close;
+        }
+        return haData;
+    }
+
+    /**
+     * حساب مؤشر الـ SuperTrend
+     * يجمع بين التقلبات الحادة (ATR) لتحديد نقاط الانعكاس والاتجاه الصاعد/الهابط.
+     */
+    static calculateSuperTrend(ohlcv: OHLCV[], period: number = 10, multiplier: number = 3): { trend: 'UP' | 'DOWN'; value: number }[] {
+        if (ohlcv.length < period) return ohlcv.map(() => ({ trend: 'UP', value: 0 }));
+
+        const highs = ohlcv.map(c => c.high);
+        const lows = ohlcv.map(c => c.low);
+        const closes = ohlcv.map(c => c.close);
+
+        const atrValues = ATR.calculate({ period, high: highs, low: lows, close: closes });
+
+        const supertrend: { trend: 'UP' | 'DOWN'; value: number }[] = [];
+        const offset = ohlcv.length - atrValues.length;
+        for (let i = 0; i < offset; i++) {
+            supertrend.push({ trend: 'UP', value: closes[i] });
+        }
+
+        let prevTrend: 'UP' | 'DOWN' = 'UP';
+        let finalUpperBand = closes[offset - 1];
+        let finalLowerBand = closes[offset - 1];
+
+        for (let i = 0; i < atrValues.length; i++) {
+            const idx = offset + i;
+            const candle = ohlcv[idx];
+            const prevCandle = ohlcv[idx - 1];
+            const atrVal = atrValues[i] || 0;
+
+            const median = (candle.high + candle.low) / 2;
+            const basicUpper = median + multiplier * atrVal;
+            const basicLower = median - multiplier * atrVal;
+
+            if (basicUpper < finalUpperBand || prevCandle.close > finalUpperBand) {
+                finalUpperBand = basicUpper;
+            }
+
+            if (basicLower > finalLowerBand || prevCandle.close < finalLowerBand) {
+                finalLowerBand = basicLower;
+            }
+
+            let currentTrend: 'UP' | 'DOWN' = prevTrend;
+            let superTrendVal = 0;
+
+            if (prevTrend === 'UP' && candle.close < finalLowerBand) {
+                currentTrend = 'DOWN';
+                superTrendVal = finalUpperBand;
+            } else if (prevTrend === 'DOWN' && candle.close > finalUpperBand) {
+                currentTrend = 'UP';
+                superTrendVal = finalLowerBand;
+            } else {
+                currentTrend = prevTrend;
+                superTrendVal = currentTrend === 'UP' ? finalLowerBand : finalUpperBand;
+            }
+
+            supertrend.push({ trend: currentTrend, value: superTrendVal });
+            prevTrend = currentTrend;
+        }
+
+        return supertrend;
+    }
+
+    /**
+     * حساب متوسط كوفمان التكيفي (KAMA - Kaufman's Adaptive Moving Average)
+     * KAMA يتكيف مع التذبذب: يكون بطيئاً في السوق العرضي وسريعاً في السوق الاتجاهي.
+     */
+    static calculateKAMA(ohlcv: OHLCV[], period: number = 10, fastPeriod: number = 2, slowPeriod: number = 30): number[] {
+        const kamaArr: number[] = [];
+        if (ohlcv.length < period) {
+            return ohlcv.map(c => c.close);
+        }
+
+        const closes = ohlcv.map(c => c.close);
+        // Initialize KAMA array with closes for values before the period
+        for (let i = 0; i < period; i++) {
+            kamaArr.push(closes[i]);
+        }
+
+        const fastestSC = 2 / (fastPeriod + 1);
+        const slowestSC = 2 / (slowPeriod + 1);
+
+        for (let i = period; i < closes.length; i++) {
+            // Direction = abs(close[i] - close[i - period])
+            const direction = Math.abs(closes[i] - closes[i - period]);
+            
+            // Volatility = sum of absolute difference of adjacent candles over the period
+            let volatility = 0;
+            for (let j = i - period + 1; j <= i; j++) {
+                volatility += Math.abs(closes[j] - closes[j - 1]);
+            }
+
+            // Efficiency Ratio (ER)
+            const er = volatility === 0 ? 0 : direction / volatility;
+
+            // Smoothing Constant (SC)
+            const sc = Math.pow(er * (fastestSC - slowestSC) + slowestSC, 2);
+
+            // KAMA = KAMA_prev + SC * (Close - KAMA_prev)
+            const prevKAMA = kamaArr[i - 1];
+            const kamaVal = prevKAMA + sc * (closes[i] - prevKAMA);
+            kamaArr.push(kamaVal);
+        }
+
+        return kamaArr;
+    }
+
+    /**
+     * حساب مستويات الفيبوناتشي الذكية للموجة النشطة (Smart Fibonacci Levels)
+     * يبحث في القمم والقيعان التاريخية للموجة الأخيرة ويستخرج مستويات الخصم (Discount Zone 0.618 - 0.786).
+     */
+    static calculateSmartFibonacci(
+        ohlcv: OHLCV[],
+        direction: 'LONG' | 'SHORT',
+        lookback: number = 40
+    ): { maxHigh: number; minLow: number; fib618: number; fib786: number; fib500: number; discountTop: number; discountBottom: number } {
+        const recent = ohlcv.slice(-lookback);
+        const highs = recent.map(c => c.high);
+        const lows = recent.map(c => c.low);
+        const maxHigh = Math.max(...highs);
+        const minLow = Math.min(...lows);
+        const diff = maxHigh - minLow;
+
+        let fib618 = 0;
+        let fib786 = 0;
+        let fib500 = 0;
+        let discountTop = 0;
+        let discountBottom = 0;
+
+        if (direction === 'LONG') {
+            fib500 = maxHigh - (diff * 0.500);
+            fib618 = maxHigh - (diff * 0.618);
+            fib786 = maxHigh - (diff * 0.786);
+            discountTop = fib618;
+            discountBottom = fib786;
+        } else {
+            fib500 = minLow + (diff * 0.500);
+            fib618 = minLow + (diff * 0.618);
+            fib786 = minLow + (diff * 0.786);
+            discountTop = fib786;
+            discountBottom = fib618;
+        }
+
+        return {
+            maxHigh,
+            minLow,
+            fib500,
+            fib618,
+            fib786,
+            discountTop,
+            discountBottom
+        };
     }
 }

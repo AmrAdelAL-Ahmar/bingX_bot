@@ -51,6 +51,16 @@ const sniperManager = new SniperManager(bingXService, async (telegramId, msg, ex
 // Setup bot middlewares
 bot.use(ensureUser);
 
+// Global Telegraf error handler to catch API errors gracefully (e.g. message is not modified)
+bot.catch((err: any, ctx) => {
+    logger.error(`Telegraf global error catcher caught: ${err.message || err}`, err);
+    // Ignore minor/annoying Telegram API errors like message is not modified or delete failure
+    if (err.description && (err.description.includes('message is not modified') || err.description.includes('message to delete not found'))) {
+        return;
+    }
+    ctx.reply('⚠️ حدث خطأ غير متوقع أثناء معالجة الطلب.').catch(() => {});
+});
+
 // Register Command Handlers
 registerPortfolioHandlers(bot, bingXService);
 registerReportHandlers(bot, bingXService);

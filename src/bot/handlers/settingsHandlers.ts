@@ -8,6 +8,353 @@ import { ALL_TP_THRESHOLDS, buildAlertSettingsKeyboard, buildCapitalProtectionKe
 
 export const registerSettingsHandlers = (bot: Telegraf) => {
 
+    bot.action('menu_open', async (ctx) => {
+        try {
+            if (!ctx.from) return;
+            const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+            if (!user) return;
+
+            const { BingXService } = require('../../services/BingXService');
+            const TradeModel = require('../../models/Trade').default;
+            const SniperWatchModel = require('../../models/SniperWatch').default;
+            
+            const bx = new BingXService();
+            const balance = await bx.getBalance().catch(() => 0);
+            
+            const activeTrades = await TradeModel.find({
+                currentStatus: { $in: ['OPEN', 'TP1_HIT', 'TP2_HIT'] }
+            });
+            let totalPnl = 0;
+            for (const pos of activeTrades) {
+                totalPnl += (pos.pnl || 0);
+            }
+            
+            const activeWatchesCount = await SniperWatchModel.countDocuments({ userId: user._id, status: 'ACTIVE' });
+            
+            const { getMainMenuText, getMainMenuInlineKeyboard } = require('../menus/mainMenu');
+            
+            await ctx.editMessageText(getMainMenuText(ctx.from.first_name, balance, activeTrades.length, totalPnl), {
+                parse_mode: 'HTML',
+                reply_markup: getMainMenuInlineKeyboard(activeTrades.length, activeWatchesCount)
+            });
+            await ctx.answerCbQuery().catch(() => {});
+        } catch (e: any) {
+            logger.error(`Error in menu_open action: ${e.message}`);
+        }
+    });
+
+    bot.action('menu_settings', async (ctx) => {
+        try {
+            if (!ctx.from) return;
+            const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+            if (!user) return;
+            
+            const { getTraderSettingsText, getTraderSettingsInlineKeyboard } = require('../menus/settingsMenu');
+            await ctx.editMessageText(getTraderSettingsText(user), {
+                parse_mode: 'HTML',
+                reply_markup: getTraderSettingsInlineKeyboard(user)
+            });
+            await ctx.answerCbQuery().catch(() => {});
+        } catch (e: any) {
+            logger.error(`Error in menu_settings action: ${e.message}`);
+        }
+    });
+
+    bot.action(/^sett_edit_(risk|leverage)$/, async (ctx) => {
+        try {
+            if (!ctx.from) return;
+            const type = ctx.match[1];
+            const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+            if (!user) return;
+            
+            const { buildNumpadKeyboard } = require('../menus/settingsMenu');
+            const label = type === 'risk' ? 'نسبة المخاطرة (%)' : 'الرافعة المالية الثابتة (x)';
+            
+            await ctx.editMessageText(`✏️ <b>تعديل ${label}:</b>\nاستخدم لوحة الأرقام للتعديل ثم اضغط تأكيد:`, {
+                parse_mode: 'HTML',
+                reply_markup: buildNumpadKeyboard(type, '', label)
+            });
+            await ctx.answerCbQuery().catch(() => {});
+        } catch (e: any) {
+            logger.error(`Error in sett_edit action: ${e.message}`);
+        }
+    });
+
+    bot.action('sett_toggle_ordermode', async (ctx) => {
+        try {
+            if (!ctx.from) return;
+            const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+            if (!user) return;
+            
+            user.orderMode = user.orderMode === 'limit' ? 'market' : 'limit';
+            await user.save();
+            
+            const { getTraderSettingsText, getTraderSettingsInlineKeyboard } = require('../menus/settingsMenu');
+            await ctx.editMessageText(getTraderSettingsText(user), {
+                parse_mode: 'HTML',
+                reply_markup: getTraderSettingsInlineKeyboard(user)
+            });
+            await ctx.answerCbQuery(`تم تغيير وضع التنفيذ إلى ${user.orderMode}`).catch(() => {});
+        } catch (e: any) {
+            logger.error(`Error in sett_toggle_ordermode action: ${e.message}`);
+        }
+    });
+
+    bot.action('sett_toggle_volatilitysl', async (ctx) => {
+        try {
+            if (!ctx.from) return;
+            const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+            if (!user) return;
+            
+            user.volatilitySlEnabled = !user.volatilitySlEnabled;
+            await user.save();
+            
+            const { getTraderSettingsText, getTraderSettingsInlineKeyboard } = require('../menus/settingsMenu');
+            await ctx.editMessageText(getTraderSettingsText(user), {
+                parse_mode: 'HTML',
+                reply_markup: getTraderSettingsInlineKeyboard(user)
+            });
+            await ctx.answerCbQuery(user.volatilitySlEnabled ? 'تم تفعيل الاستوب التلقائي 🟢' : 'تم تعطيل الاستوب التلقائي 🔴').catch(() => {});
+        } catch (e: any) {
+            logger.error(`Error in sett_toggle_volatilitysl: ${e.message}`);
+        }
+    });
+
+    bot.action('sett_toggle_capprotection', async (ctx) => {
+        try {
+            if (!ctx.from) return;
+            const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+            if (!user) return;
+            
+            user.enforceMaxSlLoss = !user.enforceMaxSlLoss;
+            await user.save();
+            
+            const { getTraderSettingsText, getTraderSettingsInlineKeyboard } = require('../menus/settingsMenu');
+            await ctx.editMessageText(getTraderSettingsText(user), {
+                parse_mode: 'HTML',
+                reply_markup: getTraderSettingsInlineKeyboard(user)
+            });
+            await ctx.answerCbQuery(user.enforceMaxSlLoss ? 'تم تفعيل درع رأس المال 🟢' : 'تم تعطيل درع رأس المال 🔴').catch(() => {});
+        } catch (e: any) {
+            logger.error(`Error in sett_toggle_capprotection: ${e.message}`);
+        }
+    });
+
+    bot.action('sett_toggle_hitlar', async (ctx) => {
+        try {
+            if (!ctx.from) return;
+            const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+            if (!user) return;
+            
+            user.hitlarModeEnabled = !user.hitlarModeEnabled;
+            await user.save();
+            
+            const { getTraderSettingsText, getTraderSettingsInlineKeyboard } = require('../menus/settingsMenu');
+            await ctx.editMessageText(getTraderSettingsText(user), {
+                parse_mode: 'HTML',
+                reply_markup: getTraderSettingsInlineKeyboard(user)
+            });
+            await ctx.answerCbQuery(user.hitlarModeEnabled ? 'تم تفعيل وضع هترل 🟢' : 'تم تعطيل وضع هترل 🔴').catch(() => {});
+        } catch (e: any) {
+            logger.error(`Error in sett_toggle_hitlar: ${e.message}`);
+        }
+    });
+
+    bot.action('sett_toggle_tpmode', async (ctx) => {
+        try {
+            if (!ctx.from) return;
+            const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+            if (!user) return;
+            
+            user.tpExecutionMode = user.tpExecutionMode === 'single' ? 'multiple' : 'single';
+            if (user.tpExecutionMode === 'single') {
+                user.tpProfitSplits = [100];
+            } else {
+                user.tpProfitSplits = [50, 50];
+            }
+            await user.save();
+            
+            const { getTraderSettingsText, getTraderSettingsInlineKeyboard } = require('../menus/settingsMenu');
+            await ctx.editMessageText(getTraderSettingsText(user), {
+                parse_mode: 'HTML',
+                reply_markup: getTraderSettingsInlineKeyboard(user)
+            });
+            await ctx.answerCbQuery(`تم تغيير جني الأرباح إلى: ${user.tpExecutionMode === 'single' ? 'هدف واحد' : 'أهداف متعددة'}`).catch(() => {});
+        } catch (e: any) {
+            logger.error(`Error in sett_toggle_tpmode: ${e.message}`);
+        }
+    });
+
+    bot.action('sett_strategy_details', async (ctx) => {
+        try {
+            if (!ctx.from) return;
+            const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+            if (!user) return;
+            
+            const { getStrategyInlineKeyboard } = require('../menus/settingsMenu');
+            await ctx.editMessageText('🎯 <b>استراتيجية الأهداف ومعالجة الأخطاء الذكية:</b>\n\nاضبط قواعد جني الأرباح الجزئي التلقائي وتأمين الصفقات:', {
+                parse_mode: 'HTML',
+                reply_markup: getStrategyInlineKeyboard(user)
+            });
+            await ctx.answerCbQuery().catch(() => {});
+        } catch (e: any) {
+            logger.error(`Error in sett_strategy_details: ${e.message}`);
+        }
+    });
+
+    bot.action('sett_hitlar_details', async (ctx) => {
+        try {
+            if (!ctx.from) return;
+            const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+            if (!user) return;
+            
+            const { getHitlarSettingsInlineKeyboard } = require('../menus/settingsMenu');
+            await ctx.editMessageText('🚀 <b>إعدادات وضع هترل (HITLAR Mode):</b>\n\nتثبيت بارامترات التداول السريعة للمركز:', {
+                parse_mode: 'HTML',
+                reply_markup: getHitlarSettingsInlineKeyboard(user)
+            });
+            await ctx.answerCbQuery().catch(() => {});
+        } catch (e: any) {
+            logger.error(`Error in sett_hitlar_details: ${e.message}`);
+        }
+    });
+
+    bot.action('sett_alerts_details', async (ctx) => {
+        try {
+            if (!ctx.from) return;
+            const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+            if (!user) return;
+            
+            await ctx.editMessageText('🔔 <b>إعدادات التنبيهات والتحذيرات:</b>\n\nتحكم في إشعارات ضرب الأهداف والوقف:', {
+                parse_mode: 'HTML',
+                reply_markup: buildAlertSettingsKeyboard(user)
+            });
+            await ctx.answerCbQuery().catch(() => {});
+        } catch (e: any) {
+            logger.error(`Error in sett_alerts_details: ${e.message}`);
+        }
+    });
+
+    // --- INTERACTIVE NUMPAD ACTIONS (STATELESS) ---
+    bot.action(/^np_([a-zA-Z0-9_]+)_([a-zA-Z0-9_]+)_(.*)$/, async (ctx) => {
+        try {
+            if (!ctx.from) return;
+            const type = ctx.match[1];
+            const action = ctx.match[2];
+            const val = ctx.match[3] || '';
+            
+            const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+            if (!user) return;
+            
+            const { buildNumpadKeyboard, getTraderSettingsInlineKeyboard, getTraderSettingsText } = require('../menus/settingsMenu');
+            
+            let label = '';
+            if (type === 'risk') label = 'نسبة المخاطرة (%)';
+            else if (type === 'leverage') label = 'الرافعة المالية الثابتة (x)';
+            else if (type.startsWith('sl_')) label = `سعر الاستوب لـ ${type.split('_')[1]}`;
+            else if (type === 'hit_risk') label = 'نسبة دخول هترل (%)';
+            else if (type === 'hit_lev') label = 'رافعة هترل (x)';
+            else if (type === 'hit_sl') label = 'ستوب هترل (%)';
+            
+            if (action === 'cancel') {
+                await ctx.deleteMessage().catch(() => {});
+                await ctx.answerCbQuery('تم الإلغاء ❌').catch(() => {});
+                
+                if (!type.startsWith('sl_')) {
+                    await ctx.reply(getTraderSettingsText(user), {
+                        parse_mode: 'HTML',
+                        reply_markup: getTraderSettingsInlineKeyboard(user)
+                    });
+                }
+                return;
+            }
+            
+            let newVal = val;
+            
+            if (action === 'clear') {
+                newVal = '';
+            } else if (action === 'back') {
+                newVal = val.slice(0, -1);
+            } else if (action === 'dot') {
+                newVal = val.includes('.') ? val : (val ? val + '.' : '0.');
+            } else if (action === 'ok') {
+                const num = parseFloat(val);
+                if (isNaN(num) || num <= 0) {
+                    return ctx.answerCbQuery('⚠️ قيمة غير صحيحة! يرجى إدخال رقم أكبر من الصفر.', { show_alert: true });
+                }
+                
+                if (type === 'risk') {
+                    if (num < 1 || num > 100) return ctx.answerCbQuery('⚠️ القيمة يجب أن تكون بين 1 و 100.', { show_alert: true });
+                    user.riskPercentage = num;
+                } else if (type === 'leverage') {
+                    if (num < 1 || num > 125) return ctx.answerCbQuery('⚠️ القيمة يجب أن تكون بين 1 و 125.', { show_alert: true });
+                    user.fixedLeverageValue = Math.round(num);
+                    user.leverageMode = 'fixed';
+                } else if (type === 'hit_risk') {
+                    if (num < 1 || num > 100) return ctx.answerCbQuery('⚠️ القيمة يجب أن تكون بين 1 و 100.', { show_alert: true });
+                    user.hitlarSettings.riskPercentage = num;
+                } else if (type === 'hit_lev') {
+                    if (num < 1 || num > 125) return ctx.answerCbQuery('⚠️ القيمة يجب أن تكون بين 1 و 125.', { show_alert: true });
+                    user.hitlarSettings.leverage = Math.round(num);
+                } else if (type === 'hit_sl') {
+                    if (num < 1 || num > 50) return ctx.answerCbQuery('⚠️ القيمة يجب أن تكون بين 1 و 50.', { show_alert: true });
+                    user.hitlarSettings.volatilitySlPercentage = num;
+                } else if (type.startsWith('sl_')) {
+                    const symbol = type.split('_')[1];
+                    const fullSymbol = `${symbol}/USDT:USDT`;
+                    
+                    const bx = new (require('../../services/BingXService').BingXService)();
+                    const positions = await bx.getPositions();
+                    const pos = positions.find((p: any) => p.symbol.startsWith(symbol) && parseFloat(p.contracts) > 0);
+                    
+                    if (!pos) {
+                        return ctx.answerCbQuery(`⚠️ لا توجد صفقة مفتوحة لـ ${symbol}`, { show_alert: true });
+                    }
+                    
+                    const side = pos.side.toUpperCase();
+                    await bx.setStopLoss(pos.symbol, side, num);
+                    
+                    const TradeModel = require('../../models/Trade').default;
+                    const trade = await TradeModel.findOne({
+                        userId: user._id,
+                        symbol: pos.symbol,
+                        currentStatus: { $in: ['OPEN', 'TP1_HIT', 'TP2_HIT'] }
+                    });
+                    if (trade) {
+                        trade.stopLoss = num;
+                        await trade.save();
+                    }
+                    
+                    await ctx.deleteMessage().catch(() => {});
+                    await ctx.answerCbQuery(`✅ تم تعديل الوقف إلى ${num}`).catch(() => {});
+                    await ctx.reply(`✅ تم بنجاح تعديل سعر وقف الخسارة (SL) لعملة <b>${symbol}</b> إلى <b>${num}</b>.`, { parse_mode: 'HTML' });
+                    return;
+                }
+                
+                await user.save();
+                await ctx.deleteMessage().catch(() => {});
+                await ctx.answerCbQuery('✅ تم حفظ القيمة بنجاح').catch(() => {});
+                
+                await ctx.reply(getTraderSettingsText(user), {
+                    parse_mode: 'HTML',
+                    reply_markup: getTraderSettingsInlineKeyboard(user)
+                });
+                return;
+            } else {
+                if (val === '0') newVal = action;
+                else newVal = val + action;
+            }
+            
+            await ctx.editMessageText(`✏️ <b>تعديل ${label}:</b>\nاستخدم لوحة الأرقام للتعديل ثم اضغط تأكيد:`, {
+                parse_mode: 'HTML',
+                reply_markup: buildNumpadKeyboard(type, newVal, label)
+            });
+            await ctx.answerCbQuery().catch(() => {});
+        } catch (e: any) {
+            logger.error(`Error in np numpad action: ${e.message}`);
+        }
+    });
+
     bot.hears('ℹ️ تعليمات الاستخدام (Help)', async (ctx) => {
         try {
             const helpMsg = `ℹ️ <b>دليل استخدام بوت التداول الآلي:</b>\n\n` +

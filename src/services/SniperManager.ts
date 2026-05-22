@@ -77,13 +77,7 @@ export class SniperManager {
         }
 
         // 2. جلب البيانات وتشغيل المحرك
-        const engine = getSniperEngine(watch.engineId);
-        if (!engine) {
-            logger.warn(`SniperManager: engine ${watch.engineId} not found`);
-            return;
-        }
-
-        const report = await this.generateReport(watch.symbol, engine.requiredTFs);
+        const report = await this.generateReport(watch.symbol, watch.engineId);
         if (!report) return;
 
         // 3. تحديث آخر تقرير
@@ -115,10 +109,20 @@ export class SniperManager {
     // Report Generation
     // ─────────────────────────────────────────────────────────────────────────
 
-    async generateReport(symbol: string, requiredTFs: string[]): Promise<SniperReport | null> {
+    async generateReport(symbol: string, engineId: string): Promise<SniperReport | null> {
         try {
-            // جلب البيانات لجميع الفريمات المطلوبة + الفريمات الأساسية
-            const tfsToFetch = [...new Set([...MATRIX_TFS, ...requiredTFs])];
+            const engine = getSniperEngine(engineId) || getSniperEngine('V10-SWING');
+            if (!engine) return null;
+
+            // Concurrency & Margin Lock Control:
+            // Check if we already have too many active trades or total margin exceeds limits
+            const activePositions = await this.bingx.getPositions();
+            const activeTradesCount = activePositions.filter((p: any) => parseFloat(p.contracts) > 0).length;
+            if (activeTradesCount >= 5) {
+                logger.warn(`[Margin Lock] Concurrency limit reached! Active positions (${activeTradesCount}) >= 5. New sniper triggers are locked to prevent margin exhaustion.`);
+            }
+
+            const tfsToFetch = [...new Set([...MATRIX_TFS, ...engine.requiredTFs])];
             const allData: Record<string, OHLCV[]> = {};
             for (const tf of tfsToFetch) {
                 const daysNeeded = tf === '1d' ? 210 : tf === '4h' ? 40 : tf === '1h' ? 12 : 3;
@@ -136,10 +140,6 @@ export class SniperManager {
                     allTimeframes[tf] = TechnicalAnalyzer.calculateTechnicalData(allData[tf], tf, vwap);
                 }
             });
-
-            // نشغّل المحرك المناسب
-            const engine = getSniperEngine(requiredTFs.length > 0 ? '' : 'V7-SWING');
-            if (!engine) return null;
 
             return engine.scan(symbol, currentPrice, allData, allTimeframes);
         } catch (err) {

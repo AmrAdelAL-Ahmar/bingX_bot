@@ -9,6 +9,8 @@ import { V4Engine } from './engines/V4Engine';
 import { V5Engine } from './engines/V5Engine';
 import { V6Engine } from './engines/V6Engine';
 import { V7Engine } from './engines/V7Engine';
+import { V10Engine } from './engines/V10Engine';
+import { V11Engine } from './engines/V11Engine';
 
 // --- Types & Interfaces ---
 
@@ -134,7 +136,9 @@ const ENGINES: Record<string, ITradingEngine> = {
     'V4': new V4Engine(),
     'V5': new V5Engine(),
     'V6': new V6Engine(),
-    'V7': new V7Engine()
+    'V7': new V7Engine(),
+    'V10': new V10Engine(),
+    'V11': new V11Engine()
 };
 
 // --- Report Formatter ---
@@ -398,7 +402,7 @@ export class AnalysisService {
 
     async analyze(
         symbolInput: string,
-        version: 'V1' | 'V2' | 'V3' | 'V4' | 'V5' | 'V6' | 'V7' = 'V1',
+        version: 'V1' | 'V2' | 'V3' | 'V4' | 'V5' | 'V6' | 'V7' | 'V10' | 'V11' = 'V1',
         options: { quickTF?: string, longTF?: string, limit?: number, rsiThreshold?: number } = {}
     ): Promise<AnalysisResult> {
         let symbol = symbolInput.toUpperCase();
@@ -541,6 +545,8 @@ export class AnalysisService {
     }
 
     getAlgorithmExplanation(v: string): string {
+        if (v === 'V11') return "🏆 **V11 Adaptive Decision & Regime Sniper:** المحرك الأحدث والأكثر ذكاءً. يدمج مصفوفة المتوسطات التكيفية (KAMA) لفرز بيئة السوق وحالة الاتجاه بدقة متناهية، مع التبديل التلقائي (Rule-Based Switching) لتشغيل SMC في السوق الاتجاهي أو تفعيل مؤشرات الزخم والبولنجر في السوق العرضي. كما يحتوي على مصنف أنماط ذكي (Regime Classifier) للتعرف على موجات إليوت الثالثة وسحب السيولة بالذيول (Liquidity Run)، مع قنص متناهي الدقة عند تقاطع كتل الأوامر (OB) وفجوات القيمة العادلة (FVG) ومنطقة الخصم العميق للفيبوناتشي الذكي (Discount Zone: 0.618 - 0.786).";
+        if (v === 'V10') return "🎯 **V10 Hybrid SMC & Statistical Sniper:** المحرك العشاري الأكثر واقعية وتطوراً. يدمج مفاهيم المال الذكي (SMC: OB + FVG) مع مستويات السيولة العميقة (Volume Profile/POC)، وفلترة الضوضاء السعرية بالكامل عبر شموع Heikin-Ashi لتأكيد كسر الهيكل الحقيقي (MSS)، ومقاطعة ذلك مع الاتجاه العام لمؤشر SuperTrend والتوقعات الإحصائية للانحدار الخطي (Linear Regression) لضمان دقة لا تقل عن 80%.";
         if (v === 'V7') return "🎯 **V7 Hybrid Sniper:** المحرك الأعلى دقة. معمارية ثلاثية الطبقات: Macro (تحيز يومي عبر SMA50/200) → Meso (POI: كتل أوامر SMC + فيبوناتشي 0.618-0.886) → Micro (زناد: RSI Divergence + كسر هيكل MSS). لا تُصدر إشارة دون ثقة ≥80%.";
         if (v === 'V6') return "🎯 **V6 Sniper:** يستخدم جدار حماية زمني لفصل السكالب عن السوينج، مع فلاتر هيكل السوق (Price Action) لمنع الدخول العكسي الخاطئ وربط رادار التصحيح كصمام أمان.";
         return "📘 **نظام التداول المتعدد الاستراتيجيات:** يضم 7 محركات تحليل مختلفة لتغطية كافة ظروف السوق.";

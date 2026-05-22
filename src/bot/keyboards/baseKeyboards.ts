@@ -17,7 +17,7 @@ export const getMainMenuKeyboard = (user: any) => {
                 { text: '❌ إلغاء صفقة محددة' }
             ],
             [
-                { text: '📊 التحليل الذكي (V1/V2)' },
+                { text: '📊 التحليل الذكي (V1-V11)' },
                 { text: '🔬 اختبار الاستراتيجيات' }
             ],
             [
@@ -318,7 +318,8 @@ export const getAlgoVersionKeyboard = () => {
             [{ text: 'الخوارزمية V1 (الأساسي)' }, { text: 'الخوارزمية V2 (الكمي - Quant)' }],
             [{ text: 'الخوارزمية V3 (المصفوفة)' }, { text: 'الخوارزمية V4 (ثنائي الاتجاه)' }],
             [{ text: 'الخوارزمية V5 (تنبؤي AI) 🔮' }, { text: 'الخوارزمية V6 (Sniper) 🎯' }],
-            [{ text: 'الخوارزمية V7 (القناص الهجيني) 🏹' }],
+            [{ text: 'الخوارزمية V7 (القناص الهجيني) 🏹' }, { text: 'الخوارزمية V10 (المؤسساتي المتقدم) 🏆' }],
+            [{ text: 'الخوارزمية V11 (القرار الذكي التكيفي) 👑' }],
             [{ text: 'دليل الخوارزميات 📖' }, { text: '⚙️ إعدادات المحلل الذكي' }],
             [{ text: 'رجوع للقائمة الرئيسية 🔙' }]
         ],
@@ -334,13 +335,12 @@ export const getBacktestVersionKeyboard = (symbol: string) => {
             [{ text: 'V1 (الأساسي)', callback_data: `btw_v_V1_${symbol}` }, { text: 'V2 (الكمي)', callback_data: `btw_v_V2_${symbol}` }],
             [{ text: 'V3 (المصفوفة)', callback_data: `btw_v_V3_${symbol}` }, { text: 'V4 (ثنائي الاتجاه)', callback_data: `btw_v_V4_${symbol}` }],
             [{ text: 'V5 (تنبؤي)', callback_data: `btw_v_V5_${symbol}` }, { text: 'V6 (Sniper)', callback_data: `btw_v_V6_${symbol}` }],
-            [{ text: 'V7 (القناص الهجيني) 🏹', callback_data: `btw_v_V7_${symbol}` }],
+            [{ text: 'V7 (القناص الهجيني) 🏹', callback_data: `btw_v_V7_${symbol}` }, { text: 'V10 (المؤسساتي المتقدم) 🏆', callback_data: `btw_v_V10_${symbol}` }],
+            [{ text: 'V11 (القرار الذكي التكيفي) 👑', callback_data: `btw_v_V11_${symbol}` }],
             [{ text: 'إلغاء ❌', callback_data: 'btw_cancel' }]
         ]
     };
 };
-
-
 
 export const getBacktestModeKeyboard = (version: string, symbol: string) => {
     return {

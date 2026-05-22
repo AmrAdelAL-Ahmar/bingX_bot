@@ -667,21 +667,23 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
             }
 
             // --- SMART ANALYSIS FLOW ---
-            if (message === '📊 التحليل الذكي (V1/V2)') {
+            if (message === '📊 التحليل الذكي (V1-V11)') {
                 return ctx.reply('الرجاء اختيار إصدار خوارزمية التحليل التي تود استخدامها:', {
                     reply_markup: getAlgoVersionKeyboard()
                 });
             }
 
             if (message === 'دليل الخوارزميات 📖') {
-                const guide = `📖 **دليل الخوارزميات (V1-V7):**\n\n` +
+                const guide = `📖 **دليل الخوارزميات (V1-V11):**\n\n` +
                     `${analysisService.getAlgorithmExplanation('V1')}\n\n` +
                     `${analysisService.getAlgorithmExplanation('V2')}\n\n` +
                     `${analysisService.getAlgorithmExplanation('V3')}\n\n` +
                     `${analysisService.getAlgorithmExplanation('V4')}\n\n` +
                     `${analysisService.getAlgorithmExplanation('V5')}\n\n` +
                     `${analysisService.getAlgorithmExplanation('V6')}\n\n` +
-                    `${analysisService.getAlgorithmExplanation('V7')}`;
+                    `${analysisService.getAlgorithmExplanation('V7')}\n\n` +
+                    `${analysisService.getAlgorithmExplanation('V10')}\n\n` +
+                    `${analysisService.getAlgorithmExplanation('V11')}`;
                 return ctx.reply(guide);
             }
 
@@ -741,6 +743,22 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                 });
             }
 
+            if (message === 'الخوارزمية V10 (المؤسساتي المتقدم) 🏆') {
+                user.botState = 'AWAITING_ANALYSIS_SYMBOL_V10';
+                await user.save();
+                return ctx.reply('يرجى إرسال رمز العملة للتحليل باستخدام V10 (المؤسساتي المتقدم) 🏆 (مثال: BTC):', {
+                    reply_markup: { keyboard: [[{ text: 'إلغاء ❌' }]], resize_keyboard: true }
+                });
+            }
+
+            if (message === 'الخوارزمية V11 (القرار الذكي التكيفي) 👑') {
+                user.botState = 'AWAITING_ANALYSIS_SYMBOL_V11';
+                await user.save();
+                return ctx.reply('يرجى إرسال رمز العملة للتحليل باستخدام V11 (القرار الذكي التكيفي) 👑 (مثال: BTC):', {
+                    reply_markup: { keyboard: [[{ text: 'إلغاء ❌' }]], resize_keyboard: true }
+                });
+            }
+
             if (message === '🔬 اختبار الاستراتيجيات') {
                 user.botState = 'AWAITING_BT_SYMBOL';
                 await user.save();
@@ -769,11 +787,9 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                     await user.save();
                     return ctx.reply('تم الإلغاء.', { reply_markup: getMainMenuKeyboard(user) });
                 }
-
-                const version = user.botState.split('_').pop() as 'V1' | 'V2' | 'V3' | 'V4' | 'V5' | 'V6' | 'V7';
+                const version = user.botState.split('_').pop() as 'V1' | 'V2' | 'V3' | 'V4' | 'V5' | 'V6' | 'V7' | 'V10' | 'V11';
                 const symbol = message.toUpperCase();
                 ctx.reply(`⏳ جاري تحليل ${symbol} باستخدام ${version}... (TF: ${user.analysisSettings?.scalpTF || '5m'}/${user.analysisSettings?.swingTF || '1h'})`);
-
                 try {
                     const result = await analysisService.analyze(symbol, version, {
                         quickTF: user.analysisSettings?.scalpTF,
@@ -925,7 +941,6 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
     bot.action('btw_cancel', async (ctx) => {
         await ctx.answerCbQuery('تم الإلغاء');
         await ctx.deleteMessage().catch(() => { });
-
         const telegramId = ctx.from?.id.toString();
         const user = await User.findOne({ telegramId });
         if (user) {
@@ -933,7 +948,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
         }
     });
 
-    bot.action(/^btw_v_(V[1-7])_(.+)$/, async (ctx) => {
+    bot.action(/^btw_v_(V[0-9]+)_(.+)$/, async (ctx) => {
         const version = ctx.match[1];
         const symbol = ctx.match[2];
         await ctx.editMessageText(`اختر نوع الاختبار (هل تريد اختبار الصفقات السريعة أم الاستثمارية؟)\nالإصدار: ${version} - العملة: ${symbol}:`, {
@@ -941,7 +956,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
         });
     });
 
-    bot.action(/^btw_m_(SCALP|SWING)_(V[1-7])_(.+)$/, async (ctx) => {
+    bot.action(/^btw_m_(SCALP|SWING)_(V[0-9]+)_(.+)$/, async (ctx) => {
         const mode = ctx.match[1];
         const version = ctx.match[2];
         const symbol = ctx.match[3];
@@ -952,7 +967,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
         });
     });
 
-    bot.action(/^btw_i_([0-9]+[mh])_(SCALP|SWING)_(V[1-7])_(.+)$/, async (ctx) => {
+    bot.action(/^btw_i_([0-9]+[mh])_(SCALP|SWING)_(V[0-9]+)_(.+)$/, async (ctx) => {
         const interval = ctx.match[1];
         const mode = ctx.match[2];
         const version = ctx.match[3];
@@ -963,7 +978,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
         });
     });
 
-    bot.action(/^btw_d_([0-9.]+)_([0-9]+[mh])_(SCALP|SWING)_(V[1-7])_(.+)$/, async (ctx) => {
+    bot.action(/^btw_d_([0-9.]+)_([0-9]+[mh])_(SCALP|SWING)_(V[0-9]+)_(.+)$/, async (ctx) => {
         const days = parseFloat(ctx.match[1]);
         const interval = ctx.match[2];
         const mode = ctx.match[3] as 'SCALP' | 'SWING';

@@ -4,6 +4,7 @@ import Trade from '../models/Trade';
 import User from '../models/User';
 import TradeRadar, { ITradeRadar } from '../models/TradeRadar';
 import { TechnicalAnalyzer } from './TechnicalAnalyzer';
+import { TradeManager } from './TradeManager';
 import logger from '../utils/logger';
 
 export class PositionMonitor {
@@ -419,6 +420,60 @@ export class PositionMonitor {
 
         await this.notifier(radar.telegramId, msg);
         radar.sentEvents.push({ type: 'WICK_SWEEP', sentAt: new Date(), details: `SL=${stopLoss}, low=${lastCandle.low}` });
+
+        // --- 🛡️ Wick Sweep Guard: Automatic Compensation Trade ---
+        const alreadyCompensated = radar.sentEvents.some(e => e.type === 'CUSTOM' && e.details.includes('WICK_SWEEP_COMPENSATION'));
+        if (alreadyCompensated) return;
+
+        logger.info(`[Wick Sweep Guard] Placing hedging compensation trade for ${radar.symbol}`);
+
+        try {
+            const originalTrade = await Trade.findById(radar.tradeId);
+            if (!originalTrade) return;
+
+            // Calculate tight stop loss just below sweep candle
+            const compSL = direction === 'LONG' ? lastCandle.low * 0.998 : lastCandle.high * 1.002;
+            const originalMargin = originalTrade.amount / (originalTrade.leverage || 10);
+            
+            // Risk size is 50% of the original risk size (margin)
+            const compRiskMargin = originalMargin * 0.5;
+
+            const signal: any = {
+                type: 'TRADE',
+                symbol: radar.symbol,
+                direction: direction,
+                entry: [currentPrice],
+                stopLoss: compSL,
+                targets: originalTrade.targets.map(t => t.price),
+                leverage: originalTrade.leverage || 10,
+                risk: (compRiskMargin / originalTrade.amount) * 100 * (originalTrade.leverage || 10), // equivalent risk percent
+                marginMode: 'CROSS'
+            };
+
+            const tradeManager = new TradeManager(this.bingx);
+            const compResult = await tradeManager.executeSignal(signal, originalTrade.userId.toString(), originalTrade.sourceChatId);
+
+            if (compResult) {
+                logger.info(`[Wick Sweep Guard] Compensation trade placed: ${compResult.tradeId}`);
+                
+                radar.sentEvents.push({
+                    type: 'CUSTOM',
+                    sentAt: new Date(),
+                    details: `Placed WICK_SWEEP_COMPENSATION trade ${compResult.tradeId} at ${currentPrice} with SL ${compSL}`
+                });
+
+                const compMsg = `🛡️ <b>تفعيل درع سحب السيولة (Wick Sweep Guard)!</b>\n\n` +
+                    `📍 الرمز: <b>${radar.symbol}</b> (${direction})\n` +
+                    `✅ تم رصد كسر كاذب للوقف بواسطة ذيل الشمعة ارتد داخل الأمان.\n` +
+                    `⚡ <b>صفقة تعويضية تلقائية:</b> تم فتح صفقة تحوط تعويضية بسعر دخول أفضل وتدفق سيولة مؤسساتي!\n\n` +
+                    `🏁 سعر الدخول الجديد: <b>$${currentPrice.toFixed(4)}</b>\n` +
+                    `🛑 الوقف الجديد الضيق: <b>$${compSL.toFixed(4)}</b>\n` +
+                    `💰 حجم الهامش: <b>${compRiskMargin.toFixed(2)} USDT</b> (حماية وإدارة مخاطر تلقائية)`;
+                await this.notifier(radar.telegramId, compMsg);
+            }
+        } catch (err: any) {
+            logger.error(`[Wick Sweep Guard] Failed to place compensation trade:`, err);
+        }
     }
 
     /**
@@ -458,8 +513,26 @@ export class PositionMonitor {
         radar.sentEvents.push({ type: 'REVERSAL_WARNING', sentAt: new Date(), details: mss.description });
     }
 
+    private calculateATR(ohlcv: any[], period: number = 14): number {
+        if (ohlcv.length <= period) return 0;
+        const trs: number[] = [];
+        for (let i = 1; i < ohlcv.length; i++) {
+            const high = ohlcv[i].high;
+            const low = ohlcv[i].low;
+            const prevClose = ohlcv[i - 1].close;
+            const tr = Math.max(
+                high - low,
+                Math.abs(high - prevClose),
+                Math.abs(low - prevClose)
+            );
+            trs.push(tr);
+        }
+        const sum = trs.slice(-period).reduce((acc, v) => acc + v, 0);
+        return sum / period;
+    }
+
     /**
-     * Trailing Stop ديناميكي: يرفع/يخفض SL مع كل Higher Low / Lower High جديد
+     * Trailing Stop ديناميكي: يرفع/يخفض SL مع كل Higher Low / Lower High جديد بناءً على ATR
      */
     private async updateTrailingStop(
         radar: ITradeRadar,
@@ -468,36 +541,45 @@ export class PositionMonitor {
         currentPrice: number,
         symbol: string
     ): Promise<void> {
-        if (ohlcv.length < 5) return;
+        if (ohlcv.length < 15) return;
 
-        const recent = ohlcv.slice(-5);
+        const atr = this.calculateATR(ohlcv, 14);
         let newSL: number;
 
-        if (direction === 'LONG') {
-            // نُحرك SL للأعلى مع كل قاع أعلى (Higher Low)
-            const newSwingLow = Math.min(...recent.map((c: any) => c.low));
-            newSL = newSwingLow;
-            // لا نُحرك SL للأسفل أبداً
-            if (newSL <= radar.currentSL) return;
+        if (atr > 0) {
+            const multiplier = 2.0; // Volatility factor
+            if (direction === 'LONG') {
+                newSL = currentPrice - (multiplier * atr);
+                if (newSL <= radar.currentSL) return;
+            } else {
+                newSL = currentPrice + (multiplier * atr);
+                if (newSL >= radar.currentSL) return;
+            }
         } else {
-            // نُحرك SL للأسفل مع كل قمة أدنى (Lower High)
-            const newSwingHigh = Math.max(...recent.map((c: any) => c.high));
-            newSL = newSwingHigh;
-            // لا نُحرك SL للأعلى أبداً
-            if (newSL >= radar.currentSL) return;
+            // Swing High/Low fallback
+            const recent = ohlcv.slice(-5);
+            if (direction === 'LONG') {
+                const newSwingLow = Math.min(...recent.map((c: any) => c.low));
+                newSL = newSwingLow;
+                if (newSL <= radar.currentSL) return;
+            } else {
+                const newSwingHigh = Math.max(...recent.map((c: any) => c.high));
+                newSL = newSwingHigh;
+                if (newSL >= radar.currentSL) return;
+            }
         }
 
-        logger.info(`Radar: Trailing SL update for ${symbol}: ${radar.currentSL} → ${newSL}`);
+        logger.info(`Radar: Volatility Trailing SL update for ${symbol}: ${radar.currentSL} → ${newSL}`);
 
         try {
             // تطبيق الـ SL الجديد على المنصة
             await this.bingx.setStopLoss(symbol, newSL, direction);
 
-            const msg = `📈 <b>تحديث Trailing Stop</b>\n\n` +
+            const msg = `📈 <b>تحديث Trailing Stop (تقلبات ATR)</b>\n\n` +
                 `📍 الرمز: <b>${symbol}</b> (${direction})\n` +
                 `🔄 وقف الخسارة السابق: <b>$${radar.currentSL.toFixed(4)}</b>\n` +
                 `✅ وقف الخسارة الجديد: <b>$${newSL.toFixed(4)}</b>\n\n` +
-                `<i>تم رفع الحماية تلقائياً مع الحركة</i>`;
+                `<i>تم تحديث الحماية تلقائياً وفقاً لتقلبات السوق الحالية</i>`;
 
             await this.notifier(radar.telegramId, msg);
             radar.sentEvents.push({ type: 'TRAILING_UPDATE', sentAt: new Date(), details: `${radar.currentSL} → ${newSL}` });

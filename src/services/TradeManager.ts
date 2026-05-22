@@ -4,6 +4,75 @@ import Trade, { ITrade } from '../models/Trade';
 import User from '../models/User';
 import logger from '../utils/logger';
 
+// Helper function to calculate dynamic Take Profit splits mathematically based on RRR and ATR
+async function calculateDynamicTpsSplits(
+    entryPrice: number,
+    stopLoss: number,
+    targets: number[],
+    symbol: string,
+    bingx: BingXService
+): Promise<number[]> {
+    if (targets.length === 0) return [];
+    if (targets.length === 1) return [100];
+
+    try {
+        const risk = Math.abs(entryPrice - stopLoss);
+        if (risk === 0) {
+            return Array(targets.length).fill(100 / targets.length);
+        }
+
+        const rrrs = targets.map(tp => Math.abs(tp - entryPrice) / risk);
+
+        // Fetch ATR to scale weights
+        let atrRatio = 0.01; // default fallback (1% volatility)
+        try {
+            const ohlcv = await bingx.fetchOHLCV(symbol, '5m', 30);
+            if (ohlcv && ohlcv.length >= 15) {
+                const trs: number[] = [];
+                for (let i = 1; i < ohlcv.length; i++) {
+                    const tr = Math.max(
+                        ohlcv[i].high - ohlcv[i].low,
+                        Math.abs(ohlcv[i].high - ohlcv[i-1].close),
+                        Math.abs(ohlcv[i].low - ohlcv[i-1].close)
+                    );
+                    trs.push(tr);
+                }
+                const atr = trs.slice(-14).reduce((acc, v) => acc + v, 0) / 14;
+                atrRatio = atr / entryPrice;
+            }
+        } catch (e) {
+            logger.warn(`Could not fetch ATR for dynamic TP splitting. Using default ATR ratio: ${atrRatio}`);
+        }
+
+        // Volatility scaling factor: cap at 0.5 (maximum shift)
+        const V = Math.min(0.5, 50 * atrRatio);
+        const exponent = 1.0 - V;
+
+        // Weights: inverse of RRR scaled by exponent
+        const weights = rrrs.map(rrr => Math.pow(1.0 / Math.max(0.1, rrr), exponent));
+        const sumWeights = weights.reduce((acc, w) => acc + w, 0);
+
+        if (sumWeights <= 0) {
+            return Array(targets.length).fill(100 / targets.length);
+        }
+
+        const splits = weights.map(w => (w / sumWeights) * 100);
+        const total = splits.reduce((acc, s) => acc + s, 0);
+        const adjustedSplits = splits.map(s => Math.round((s / total) * 100));
+
+        const sumAdjusted = adjustedSplits.reduce((acc, s) => acc + s, 0);
+        if (sumAdjusted !== 100) {
+            adjustedSplits[adjustedSplits.length - 1] += (100 - sumAdjusted);
+        }
+
+        logger.info(`[Dynamic TP splits] Calculated for ${symbol}: ${adjustedSplits.join('% / ')}% based on RRR and ATR.`);
+        return adjustedSplits;
+    } catch (err) {
+        logger.error('Error calculating dynamic TP splits, falling back to equal splits:', err);
+        return Array(targets.length).fill(100 / targets.length);
+    }
+}
+
 // Define return interface
 export interface TradeResult {
     tradeId: string;
@@ -152,6 +221,34 @@ export class TradeManager {
                 let riskPercentage = isHitlar ? hitlar.riskPercentage : (signal.risk || user.riskPercentage || 2);
                 if (riskPercentage > 100) riskPercentage = 100; // safety
 
+                // --- 🛡️ Dynamic Drawdown Shield (Past 24h Drawdown > 5%) ---
+                let finalRiskPercentage = riskPercentage;
+                try {
+                    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+                    const recentTrades = await Trade.find({
+                        userId: user._id,
+                        closeTime: { $gte: twentyFourHoursAgo },
+                        currentStatus: { $in: ['CLOSED_PROFIT', 'CLOSED_LOSS', 'CLOSED_MANUAL'] }
+                    });
+
+                    let netPnL = 0;
+                    for (const t of recentTrades) {
+                        const margin = t.amount / (t.leverage || 10);
+                        const tradePnlUSDT = margin * (t.pnl / 100);
+                        netPnL += tradePnlUSDT;
+                    }
+
+                    if (netPnL < 0 && balance > 0) {
+                        const drawdownPercentage = (Math.abs(netPnL) / balance) * 100;
+                        if (drawdownPercentage >= 5) {
+                            logger.warn(`[Dynamic Drawdown Shield] Active! Past 24h net loss is ${drawdownPercentage.toFixed(2)}% of equity (>= 5%). Reducing risk from ${riskPercentage}% to 1%.`);
+                            finalRiskPercentage = 1;
+                        }
+                    }
+                } catch (drawdownErr) {
+                    logger.error('Error calculating 24h Drawdown Shield:', drawdownErr);
+                }
+
                 // 3. Leverage Calculation
                 let leverage = 10;
                 if (isHitlar) {
@@ -162,7 +259,7 @@ export class TradeManager {
                     // Default mode: use signal leverage or fallback to 10
                     leverage = signal.leverage || 10;
                 }
-                let marginUsed = balance * (riskPercentage / 100);
+                let marginUsed = balance * (finalRiskPercentage / 100);
 
                 // 2.5 Total Exposure Limit check (Max 10%)
                 const positions = await this.bingx.getPositions();
@@ -277,6 +374,25 @@ export class TradeManager {
                 // Detect position mode ONCE before placing orders
                 const hedgeMode = await this.bingx.isHedgeMode();
 
+                const tpExecutionMode = user.tpExecutionMode || 'multiple';
+                const isMultiple = tpExecutionMode === 'multiple' && finalTpPrices.length > 1;
+
+                let tpSplits: number[] = [];
+                if (isMultiple) {
+                    if (user.tpSplitMode === 'manual' && user.tpProfitSplits && user.tpProfitSplits.length >= finalTpPrices.length) {
+                        tpSplits = user.tpProfitSplits;
+                    } else {
+                        // Calculate dynamic splits using mathematical equation
+                        tpSplits = await calculateDynamicTpsSplits(
+                            entryPrice,
+                            stopLossPrice,
+                            finalTpPrices,
+                            signal.symbol,
+                            this.bingx
+                        );
+                    }
+                }
+
                 let order: any;
                 try {
                     const orderParams: any = {};
@@ -285,15 +401,19 @@ export class TradeManager {
                         orderParams.positionSide = signal.direction;
                     }
 
-                    // Attach Stop Loss and Take Profit 1 directly to the main order
+                    // Attach Stop Loss directly to the main order for safety
                     orderParams.stopLoss = {
                         triggerPrice: stopLossPrice,
                         type: 'STOP_MARKET'
                     };
-                    orderParams.takeProfit = {
-                        triggerPrice: finalTpPrices[0],
-                        type: 'TAKE_PROFIT_MARKET'
-                    };
+
+                    // Only attach TP1 directly to the main order if NOT multiple
+                    if (!isMultiple) {
+                        orderParams.takeProfit = {
+                            triggerPrice: finalTpPrices[0],
+                            type: 'TAKE_PROFIT_MARKET'
+                        };
+                    }
 
                     const executionPrice = resolvedOrderType === 'limit' ? entryPrice : undefined;
 
@@ -374,8 +494,8 @@ export class TradeManager {
                 }
 
                 const tradeLog = resolvedOrderType === 'limit'
-                    ? `Limit order placed at ${entryPrice} on ${new Date().toISOString()} via Signal. Risk: ${riskPercentage}%, Lev: ${leverage}x. SL/TP pending fill.`
-                    : `Opened trade at ${new Date().toISOString()} via Signal. Risk: ${riskPercentage}%, Lev: ${leverage}x`;
+                    ? `Limit order placed at ${entryPrice} on ${new Date().toISOString()} via Signal. Risk: ${finalRiskPercentage}%, Lev: ${leverage}x. SL/TP pending fill.`
+                    : `Opened trade at ${new Date().toISOString()} via Signal. Risk: ${finalRiskPercentage}%, Lev: ${leverage}x`;
 
                 const trade = new Trade({
                     userId: user._id,
@@ -395,8 +515,45 @@ export class TradeManager {
 
                 logger.info(`✅ Trade successfully executed for ${signal.symbol}: ${order.id}`);
 
-                // 6.5 SL/TP orders are now attached to the main order and handled by BingX.
-                if (resolvedOrderType === 'market' || order.status === 'closed' || order.status === 'filled') {
+                // 6.5 Place separate split Take Profit limit orders if multiple targets are active
+                if (isMultiple) {
+                    logger.info(`[Dynamic TP Execution] Placing separate split Take Profit orders...`);
+                    let remainingAmount = amountContracts;
+                    const closeSide = signal.direction === 'LONG' ? 'sell' : 'buy';
+
+                    for (let i = 0; i < finalTpPrices.length; i++) {
+                        const tpPrice = finalTpPrices[i];
+                        const isLastTP = i === finalTpPrices.length - 1;
+
+                        const portionSize = amountContracts * (tpSplits[i] / 100);
+                        let tpAmount = isLastTP ? remainingAmount : portionSize;
+                        tpAmount = await this.bingx.amountToPrecision(signal.symbol, tpAmount);
+
+                        if (tpAmount <= 0) continue;
+
+                        try {
+                            const tpParams: any = {
+                                stopPrice: tpPrice,
+                                type: 'TAKE_PROFIT'
+                            };
+                            if (hedgeMode) {
+                                tpParams.positionSide = signal.direction;
+                            } else {
+                                tpParams.reduceOnly = true;
+                            }
+
+                            await this.bingx.placeOrder(signal.symbol, 'market', closeSide, tpAmount, undefined, {
+                                stopPrice: tpPrice,
+                                type: 'TAKE_PROFIT',
+                                ...tpParams
+                            });
+                            remainingAmount -= tpAmount;
+                            logger.info(`✅ Dynamic Take Profit placed at ${tpPrice.toFixed(6)} (${tpAmount} contracts) representing ${tpSplits[i]}%`);
+                        } catch (err: any) {
+                            logger.error(`❌ Failed to place split Take Profit at ${tpPrice.toFixed(6)}: ${err.message}`);
+                        }
+                    }
+                } else if (resolvedOrderType === 'market' || order.status === 'closed' || order.status === 'filled') {
                     logger.info(`✅ Main order executed. Attached SL at ${stopLossPrice.toFixed(6)} and TP at ${finalTpPrices[0].toFixed(6)} are active.`);
                 } else {
                     logger.info(`⏳ [Limit Order] Attached SL and TP will activate when order ${order.id} is filled.`);
@@ -430,7 +587,7 @@ export class TradeManager {
                     margin: parseFloat(marginUsed.toFixed(6)),
                     marginPercentage,
                     leverage,
-                    riskPercentage,
+                    riskPercentage: finalRiskPercentage,
                     targets: targetsResult,
                     stopLoss: slResult,
                     orderType: resolvedOrderType,
