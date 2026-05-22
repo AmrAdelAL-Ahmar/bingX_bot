@@ -5,6 +5,7 @@ import User from '../models/User';
 import TradeRadar, { ITradeRadar } from '../models/TradeRadar';
 import { TechnicalAnalyzer } from './TechnicalAnalyzer';
 import { TradeManager } from './TradeManager';
+import { CoreTradeRadar } from '../core/radar/CoreTradeRadar';
 import logger from '../utils/logger';
 
 export class PositionMonitor {
@@ -381,7 +382,7 @@ export class PositionMonitor {
     }
 
     /**
-     * كشف الكسر الكاذب: ذيل اخترق SL وجسم الشمعة ارتد داخل الأمان
+     * كشب الكسر الكاذب: ذيل اخترق SL وجسم الشمعة ارتد داخل الأمان
      */
     private async detectWickSweep(
         radar: ITradeRadar,
@@ -393,17 +394,8 @@ export class PositionMonitor {
         const lastCandle = ohlcv[ohlcv.length - 1];
         if (!lastCandle) return;
 
-        // هل الذيل اخترق الـ SL؟
-        const wickBrokeSL = direction === 'LONG'
-            ? lastCandle.low <= stopLoss
-            : lastCandle.high >= stopLoss;
-
-        // هل الجسم بقي بأمان؟
-        const bodyIntact = direction === 'LONG'
-            ? lastCandle.close > stopLoss
-            : lastCandle.close < stopLoss;
-
-        if (!wickBrokeSL || !bodyIntact) return;
+        const isWickSweep = CoreTradeRadar.checkWickSweep(ohlcv, stopLoss, direction);
+        if (!isWickSweep) return;
 
         // هل أُرسل هذا الحدث مسبقاً؟ (notifyOnce)
         if (radar.settings.notifyOnce) {
@@ -490,13 +482,8 @@ export class PositionMonitor {
             if (alreadySent) return;
         }
 
-        // MSS عكسي: نبحث عن كسر هيكل في الاتجاه المعاكس
-        const reverseDir = direction === 'LONG' ? 'SHORT' : 'LONG';
-        const mss = TechnicalAnalyzer.detectMSS(ohlcv, reverseDir);
-        const div = TechnicalAnalyzer.detectDivergence(ohlcv, direction);
-
-        // يتطلب كلا الشرطين للتأكيد
-        if (!mss.detected || !div.detected) return;
+        const reversal = CoreTradeRadar.checkEarlyReversal(ohlcv, direction);
+        if (!reversal.detected) return;
 
         logger.info(`Radar: Early Reversal Warning for ${radar.symbol}`);
         const actionMsg = direction === 'LONG'
@@ -505,30 +492,12 @@ export class PositionMonitor {
 
         const msg = `🚨 <b>تنبيه انعكاس مبكر!</b>\n\n` +
             `📍 الرمز: <b>${radar.symbol}</b> (${direction})\n` +
-            `⚡ كسر هيكل عكسي: <b>${mss.description}</b>\n` +
+            `⚡ كسر هيكل عكسي: <b>${reversal.description}</b>\n` +
             `📊 Divergence: <b>${direction === 'LONG' ? 'Bearish Divergence' : 'Bullish Divergence'} ✅</b>\n\n` +
             `💡 <i>${actionMsg}</i>`;
 
         await this.notifier(radar.telegramId, msg);
-        radar.sentEvents.push({ type: 'REVERSAL_WARNING', sentAt: new Date(), details: mss.description });
-    }
-
-    private calculateATR(ohlcv: any[], period: number = 14): number {
-        if (ohlcv.length <= period) return 0;
-        const trs: number[] = [];
-        for (let i = 1; i < ohlcv.length; i++) {
-            const high = ohlcv[i].high;
-            const low = ohlcv[i].low;
-            const prevClose = ohlcv[i - 1].close;
-            const tr = Math.max(
-                high - low,
-                Math.abs(high - prevClose),
-                Math.abs(low - prevClose)
-            );
-            trs.push(tr);
-        }
-        const sum = trs.slice(-period).reduce((acc, v) => acc + v, 0);
-        return sum / period;
+        radar.sentEvents.push({ type: 'REVERSAL_WARNING', sentAt: new Date(), details: reversal.description });
     }
 
     /**
@@ -541,33 +510,8 @@ export class PositionMonitor {
         currentPrice: number,
         symbol: string
     ): Promise<void> {
-        if (ohlcv.length < 15) return;
-
-        const atr = this.calculateATR(ohlcv, 14);
-        let newSL: number;
-
-        if (atr > 0) {
-            const multiplier = 2.0; // Volatility factor
-            if (direction === 'LONG') {
-                newSL = currentPrice - (multiplier * atr);
-                if (newSL <= radar.currentSL) return;
-            } else {
-                newSL = currentPrice + (multiplier * atr);
-                if (newSL >= radar.currentSL) return;
-            }
-        } else {
-            // Swing High/Low fallback
-            const recent = ohlcv.slice(-5);
-            if (direction === 'LONG') {
-                const newSwingLow = Math.min(...recent.map((c: any) => c.low));
-                newSL = newSwingLow;
-                if (newSL <= radar.currentSL) return;
-            } else {
-                const newSwingHigh = Math.max(...recent.map((c: any) => c.high));
-                newSL = newSwingHigh;
-                if (newSL >= radar.currentSL) return;
-            }
-        }
+        const newSL = CoreTradeRadar.calculateTrailingStop(ohlcv, radar.currentSL, direction, currentPrice);
+        if (newSL === null) return;
 
         logger.info(`Radar: Volatility Trailing SL update for ${symbol}: ${radar.currentSL} → ${newSL}`);
 

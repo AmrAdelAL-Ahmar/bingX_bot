@@ -1,10 +1,10 @@
 import logger from '../utils/logger';
 import { BingXService } from './BingXService';
-import { TechnicalAnalyzer, MATRIX_TFS } from './TechnicalAnalyzer';
-import { MTFDataBuilder } from './MTFDataBuilder';
-import { OHLCV, AnalysisDetails } from './AnalysisService';
-import { getSniperEngine } from './sniper/SniperRegistry';
-import { SniperReport } from './sniper/ISniperEngine';
+import { MATRIX_TFS } from '../core/analysis/TechnicalAnalyzer';
+import { OHLCV } from '../core/shared/types';
+import { getSniperEngine } from '../core/sniper/SniperRegistry';
+import { SniperReport } from '../core/sniper/ISniperEngine';
+import { CoreSniperScanner } from '../core/sniper/CoreSniperScanner';
 import SniperWatch, { ISniperWatch } from '../models/SniperWatch';
 
 // ─── SniperManager ─────────────────────────────────────────────────────────────
@@ -115,7 +115,6 @@ export class SniperManager {
             if (!engine) return null;
 
             // Concurrency & Margin Lock Control:
-            // Check if we already have too many active trades or total margin exceeds limits
             const activePositions = await this.bingx.getPositions();
             const activeTradesCount = activePositions.filter((p: any) => parseFloat(p.contracts) > 0).length;
             if (activeTradesCount >= 5) {
@@ -129,19 +128,7 @@ export class SniperManager {
                 allData[tf] = await this.bingx.fetchDeepHistoricalData(symbol, tf, daysNeeded);
             }
 
-            const currentPrice = allData['5m']?.slice(-1)[0]?.close
-                || allData['15m']?.slice(-1)[0]?.close || 0;
-
-            const vwap = TechnicalAnalyzer.calculateVWAP(allData['1d'] || allData['1h'] || []);
-
-            const allTimeframes: Record<string, AnalysisDetails> = {};
-            tfsToFetch.forEach(tf => {
-                if (allData[tf] && allData[tf].length > 15) {
-                    allTimeframes[tf] = TechnicalAnalyzer.calculateTechnicalData(allData[tf], tf, vwap);
-                }
-            });
-
-            return engine.scan(symbol, currentPrice, allData, allTimeframes);
+            return CoreSniperScanner.scan(symbol, engineId, allData);
         } catch (err) {
             logger.error(`SniperManager: failed to generate report for ${symbol}:`, err);
             return null;
@@ -163,19 +150,7 @@ export class SniperManager {
                 allData[tf] = await this.bingx.fetchDeepHistoricalData(symbol, tf, daysNeeded);
             }
 
-            const currentPrice = allData['5m']?.slice(-1)[0]?.close
-                || allData['15m']?.slice(-1)[0]?.close || 0;
-
-            const vwap = TechnicalAnalyzer.calculateVWAP(allData['1d'] || allData['1h'] || []);
-
-            const allTimeframes: Record<string, AnalysisDetails> = {};
-            tfsToFetch.forEach(tf => {
-                if (allData[tf] && allData[tf].length > 15) {
-                    allTimeframes[tf] = TechnicalAnalyzer.calculateTechnicalData(allData[tf], tf, vwap);
-                }
-            });
-
-            return engine.scan(symbol, currentPrice, allData, allTimeframes);
+            return CoreSniperScanner.scan(symbol, engineId, allData);
         } catch (err) {
             logger.error(`SniperManager: instantReport failed for ${symbol}:`, err);
             return null;
@@ -194,9 +169,10 @@ export class SniperManager {
                 inline_keyboard: [
                     [
                         { text: '⚡ تنفيذ الصفقة', callback_data: `snp_exec_${watch._id}` },
-                        { text: '👁 تفعيل المراقبة', callback_data: `snp_radar_${watch._id}` }
+                        { text: '📝 نسخ الصفقة', callback_data: `snp_copy_${watch.symbol}_${watch.engineId}` }
                     ],
                     [
+                        { text: '👁 تفعيل المراقبة', callback_data: `snp_radar_${watch._id}` },
                         { text: '❌ إلغاء الاقتناص', callback_data: `snp_cancel_${watch._id}` }
                     ]
                 ]

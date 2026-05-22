@@ -2,16 +2,17 @@ import { Telegraf } from 'telegraf';
 import logger from '../../utils/logger';
 import User from '../../models/User';
 import Trade from '../../models/Trade';
-import { getMainMenuKeyboard, getTraderSettingsKeyboard, getAlgoVersionKeyboard, getAnalysisActionKeyboard, getAnalysisSettingsKeyboard, getTFSelectionKeyboard, getLimitSelectionKeyboard, getRSISelectionKeyboard, getBacktestVersionKeyboard, getBacktestModeKeyboard, getBacktestIntervalKeyboard, getBacktestDaysKeyboard, getBacktestSettingsKeyboard } from '../keyboards/baseKeyboards';
+import { getMainMenuKeyboard, getTraderSettingsKeyboard, getBacktestVersionKeyboard, getBacktestModeKeyboard, getBacktestIntervalKeyboard, getBacktestDaysKeyboard, getBacktestSettingsKeyboard } from '../keyboards/baseKeyboards';
 import { AnalysisService } from '../../services/AnalysisService';
 import { BingXService } from '../../services/BingXService';
 import { BacktestService } from '../../services/BacktestService';
+
 
 import { SignalParser } from '../../services/SignalParser';
 import { TradeManager } from '../../services/TradeManager';
 import { sendTelegramMessage } from '../../utils/telegram';
 
-function generateCSVBuffer(trades: any[], fullReportEnabled: boolean = false): Buffer {
+export function generateCSVBuffer(trades: any[], fullReportEnabled: boolean = false): Buffer {
     if (!trades || trades.length === 0) return Buffer.from('');
 
     const headers = [
@@ -264,15 +265,15 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
 
 
     // Handle generic text messages (Signals, Cancellations, Report Dates)
-    bot.on('message', async (ctx) => {
+    bot.on('message', async (ctx, next) => {
         try {
-            if (!ctx.from || !('text' in ctx.message)) return;
+            if (!ctx.from || !('text' in ctx.message)) return next();
 
             const message = ctx.message.text;
             const telegramId = ctx.from.id.toString();
             const user = await User.findOne({ telegramId });
 
-            if (!user) return;
+            if (!user) return next();
 
             // --- UNIVERSAL CANCEL ---
             if (message === 'إلغاء ❌' || message === 'رجوع للقائمة الرئيسية 🔙' || message === 'رجوع 🔙') {
@@ -666,99 +667,6 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                 }
             }
 
-            // --- SMART ANALYSIS FLOW ---
-            if (message === '📊 التحليل الذكي (V1-V11)') {
-                return ctx.reply('الرجاء اختيار إصدار خوارزمية التحليل التي تود استخدامها:', {
-                    reply_markup: getAlgoVersionKeyboard()
-                });
-            }
-
-            if (message === 'دليل الخوارزميات 📖') {
-                const guide = `📖 **دليل الخوارزميات (V1-V11):**\n\n` +
-                    `${analysisService.getAlgorithmExplanation('V1')}\n\n` +
-                    `${analysisService.getAlgorithmExplanation('V2')}\n\n` +
-                    `${analysisService.getAlgorithmExplanation('V3')}\n\n` +
-                    `${analysisService.getAlgorithmExplanation('V4')}\n\n` +
-                    `${analysisService.getAlgorithmExplanation('V5')}\n\n` +
-                    `${analysisService.getAlgorithmExplanation('V6')}\n\n` +
-                    `${analysisService.getAlgorithmExplanation('V7')}\n\n` +
-                    `${analysisService.getAlgorithmExplanation('V10')}\n\n` +
-                    `${analysisService.getAlgorithmExplanation('V11')}`;
-                return ctx.reply(guide);
-            }
-
-            if (message === 'الخوارزمية V1 (الأساسي)') {
-                user.botState = 'AWAITING_ANALYSIS_SYMBOL_V1';
-                await user.save();
-                return ctx.reply('يرجى إرسال رمز العملة للتحليل باستخدام V1 (مثال: BTC):', {
-                    reply_markup: { keyboard: [[{ text: 'إلغاء ❌' }]], resize_keyboard: true }
-                });
-            }
-
-            if (message === 'الخوارزمية V2 (الكمي - Quant)') {
-                user.botState = 'AWAITING_ANALYSIS_SYMBOL_V2';
-                await user.save();
-                return ctx.reply('يرجى إرسال رمز العملة للتحليل باستخدام V2 (مثال: BTC):', {
-                    reply_markup: { keyboard: [[{ text: 'إلغاء ❌' }]], resize_keyboard: true }
-                });
-            }
-
-            if (message === 'الخوارزمية V3 (المصفوفة)') {
-                user.botState = 'AWAITING_ANALYSIS_SYMBOL_V3';
-                await user.save();
-                return ctx.reply('يرجى إرسال رمز العملة للتحليل باستخدام V3 (مثال: BTC):', {
-                    reply_markup: { keyboard: [[{ text: 'إلغاء ❌' }]], resize_keyboard: true }
-                });
-            }
-
-            if (message === 'الخوارزمية V4 (ثنائي الاتجاه)') {
-                user.botState = 'AWAITING_ANALYSIS_SYMBOL_V4';
-                await user.save();
-                return ctx.reply('يرجى إرسال رمز العملة للتحليل باستخدام V4 (مثال: BTC):', {
-                    reply_markup: { keyboard: [[{ text: 'إلغاء ❌' }]], resize_keyboard: true }
-                });
-            }
-
-            if (message === 'الخوارزمية V5 (تنبؤي AI) 🔮') {
-                user.botState = 'AWAITING_ANALYSIS_SYMBOL_V5';
-                await user.save();
-                return ctx.reply('يرجى إرسال رمز العملة للتحليل باستخدام V5 (التنبؤي) (مثال: BTC):', {
-                    reply_markup: { keyboard: [[{ text: 'إلغاء ❌' }]], resize_keyboard: true }
-                });
-            }
-
-            if (message === 'الخوارزمية V6 (Sniper) 🎯') {
-                user.botState = 'AWAITING_ANALYSIS_SYMBOL_V6';
-                await user.save();
-                return ctx.reply('يرجى إرسال رمز العملة للتحليل باستخدام V6 (Sniper) 🎯 (مثال: BTC):', {
-                    reply_markup: { keyboard: [[{ text: 'إلغاء ❌' }]], resize_keyboard: true }
-                });
-            }
-
-            if (message === 'الخوارزمية V7 (القناص الهجيني) 🏹') {
-                user.botState = 'AWAITING_ANALYSIS_SYMBOL_V7';
-                await user.save();
-                return ctx.reply('يرجى إرسال رمز العملة للتحليل باستخدام V7 (القناص الهجيني) 🏹 (مثال: BTC):', {
-                    reply_markup: { keyboard: [[{ text: 'إلغاء ❌' }]], resize_keyboard: true }
-                });
-            }
-
-            if (message === 'الخوارزمية V10 (المؤسساتي المتقدم) 🏆') {
-                user.botState = 'AWAITING_ANALYSIS_SYMBOL_V10';
-                await user.save();
-                return ctx.reply('يرجى إرسال رمز العملة للتحليل باستخدام V10 (المؤسساتي المتقدم) 🏆 (مثال: BTC):', {
-                    reply_markup: { keyboard: [[{ text: 'إلغاء ❌' }]], resize_keyboard: true }
-                });
-            }
-
-            if (message === 'الخوارزمية V11 (القرار الذكي التكيفي) 👑') {
-                user.botState = 'AWAITING_ANALYSIS_SYMBOL_V11';
-                await user.save();
-                return ctx.reply('يرجى إرسال رمز العملة للتحليل باستخدام V11 (القرار الذكي التكيفي) 👑 (مثال: BTC):', {
-                    reply_markup: { keyboard: [[{ text: 'إلغاء ❌' }]], resize_keyboard: true }
-                });
-            }
-
             if (message === '🔬 اختبار الاستراتيجيات') {
                 user.botState = 'AWAITING_BT_SYMBOL';
                 await user.save();
@@ -778,102 +686,6 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                 await user.save();
                 return ctx.reply(`اختر إصدار الخوارزمية لاختبار ${symbol}:`, {
                     reply_markup: getBacktestVersionKeyboard(symbol)
-                });
-            }
-
-            if (user.botState && user.botState.startsWith('AWAITING_ANALYSIS_SYMBOL_')) {
-                if (message === 'إلغاء ❌' || message === 'رجوع للقائمة الرئيسية 🔙') {
-                    user.botState = 'NONE';
-                    await user.save();
-                    return ctx.reply('تم الإلغاء.', { reply_markup: getMainMenuKeyboard(user) });
-                }
-                const version = user.botState.split('_').pop() as 'V1' | 'V2' | 'V3' | 'V4' | 'V5' | 'V6' | 'V7' | 'V10' | 'V11';
-                const symbol = message.toUpperCase();
-                ctx.reply(`⏳ جاري تحليل ${symbol} باستخدام ${version}... (TF: ${user.analysisSettings?.scalpTF || '5m'}/${user.analysisSettings?.swingTF || '1h'})`);
-                try {
-                    const result = await analysisService.analyze(symbol, version, {
-                        quickTF: user.analysisSettings?.scalpTF,
-                        longTF: user.analysisSettings?.swingTF,
-                        limit: user.analysisSettings?.candleLimit,
-                        rsiThreshold: user.analysisSettings?.rsiThreshold
-                    });
-                    const report = analysisService.formatReport(result, version);
-
-                    // Send the report with a button for comprehensive analysis
-                    const shortSym = symbol.split('/')[0];
-                    await ctx.replyWithHTML(report, {
-                        reply_markup: {
-                            inline_keyboard: [[{ text: '📊 التحليل الشامل (MTF)', callback_data: `all_tf_${shortSym}_${version}` }]]
-                        }
-                    });
-
-                    // Send buttons for Scalp
-                    if (result.scalp.type !== 'NONE') {
-                        await ctx.reply(`⚡ **إجراءات سريعة لصفقة Scalp:**`, {
-                            reply_markup: getAnalysisActionKeyboard(symbol, 'scalp', {
-                                direction: result.scalp.type,
-                                entry: result.scalp.entry,
-                                tp: result.scalp.tp,
-                                sl: result.scalp.sl,
-                                p: result.pricePrecision
-                            }, version)
-                        });
-                    }
-
-                    // Send buttons for Swing
-                    if (result.swing.type !== 'NONE') {
-                        await ctx.reply(`🌊 **إجراءات لصفقة Swing:**`, {
-                            reply_markup: getAnalysisActionKeyboard(symbol, 'swing', {
-                                direction: result.swing.type,
-                                entry: result.swing.entry,
-                                tp: result.swing.tp,
-                                sl: result.swing.sl,
-                                p: result.pricePrecision
-                            }, version)
-                        });
-                    }
-
-                    user.botState = 'NONE';
-                    await user.save();
-                    return ctx.reply('يمكنك الآن تنفيذ الصفقة أو نسخ الإشارة من الأزرار أعلاه.', { reply_markup: getMainMenuKeyboard(user) });
-
-                } catch (error: any) {
-                    logger.error(`Analysis failed for ${symbol}:`, error);
-                    ctx.reply(`❌ فشل التحليل: ${error.message}`, { reply_markup: getMainMenuKeyboard(user) });
-                    user.botState = 'NONE';
-                    await user.save();
-                    return;
-                }
-            }
-
-            // --- ANALYSIS SETTINGS FLOW ---
-            if (message === '⚙️ إعدادات المحلل الذكي') {
-                return ctx.reply('إعدادات المحلل الذكي: يمكنك تخصيص الفريمات الزمنية وعدد الشمعات المستخدمة في التحليل.', {
-                    reply_markup: getAnalysisSettingsKeyboard()
-                });
-            }
-
-            if (message === '⏱️ فريم السكالبينج') {
-                return ctx.reply('اختر فريم السكالبينج المفضل:', {
-                    reply_markup: getTFSelectionKeyboard('scalp')
-                });
-            }
-
-            if (message === '🌊 فريم السوينج') {
-                return ctx.reply('اختر فريم السوينج المفضل:', {
-                    reply_markup: getTFSelectionKeyboard('swing')
-                });
-            }
-
-            if (message === '📊 عدد الشمعات (Limit)') {
-                return ctx.reply('اختر عدد الشمعات التاريخية لتحليلها:', {
-                    reply_markup: getLimitSelectionKeyboard()
-                });
-            }
-
-            if (message === '📉 مؤشر RSI Threshold') {
-                return ctx.reply('اختر قيمة RSI المفضلة (قيمة أقل = شروط دخول أقسى، قيمة أعلى = دخول أسرع):', {
-                    reply_markup: getRSISelectionKeyboard()
                 });
             }
 
@@ -929,6 +741,8 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                     logger.error(`Signal validation failed for ${ctx.from.username || telegramId}`, error);
                     ctx.reply(`❌ فشل تنفيذ الصفقة:\n${error.message}`);
                 }
+            } else {
+                return next();
             }
 
         } catch (error) {
@@ -967,6 +781,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
         });
     });
 
+
     bot.action(/^btw_i_([0-9]+[mh])_(SCALP|SWING)_(V[0-9]+)_(.+)$/, async (ctx) => {
         const interval = ctx.match[1];
         const mode = ctx.match[2];
@@ -979,153 +794,34 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
     });
 
     bot.action(/^btw_d_([0-9.]+)_([0-9]+[mh])_(SCALP|SWING)_(V[0-9]+)_(.+)$/, async (ctx) => {
-        const days = parseFloat(ctx.match[1]);
-        const interval = ctx.match[2];
-        const mode = ctx.match[3] as 'SCALP' | 'SWING';
-        const version = ctx.match[4];
-        const symbolInput = ctx.match[5];
-
-        const symbol = symbolInput.includes('/') ? symbolInput : `${symbolInput}/USDT:USDT`;
-
-        // Parse stepMinutes from interval
-        let stepMinutes = 15;
-        if (interval.endsWith('m')) stepMinutes = parseInt(interval.replace('m', ''));
-        if (interval.endsWith('h')) stepMinutes = parseInt(interval.replace('h', '')) * 60;
-
-        const modeText = mode === 'SCALP' ? 'سكالبينج ⚡️' : 'سوينج 🌊';
-
-        const telegramId = ctx.from?.id.toString();
-        const user = await User.findOne({ telegramId });
-
-        const bs = user?.backtestSettings || {
-            initialCapital: 1000, marginMode: 'ISOLATED', leverage: 10,
-            riskSizingEnabled: false, riskPercentage: 3, maxSlCapEnabled: false, maxSlPercentage: 5, fullReportEnabled: false
-        };
-
-        const marginModeText = bs.marginMode === 'CROSS' ? 'متبادل (Cross)' : 'معزول (Isolated)';
-
         try {
-            await ctx.editMessageText(`⏳ جاري إجراء الاختبار الرجعي المتقدم...\nالعملة: ${symbol}\nالإصدار: ${version}\nالنوع: ${modeText}\nالوضع: ${marginModeText}\nإدارة المخاطر بالاستوب: ${bs.riskSizingEnabled ? '✅' : '❌'}\nفاصل التحليل: كل ${stepMinutes} دقيقة\nمدة الاختبار: آخر ${days} أيام\nرأس المال: ${bs.initialCapital}$\n\n*(يرجى الانتظار، قد يستغرق الأمر بعض الوقت...)*`);
-        } catch (e) { }
-
-        await ctx.answerCbQuery('بدأ الاختبار الرجعي...').catch(() => { });
-
-        // Execute backtest asynchronously to prevent Telegram Webhook timeouts
-        (async () => {
-            try {
-                const result = await backtestService.runAdvancedBacktest(symbol, version, {
-                    quickTF: user?.analysisSettings?.scalpTF || '5m',
-                    longTF: user?.analysisSettings?.swingTF || '1h',
-                    days: days,
-                    stepMinutes: stepMinutes,
-                    mode: mode,
-                    initialCapital: bs.initialCapital,
-                    marginPerTradePercentage: bs.riskPercentage,
-                    marginMode: bs.marginMode,
-                    leverage: bs.leverage,
-                    riskSizingEnabled: bs.riskSizingEnabled,
-                    maxSlCapEnabled: bs.maxSlCapEnabled,
-                    maxSlPercentage: bs.maxSlPercentage,
-                    fullReportEnabled: bs.fullReportEnabled
-                });
-
-                if (user) {
-                    await ctx.reply(result.reportText, { parse_mode: 'Markdown', reply_markup: getMainMenuKeyboard(user) });
-                } else {
-                    await ctx.reply(result.reportText, { parse_mode: 'Markdown' });
-                }
-
-                if (result.trades && result.trades.length > 0) {
-                    const csvBuffer = generateCSVBuffer(result.trades, bs.fullReportEnabled);
-                    const safeSymbol = symbol.replace(/[\/:]/g, '_');
-                    const now = new Date();
-                    const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}`;
-                    const fileName = `Backtest_${version}_${mode}_${safeSymbol}_${dateStr}.csv`;
-                    await ctx.replyWithDocument({ source: csvBuffer, filename: fileName });
-                }
-
-            } catch (error: any) {
-                logger.error('Error in advanced backtest wizard:', error);
-                await ctx.reply(`❌ فشل الاختبار: ${error.message}`);
-            }
-        })();
-    });
-
-    // --- CALLBACK HANDLERS FOR ANALYSIS ACTIONS ---
-    bot.action(/^cp_(sc|sw)_(.+)$/, async (ctx) => {
-        try {
-            const [_, type, rest] = ctx.match;
-            const [s, d, e, t1, sl, t2] = rest.split('_');
-            const targets = [parseFloat(t1)];
-            if (t2 && t2 !== '0') targets.push(parseFloat(t2));
-            const precision = await bingxService.getPricePrecision(`${s}/USDT:USDT`);
-            const signalText = analysisService.formatSignalText(
-                `${s}/USDT:USDT`,
-                d === 'L' ? 'LONG' : 'SHORT',
-                parseFloat(e),
-                targets,
-                parseFloat(sl),
-                25, // Default leverage
-                precision
-            );
-            await ctx.replyWithMarkdown(signalText);
-            await ctx.answerCbQuery('تم إنشاء نموذج ا لإشارة ✅');
-        } catch (error: any) {
-            logger.error('Error in copy signal action:', error);
-            await ctx.answerCbQuery('❌ حدث خطأ أثناء إنشاء الإشارة');
-        }
-    });
-
-    bot.action(/^ex_(sc|sw)_(.+)$/, async (ctx) => {
-        try {
-            const [_, type, rest] = ctx.match;
-            const [s, d, e, t1, sl, t2] = rest.split('_');
-            const telegramId = ctx.from!.id.toString();
-            const user = await User.findOne({ telegramId });
-
-            if (!user) return ctx.answerCbQuery('لم يتم العثور على المستخدم');
-
-            const targets = [parseFloat(t1)];
-            if (t2 && t2 !== '0') targets.push(parseFloat(t2));
-
-            const signal = {
-                type: 'TRADE',
-                symbol: `${s}/USDT:USDT`,
-                direction: d === 'L' ? 'LONG' : 'SHORT',
-                entry: [parseFloat(e)],
-                targets: targets,
-                stopLoss: parseFloat(sl)
-            };
-
-            ctx.answerCbQuery('⏳ جاري تنفيذ الصفقة...');
-            await tradeManager.executeSignal(signal as any, user._id.toString(), ctx.chat!.id.toString());
-
-        } catch (error: any) {
-            logger.error('Error in execute trade action:', error);
-            await ctx.answerCbQuery(`❌ فشل التنفيذ: ${error.message}`);
-        }
-    });
-
-    bot.action(/^bt_(sc|sw)_(.+)$/, async (ctx) => {
-        try {
-            const [_, type, rest] = ctx.match;
-            const [s, version] = rest.split('_');
+            const days = parseFloat(ctx.match[1]);
+            const interval = ctx.match[2];
+            const mode = ctx.match[3] as 'SCALP' | 'SWING';
+            const version = ctx.match[4];
+            const s = ctx.match[5];
             const symbol = `${s}/USDT:USDT`;
 
-            await ctx.answerCbQuery(`⏳ جاري تشغيل الاختبار الرجعي (${version || 'V6'})...`);
-            await ctx.reply(`🔍 جاري تحليل البيانات التاريخية لـ ${symbol}... قد يستغرق ذلك بضع ثوانٍ.`);
+            await ctx.answerCbQuery(`⏳ جاري تشغيل اختبار الاستراتيجية (${version})...`);
+            await ctx.editMessageText(`🔍 جاري تشغيل الاختبار الرجعي لـ ${symbol}...\nالفاصل: ${interval}\nإصدار: ${version}\nالمدة: ${days} أيام\n\nيرجى الانتظار، قد يستغرق هذا بعض الوقت...`);
 
             const telegramId = ctx.from?.id.toString();
             const user = await User.findOne({ telegramId });
 
-            const mode: 'SCALP' | 'SWING' = type === 'sc' ? 'SCALP' : 'SWING';
-
+            const bts = user?.backtestSettings;
             const result = await backtestService.runAdvancedBacktest(symbol, version, {
-                quickTF: user?.analysisSettings?.scalpTF || '5m',
-                longTF: user?.analysisSettings?.swingTF || '1h',
-                days: 1, // Quick test uses 1 day
-                stepMinutes: 30, // Default to 30 mins
-                mode: mode
+                quickTF: mode === 'SCALP' ? interval : (user?.analysisSettings?.scalpTF || '5m'),
+                longTF: mode === 'SCALP' ? (user?.analysisSettings?.swingTF || '1h') : interval,
+                days: days,
+                stepMinutes: interval.endsWith('h') ? parseInt(interval) * 60 : parseInt(interval),
+                mode: mode,
+                initialCapital: bts?.initialCapital ?? 1000,
+                marginPerTradePercentage: bts?.riskPercentage ?? 3,
+                marginMode: bts?.marginMode ?? 'ISOLATED',
+                leverage: bts?.leverage ?? 10,
+                riskSizingEnabled: bts?.riskSizingEnabled ?? false,
+                maxSlCapEnabled: bts?.maxSlCapEnabled ?? false,
+                maxSlPercentage: bts?.maxSlPercentage ?? 5,
             });
 
             if (user) {
@@ -1141,210 +837,14 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                 const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}`;
                 const fileName = `Backtest_${version}_${mode}_${safeSymbol}_${dateStr}.csv`;
                 await ctx.replyWithDocument({ source: csvBuffer, filename: fileName });
+            } else {
+                await ctx.reply('⚠️ لم يتم تنفيذ أي صفقات خلال فترة الاختبار.');
             }
 
+            await ctx.deleteMessage().catch(() => {});
         } catch (error: any) {
-            logger.error('Error in backtest action:', error);
-            await ctx.reply(`❌ فشل الاختبار الرجعي: ${error.message}`);
-        }
-    });
-
-    bot.action(/^dt_(sc|sw)_(.+)$/, async (ctx) => {
-        try {
-            const [_, type, rest] = ctx.match;
-            const parts = rest.split('_');
-            const s = parts[0];
-            const d = parts[1] === 'L' ? 'LONG' : 'SHORT';
-            const v = parts[2] || 'V6';
-            const symbol = `${s}/USDT:USDT`;
-
-            await ctx.answerCbQuery(`⏳ جاري جلب التقرير التفصيلي (${v})...`);
-
-            // Re-run analysis to get the latest details
-            const user = await User.findOne({ telegramId: ctx.from!.id.toString() });
-            const res = await analysisService.analyze(symbol, v as any, {
-                quickTF: user?.analysisSettings?.scalpTF,
-                longTF: user?.analysisSettings?.swingTF
-            });
-
-            const details = analysisService.generateDetailedReport(res, type === 'sc' ? 'scalp' : 'swing');
-            await ctx.reply(details, { parse_mode: 'Markdown' });
-
-        } catch (error) {
-            logger.error('Error in details action:', error);
-            await ctx.reply('❌ فشل جلب التقرير التقني.');
-        }
-    });
-
-    bot.action(/^ed_(sc|sw)_(.+)$/, async (ctx) => {
-        try {
-            const [_, type, rest] = ctx.match;
-            const parts = rest.split('_');
-            const s = parts[0];
-            const v = parts[1] || 'V6';
-            const symbol = `${s}/USDT:USDT`;
-            await ctx.answerCbQuery('📚 جاري فتح الدليل التعليمي...');
-
-            const user = await User.findOne({ telegramId: ctx.from!.id.toString() });
-            const res = await analysisService.analyze(symbol, v as any, {
-                quickTF: user?.analysisSettings?.scalpTF,
-                longTF: user?.analysisSettings?.swingTF
-            });
-
-            const guide = analysisService.generateEducationalGuide(res, type === 'sc' ? 'scalp' : 'swing');
-            await ctx.reply(guide, { parse_mode: 'Markdown' });
-        } catch (error) {
-            logger.error('Error in educational guide action:', error);
-            await ctx.reply('❌ فشل جلب الدليل التعليمي.');
-        }
-    });
-
-    // --- ANALYSIS SETTINGS ACTIONS ---
-    bot.action(/^sc_tf_(.+)$/, async (ctx) => {
-        try {
-            const tf = ctx.match[1];
-            const user = await User.findOne({ telegramId: ctx.from!.id.toString() });
-            if (user) {
-                user.analysisSettings.scalpTF = tf;
-                await user.save();
-                await ctx.answerCbQuery(`✅ تم تحديد فريم السكالبينج: ${tf}`);
-                await ctx.editMessageText(`✅ تم تحديث فريم السكالبينج بنجاح إلى: **${tf}**`, { parse_mode: 'Markdown' });
-            }
-        } catch (error) {
-            logger.error('Error updating scalp TF:', error);
-        }
-    });
-
-    bot.action(/^sw_tf_(.+)$/, async (ctx) => {
-        try {
-            const tf = ctx.match[1];
-            const user = await User.findOne({ telegramId: ctx.from!.id.toString() });
-            if (user) {
-                user.analysisSettings.swingTF = tf;
-                await user.save();
-                await ctx.answerCbQuery(`✅ تم تحديد فريم السوينج: ${tf}`);
-                await ctx.editMessageText(`✅ تم تحديث فريم السوينج بنجاح إلى: **${tf}**`, { parse_mode: 'Markdown' });
-            }
-        } catch (error) {
-            logger.error('Error updating swing TF:', error);
-        }
-    });
-
-    bot.action(/^limit_(\d+)$/, async (ctx) => {
-        try {
-            const limit = parseInt(ctx.match[1]);
-            const user = await User.findOne({ telegramId: ctx.from!.id.toString() });
-            if (user) {
-                user.analysisSettings.candleLimit = limit;
-                await user.save();
-                await ctx.answerCbQuery(`✅ تم تحديد عدد الشمعات: ${limit}`);
-                await ctx.editMessageText(`✅ تم تحديث عدد الشمعات للتحليل بنجاح إلى: **${limit}**`, { parse_mode: 'Markdown' });
-            }
-        } catch (error) {
-            logger.error('Error updating candle limit:', error);
-        }
-    });
-
-    bot.action(/^rsi_(\d+)$/, async (ctx) => {
-        try {
-            const rsi = parseInt(ctx.match[1]);
-            const user = await User.findOne({ telegramId: ctx.from!.id.toString() });
-            if (user) {
-                user.analysisSettings.rsiThreshold = rsi;
-                await user.save();
-                await ctx.answerCbQuery(`✅ تم تحديد RSI Threshold: ${rsi}`);
-                await ctx.editMessageText(`✅ تم تحديث قيمة RSI للدخول بنجاح إلى: **${rsi}**`, { parse_mode: 'Markdown' });
-            }
-        } catch (error) {
-            logger.error('Error updating RSI threshold:', error);
-        }
-    });
-
-    bot.action(/^all_tf_(.+)$/, async (ctx) => {
-        try {
-            const rest = ctx.match[1];
-            const parts = rest.split('_');
-            const s = parts[0];
-            const v = parts[1] || 'V6';
-            const symbol = `${s}/USDT:USDT`;
-            await ctx.answerCbQuery(`🌐 جاري توليد التحليل الشامل (${v})...`);
-
-            const user = await User.findOne({ telegramId: ctx.from!.id.toString() });
-            const res = await analysisService.analyze(symbol, v as any, {
-                quickTF: user?.analysisSettings?.scalpTF,
-                longTF: user?.analysisSettings?.swingTF
-            });
-
-            const comprehensiveReport = analysisService.generateComprehensiveReport(res);
-            await ctx.reply(comprehensiveReport, { parse_mode: 'Markdown' });
-
-        } catch (error) {
-            logger.error('Error in comprehensive analysis action:', error);
-            await ctx.reply('❌ فشل توليد التحليل الشامل.');
-        }
-    });
-
-    // Handle Correction Check
-    bot.action(/^cor_ck_(.+)$/, async (ctx) => {
-        try {
-            const rest = ctx.match[1];
-            const parts = rest.split('_');
-            const s = parts[0];
-            const d = parts[1] === 'L' ? 'LONG' : 'SHORT';
-            const v = parts[2] || 'V6';
-
-            const symbol = s.includes('/') ? s : `${s}/USDT:USDT`;
-            await ctx.answerCbQuery(`🔍 جاري فحص رادار التصحيح (${v})...`);
-
-            const user = await User.findOne({ telegramId: ctx.from!.id.toString() });
-            const res = await analysisService.analyze(symbol, v as any, {
-                quickTF: user?.analysisSettings?.scalpTF,
-                longTF: user?.analysisSettings?.swingTF
-            });
-
-            const correctionReport = await analysisService.generateCorrectionReport(res, d);
-
-            await ctx.reply(correctionReport, { parse_mode: 'Markdown' });
-
-        } catch (error) {
-            logger.error('Error in correction check action:', error);
-            await ctx.reply('❌ فشل فحص رادار التصحيح.');
-        }
-    });
-
-    // Handle Correction Alert Toggle
-    bot.action(/^cor_al_(.+)$/, async (ctx) => {
-        try {
-            const symbol = ctx.match[1].includes('/') ? ctx.match[1] : `${ctx.match[1]}/USDT:USDT`;
-            const user = await User.findOne({ telegramId: ctx.from!.id.toString() });
-
-            if (!user) {
-                return await ctx.reply('❌ مستخدم غير مسجل.');
-            }
-
-            const userId = user._id;
-
-            // Find the most recent active trade for this symbol
-            const activeTrade = await Trade.findOne({
-                userId,
-                symbol,
-                currentStatus: { $in: ['OPEN', 'TP1_HIT', 'TP2_HIT', 'TP3_HIT'] }
-            }).sort({ entryTime: -1 });
-
-            if (!activeTrade) {
-                return await ctx.reply('❌ لم يتم العثور على صفقة مفتوحة نشطة لهذه العملة لتفعيل التنبيه لها.');
-            }
-
-            activeTrade.correctionAlertEnabled = true;
-            activeTrade.correctionWarningSent = false; // Reset warning if reactivating
-            await activeTrade.save();
-
-            await ctx.answerCbQuery('🔔 تم تفعيل تنبيه التصحيح');
-            await ctx.reply(`✅ **تم تفعيل مراقبة التصحيح لعملة ${activeTrade.symbol}**\n\nسأقوم بتنبيهك فوراً في حال كسر الـ Pivot أو ظهور انحراف سلبي حاد على الفريمات الصغيرة لحماية أرباحك.`, { parse_mode: 'Markdown' });
-
-        } catch (error) {
-            logger.error('Error in correction alert action:', error);
-            await ctx.reply('❌ فشل تفعيل تنبيه التصحيح.');
+            logger.error('Error in backtest wizard run action:', error);
+            await ctx.reply(`❌ فشل تشغيل الاختبار الرجعي: ${error.message}`);
         }
     });
 };

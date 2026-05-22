@@ -5,6 +5,9 @@ import SniperWatch from '../../models/SniperWatch';
 import { SniperManager } from '../../services/SniperManager';
 import { getSniperEngine, SNIPER_ENGINE_LIST } from '../../services/sniper/SniperRegistry';
 import { POPULAR_PAIRS } from '../keyboards/sniperKeyboards';
+import { TradeManager } from '../../services/TradeManager';
+import TradeRadar from '../../models/TradeRadar';
+import Trade from '../../models/Trade';
 import {
     getSniperMainKeyboard,
     getSniperSymbolKeyboard,
@@ -198,13 +201,20 @@ export function registerSniperHandlers(bot: Telegraf, sniperManager: SniperManag
                     return;
                 }
                 
+                const directionExists = report.direction && report.direction !== 'NONE';
+                const actionButtons: any[][] = [];
+                if (directionExists) {
+                    actionButtons.push([
+                        { text: '⚡ تنفيذ فوري', callback_data: `snp_direct_exec_${fullSymbol}_${engineId}` },
+                        { text: '📝 نسخ الصفقة', callback_data: `snp_copy_${fullSymbol}_${engineId}` }
+                    ]);
+                }
+                
                 await ctx.editMessageText(report.details, {
                     parse_mode: 'Markdown',
                     reply_markup: {
                         inline_keyboard: [
-                            ...(report.readyToFire ? [[
-                                { text: '⚡ تنفيذ فوري', callback_data: `snp_direct_exec_${fullSymbol}_${engineId}` }
-                            ]] : []),
+                            ...actionButtons,
                             [{ text: `⏱ مراقبة واقتناص الفرص`, callback_data: `snp_watch_${fullSymbol}_${engineId}` }],
                             [{ text: '🔙 رجوع اختيار العملة', callback_data: `snp_sel_eng_instant_${engineId}` }]
                         ]
@@ -301,14 +311,21 @@ export function registerSniperHandlers(bot: Telegraf, sniperManager: SniperManag
             return;
         }
 
+        const directionExists = report.direction && report.direction !== 'NONE';
+        const actionButtons: any[][] = [];
+        if (directionExists) {
+            actionButtons.push([
+                { text: '⚡ تنفيذ فوري', callback_data: `snp_direct_exec_${symbol}_${engineId}` },
+                { text: '📝 نسخ الصفقة', callback_data: `snp_copy_${symbol}_${engineId}` }
+            ]);
+        }
+
         // عرض التقرير مع أزرار المراقبة
         await ctx.editMessageText(report.details, {
             parse_mode: 'Markdown',
             reply_markup: {
                 inline_keyboard: [
-                    ...(report.readyToFire ? [[
-                        { text: '⚡ تنفيذ فوري', callback_data: `snp_direct_exec_${symbol}_${engineId}` }
-                    ]] : []),
+                    ...actionButtons,
                     [{ text: `⏱ مراقبة واقتناص الفرص`, callback_data: `snp_watch_${symbol}_${engineId}` }],
                     [{ text: '🔙 رجوع', callback_data: 'snp_instant' }]
                 ]
@@ -515,6 +532,228 @@ export function registerSniperHandlers(bot: Telegraf, sniperManager: SniperManag
             await ctx.reply('تم الإغلاق.', { reply_markup: getMainMenuKeyboard(user) });
         }
         await ctx.answerCbQuery();
+    });
+
+    // ── تنفيذ صفقة فوري من التقرير اللحظي ─────────────────────────────────────────
+    bot.action(/^snp_direct_exec_(.+)_([^_]+)$/, async (ctx) => {
+        try {
+            const symbol = ctx.match[1];
+            const engineId = ctx.match[2];
+            const telegramId = ctx.from?.id.toString();
+            if (!telegramId) return ctx.answerCbQuery().catch(() => {});
+            
+            const user = await User.findOne({ telegramId });
+            if (!user) return ctx.answerCbQuery('المستخدم غير موجود').catch(() => {});
+
+            await ctx.answerCbQuery('⏳ جاري تنفيذ الصفقة فورا...').catch(() => {});
+
+            const report = await sniperManager.instantReport(symbol, engineId);
+            if (!report || report.direction === 'NONE') {
+                await ctx.reply('❌ فشل توليد التقرير أو الاتجاه غير صالح للتداول.');
+                return;
+            }
+
+            const tradeManager = new TradeManager(sniperManager.bingx);
+
+            const signal = {
+                type: 'TRADE' as const,
+                symbol: report.symbol,
+                direction: report.direction as 'LONG' | 'SHORT',
+                entry: [report.entry],
+                targets: report.tp2 ? [report.tp, report.tp2] : [report.tp],
+                stopLoss: report.sl,
+                leverage: 10
+            };
+
+            const result = await tradeManager.executeSignal(signal, user._id.toString(), ctx.chat?.id.toString());
+            if (result) {
+                const dirEmoji = result.direction === 'LONG' ? '🟢' : '🔴';
+                await ctx.reply(
+                    `✅ *تم تنفيذ الصفقة فورياً بنجاح!*\n\n` +
+                    `🪙 العملة: *${result.symbol.split('/')[0]}*\n` +
+                    `📈 الاتجاه: *${result.direction} ${dirEmoji}*\n` +
+                    `💵 سعر الدخول: *${result.entryPrice}*\n` +
+                    `🛑 وقف الخسارة: *${result.stopLoss.price}*\n` +
+                    `🎯 الأهداف: *${result.targets.map(t => t.price).join(', ')}*\n` +
+                    `⚙️ الرافعة: *${result.leverage}x*\n` +
+                    `💰 الهامش المستخدم: *${result.margin.toFixed(2)} USDT* (${result.marginPercentage}%)`
+                , { parse_mode: 'Markdown' });
+            } else {
+                await ctx.reply('❌ فشل تنفيذ الصفقة، يرجى مراجعة سجلات البوت.');
+            }
+        } catch (e: any) {
+            logger.error('snp_direct_exec:', e);
+            await ctx.reply(`❌ حدث خطأ أثناء تنفيذ الصفقة: ${e.message}`);
+        }
+    });
+
+    // ── نسخ بيانات الصفقة ────────────────────────────────────────────────────────
+    bot.action(/^snp_copy_(.+)_([^_]+)$/, async (ctx) => {
+        try {
+            const symbol = ctx.match[1];
+            const engineId = ctx.match[2];
+            const telegramId = ctx.from?.id.toString();
+            if (!telegramId) return ctx.answerCbQuery().catch(() => {});
+
+            await ctx.answerCbQuery('⏳ جاري جلب بيانات النسخ...').catch(() => {});
+
+            const report = await sniperManager.instantReport(symbol, engineId);
+            if (!report || report.direction === 'NONE') {
+                await ctx.reply('❌ فشل توليد التقرير أو الاتجاه غير صالح للنسخ.');
+                return;
+            }
+
+            const symbolShort = symbol.split('/')[0] || symbol;
+            const tpText = report.tp2 ? `TARGET 1: ${report.tp}\nTARGET 2: ${report.tp2}` : `TARGET 1: ${report.tp}`;
+            const dirEmoji = report.direction === 'LONG' ? '🟢' : '🔴';
+
+            const copyBox = 
+`#${symbolShort}
+Direction: ${report.direction} ${dirEmoji}
+Entry Price: ${report.entry}
+Stop Loss: ${report.sl}
+${tpText}
+Leverage: 10x`;
+
+            await ctx.reply(
+                `📝 *إليك بيانات الصفقة جاهزة للنسخ بنقرة واحدة:*\n` +
+                `(اضغط على الكود أدناه لنسخه تلقائياً)\n\n` +
+                `\`\`\`\n${copyBox}\n\`\`\``
+            , { parse_mode: 'Markdown' });
+        } catch (e: any) {
+            logger.error('snp_copy:', e);
+            await ctx.reply(`❌ حدث خطأ أثناء نسخ الصفقة: ${e.message}`);
+        }
+    });
+
+    // ── تنفيذ صفقة اقتناص من الإشعار ──────────────────────────────────────────────
+    bot.action(/^snp_exec_(.+)$/, async (ctx) => {
+        try {
+            const watchId = ctx.match[1];
+            const telegramId = ctx.from?.id.toString();
+            if (!telegramId) return ctx.answerCbQuery().catch(() => {});
+
+            await ctx.answerCbQuery('⏳ جاري تنفيذ صفقة الاقتناص...').catch(() => {});
+
+            const watch = await SniperWatch.findById(watchId);
+            if (!watch) {
+                await ctx.reply('❌ فشل العثور على اقتناص المراقبة هذا.');
+                return;
+            }
+
+            const user = await User.findById(watch.userId);
+            if (!user) {
+                await ctx.reply('❌ المستخدم غير موجود في قاعدة البيانات.');
+                return;
+            }
+
+            const report = await sniperManager.instantReport(watch.symbol, watch.engineId);
+            if (!report || report.direction === 'NONE') {
+                await ctx.reply('❌ لم يعد اتجاه السوق صالحاً للدخول الآن.');
+                return;
+            }
+
+            const tradeManager = new TradeManager(sniperManager.bingx);
+
+            const signal = {
+                type: 'TRADE' as const,
+                symbol: report.symbol,
+                direction: report.direction as 'LONG' | 'SHORT',
+                entry: [report.entry],
+                targets: report.tp2 ? [report.tp, report.tp2] : [report.tp],
+                stopLoss: report.sl,
+                leverage: 10
+            };
+
+            const result = await tradeManager.executeSignal(signal, user._id.toString(), ctx.chat?.id.toString());
+            if (result) {
+                const dirEmoji = result.direction === 'LONG' ? '🟢' : '🔴';
+                watch.status = 'TRIGGERED';
+                await watch.save();
+
+                await ctx.reply(
+                    `✅ *تم تنفيذ صفقة الاقتناص بنجاح!*\n\n` +
+                    `🪙 العملة: *${result.symbol.split('/')[0]}*\n` +
+                    `📈 الاتجاه: *${result.direction} ${dirEmoji}*\n` +
+                    `💵 سعر الدخول: *${result.entryPrice}*\n` +
+                    `🛑 وقف الخسارة: *${result.stopLoss.price}*\n` +
+                    `🎯 الأهداف: *${result.targets.map(t => t.price).join(', ')}*\n` +
+                    `⚙️ الرافعة: *${result.leverage}x*\n` +
+                    `💰 الهامش المستخدم: *${result.margin.toFixed(2)} USDT* (${result.marginPercentage}%)`
+                , { parse_mode: 'Markdown' });
+            } else {
+                await ctx.reply('❌ فشل تنفيذ الصفقة، يرجى مراجعة السجلات.');
+            }
+        } catch (e: any) {
+            logger.error('snp_exec:', e);
+            await ctx.reply(`❌ حدث خطأ أثناء تنفيذ صفقة الاقتناص: ${e.message}`);
+        }
+    });
+
+    // ── تفعيل الرادار من إشعار الاقتناص ──────────────────────────────────────────
+    bot.action(/^snp_radar_(.+)$/, async (ctx) => {
+        try {
+            const watchId = ctx.match[1];
+            const telegramId = ctx.from?.id.toString();
+            if (!telegramId) return ctx.answerCbQuery().catch(() => {});
+
+            await ctx.answerCbQuery('⏳ جاري ربط صفقة الرادار...').catch(() => {});
+
+            const watch = await SniperWatch.findById(watchId);
+            if (!watch) {
+                await ctx.reply('❌ فشل العثور على الاقتناص.');
+                return;
+            }
+
+            const user = await User.findById(watch.userId);
+            if (!user) {
+                await ctx.reply('❌ المستخدم غير موجود.');
+                return;
+            }
+
+            const trade = await Trade.findOne({
+                userId: watch.userId,
+                symbol: watch.symbol,
+                currentStatus: { $in: ['OPEN', 'TP1_HIT', 'TP2_HIT'] }
+            }).sort({ createdAt: -1 });
+
+            if (!trade) {
+                await ctx.reply('❌ لا توجد صفقة مفتوحة نشطة لهذه العملة لتفعيل الرادار عليها. يرجى تنفيذ الصفقة أولاً ثم تفعيل الرادار.');
+                return;
+            }
+
+            await TradeRadar.findOneAndUpdate(
+                { tradeId: trade._id },
+                {
+                    tradeId: trade._id,
+                    userId: trade.userId,
+                    telegramId: telegramId,
+                    symbol: trade.symbol,
+                    direction: trade.direction,
+                    entryPrice: trade.entryPrice,
+                    currentSL: trade.stopLoss,
+                    isActive: true,
+                    settings: {
+                        notifyOnce: user.radarSettings?.notifyOnce ?? true,
+                        trailingEnabled: user.radarSettings?.trailingEnabled ?? false,
+                        wickSweepAlert: user.radarSettings?.wickSweepAlert ?? true,
+                        reversalAlert: user.radarSettings?.reversalAlert ?? true,
+                    },
+                    sentEvents: [],
+                },
+                { upsert: true, new: true }
+            );
+
+            await ctx.reply(
+                `✅ *تم تفعيل رادار المراقبة بنجاح لهذه الصفقة!*\n\n` +
+                `📡 الصفقة: *${trade.symbol.split('/')[0]}* (${trade.direction})\n\n` +
+                `سيقوم الرادار الآن بمراقبة الشموع الحية وسعر السوق لحمايتك وتفعيل الميزات الذكية.`
+            , { parse_mode: 'Markdown' });
+
+        } catch (e: any) {
+            logger.error('snp_radar:', e);
+            await ctx.reply(`❌ حدث خطأ أثناء تفعيل الرادار: ${e.message}`);
+        }
     });
 
     // ── معالجة الإدخال اليدوي للعملة ─────────────────────────────────────────

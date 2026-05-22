@@ -20,6 +20,7 @@ import { registerTradingHandlers } from './bot/handlers/tradingHandlers';
 import { registerSettingsHandlers } from './bot/handlers/settingsHandlers';
 import { registerSniperHandlers } from './bot/handlers/sniperHandlers';
 import { registerRadarHandlers } from './bot/handlers/radarHandlers';
+import { registerAnalysisHandlers } from './bot/handlers/analysisHandlers';
 import { SniperManager } from './services/SniperManager';
 
 dotenv.config();
@@ -69,6 +70,7 @@ registerSettingsHandlers(bot);
 (bot as any).sniperManager = sniperManager;
 registerSniperHandlers(bot, sniperManager);
 registerRadarHandlers(bot);
+registerAnalysisHandlers(bot, tradeManager);
 registerMessageHandlers(bot, tradeManager);
 
 const start = async () => {
