@@ -62,6 +62,5 @@ const TradeRadarSchema: Schema = new Schema({
 });
 
 TradeRadarSchema.index({ isActive: 1 });
-TradeRadarSchema.index({ tradeId: 1 }, { unique: true });
 
 export default mongoose.model<ITradeRadar>('TradeRadar', TradeRadarSchema);
