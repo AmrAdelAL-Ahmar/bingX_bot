@@ -1,8 +1,10 @@
 import { Telegraf } from 'telegraf';
+import dotenv from 'dotenv';
 import logger from '../../utils/logger';
 import User from '../../models/User';
 import { ALL_TP_THRESHOLDS, buildAlertSettingsKeyboard, buildCapitalProtectionKeyboard, buildLeverageKeyboard, getMainMenuKeyboard, buildVolatilitySlKeyboard, buildHitlarSettingsKeyboard, getHiddenMenuKeyboard, getTraderSettingsKeyboard, buildStrategySettingsKeyboard, getBacktestSettingsKeyboard, getBacktestSettingsIntervals } from '../keyboards/baseKeyboards';
 
+dotenv.config();
 
 
 
@@ -17,10 +19,10 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             const { BingXService } = require('../../services/BingXService');
             const TradeModel = require('../../models/Trade').default;
             const SniperWatchModel = require('../../models/SniperWatch').default;
-            
-            const bx = new BingXService();
+
+            const bx = new BingXService(process.env.BINGX_API_KEY, process.env.BINGX_SECRET_KEY);
             const balance = await bx.getBalance().catch(() => 0);
-            
+
             const activeTrades = await TradeModel.find({
                 currentStatus: { $in: ['OPEN', 'TP1_HIT', 'TP2_HIT'] }
             });
@@ -28,16 +30,16 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             for (const pos of activeTrades) {
                 totalPnl += (pos.pnl || 0);
             }
-            
+
             const activeWatchesCount = await SniperWatchModel.countDocuments({ userId: user._id, status: 'ACTIVE' });
-            
+
             const { getMainMenuText, getMainMenuInlineKeyboard } = require('../menus/mainMenu');
-            
+
             await ctx.editMessageText(getMainMenuText(ctx.from.first_name, balance, activeTrades.length, totalPnl), {
                 parse_mode: 'HTML',
                 reply_markup: getMainMenuInlineKeyboard(activeTrades.length, activeWatchesCount)
             });
-            await ctx.answerCbQuery().catch(() => {});
+            await ctx.answerCbQuery().catch(() => { });
         } catch (e: any) {
             logger.error(`Error in menu_open action: ${e.message}`);
         }
@@ -48,13 +50,13 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             if (!ctx.from) return;
             const user = await User.findOne({ telegramId: ctx.from.id.toString() });
             if (!user) return;
-            
+
             const { getTraderSettingsText, getTraderSettingsInlineKeyboard } = require('../menus/settingsMenu');
             await ctx.editMessageText(getTraderSettingsText(user), {
                 parse_mode: 'HTML',
                 reply_markup: getTraderSettingsInlineKeyboard(user)
             });
-            await ctx.answerCbQuery().catch(() => {});
+            await ctx.answerCbQuery().catch(() => { });
         } catch (e: any) {
             logger.error(`Error in menu_settings action: ${e.message}`);
         }
@@ -66,15 +68,15 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             const type = ctx.match[1];
             const user = await User.findOne({ telegramId: ctx.from.id.toString() });
             if (!user) return;
-            
+
             const { buildNumpadKeyboard } = require('../menus/settingsMenu');
             const label = type === 'risk' ? 'نسبة المخاطرة (%)' : 'الرافعة المالية الثابتة (x)';
-            
+
             await ctx.editMessageText(`✏️ <b>تعديل ${label}:</b>\nاستخدم لوحة الأرقام للتعديل ثم اضغط تأكيد:`, {
                 parse_mode: 'HTML',
                 reply_markup: buildNumpadKeyboard(type, '', label)
             });
-            await ctx.answerCbQuery().catch(() => {});
+            await ctx.answerCbQuery().catch(() => { });
         } catch (e: any) {
             logger.error(`Error in sett_edit action: ${e.message}`);
         }
@@ -85,16 +87,16 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             if (!ctx.from) return;
             const user = await User.findOne({ telegramId: ctx.from.id.toString() });
             if (!user) return;
-            
+
             user.orderMode = user.orderMode === 'limit' ? 'market' : 'limit';
             await user.save();
-            
+
             const { getTraderSettingsText, getTraderSettingsInlineKeyboard } = require('../menus/settingsMenu');
             await ctx.editMessageText(getTraderSettingsText(user), {
                 parse_mode: 'HTML',
                 reply_markup: getTraderSettingsInlineKeyboard(user)
             });
-            await ctx.answerCbQuery(`تم تغيير وضع التنفيذ إلى ${user.orderMode}`).catch(() => {});
+            await ctx.answerCbQuery(`تم تغيير وضع التنفيذ إلى ${user.orderMode}`).catch(() => { });
         } catch (e: any) {
             logger.error(`Error in sett_toggle_ordermode action: ${e.message}`);
         }
@@ -105,16 +107,16 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             if (!ctx.from) return;
             const user = await User.findOne({ telegramId: ctx.from.id.toString() });
             if (!user) return;
-            
+
             user.volatilitySlEnabled = !user.volatilitySlEnabled;
             await user.save();
-            
+
             const { getTraderSettingsText, getTraderSettingsInlineKeyboard } = require('../menus/settingsMenu');
             await ctx.editMessageText(getTraderSettingsText(user), {
                 parse_mode: 'HTML',
                 reply_markup: getTraderSettingsInlineKeyboard(user)
             });
-            await ctx.answerCbQuery(user.volatilitySlEnabled ? 'تم تفعيل الاستوب التلقائي 🟢' : 'تم تعطيل الاستوب التلقائي 🔴').catch(() => {});
+            await ctx.answerCbQuery(user.volatilitySlEnabled ? 'تم تفعيل الاستوب التلقائي 🟢' : 'تم تعطيل الاستوب التلقائي 🔴').catch(() => { });
         } catch (e: any) {
             logger.error(`Error in sett_toggle_volatilitysl: ${e.message}`);
         }
@@ -125,16 +127,16 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             if (!ctx.from) return;
             const user = await User.findOne({ telegramId: ctx.from.id.toString() });
             if (!user) return;
-            
+
             user.enforceMaxSlLoss = !user.enforceMaxSlLoss;
             await user.save();
-            
+
             const { getTraderSettingsText, getTraderSettingsInlineKeyboard } = require('../menus/settingsMenu');
             await ctx.editMessageText(getTraderSettingsText(user), {
                 parse_mode: 'HTML',
                 reply_markup: getTraderSettingsInlineKeyboard(user)
             });
-            await ctx.answerCbQuery(user.enforceMaxSlLoss ? 'تم تفعيل درع رأس المال 🟢' : 'تم تعطيل درع رأس المال 🔴').catch(() => {});
+            await ctx.answerCbQuery(user.enforceMaxSlLoss ? 'تم تفعيل درع رأس المال 🟢' : 'تم تعطيل درع رأس المال 🔴').catch(() => { });
         } catch (e: any) {
             logger.error(`Error in sett_toggle_capprotection: ${e.message}`);
         }
@@ -145,16 +147,16 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             if (!ctx.from) return;
             const user = await User.findOne({ telegramId: ctx.from.id.toString() });
             if (!user) return;
-            
+
             user.hitlarModeEnabled = !user.hitlarModeEnabled;
             await user.save();
-            
+
             const { getTraderSettingsText, getTraderSettingsInlineKeyboard } = require('../menus/settingsMenu');
             await ctx.editMessageText(getTraderSettingsText(user), {
                 parse_mode: 'HTML',
                 reply_markup: getTraderSettingsInlineKeyboard(user)
             });
-            await ctx.answerCbQuery(user.hitlarModeEnabled ? 'تم تفعيل وضع هترل 🟢' : 'تم تعطيل وضع هترل 🔴').catch(() => {});
+            await ctx.answerCbQuery(user.hitlarModeEnabled ? 'تم تفعيل وضع هترل 🟢' : 'تم تعطيل وضع هترل 🔴').catch(() => { });
         } catch (e: any) {
             logger.error(`Error in sett_toggle_hitlar: ${e.message}`);
         }
@@ -165,7 +167,7 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             if (!ctx.from) return;
             const user = await User.findOne({ telegramId: ctx.from.id.toString() });
             if (!user) return;
-            
+
             user.tpExecutionMode = user.tpExecutionMode === 'single' ? 'multiple' : 'single';
             if (user.tpExecutionMode === 'single') {
                 user.tpProfitSplits = [100];
@@ -173,13 +175,13 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
                 user.tpProfitSplits = [50, 50];
             }
             await user.save();
-            
+
             const { getTraderSettingsText, getTraderSettingsInlineKeyboard } = require('../menus/settingsMenu');
             await ctx.editMessageText(getTraderSettingsText(user), {
                 parse_mode: 'HTML',
                 reply_markup: getTraderSettingsInlineKeyboard(user)
             });
-            await ctx.answerCbQuery(`تم تغيير جني الأرباح إلى: ${user.tpExecutionMode === 'single' ? 'هدف واحد' : 'أهداف متعددة'}`).catch(() => {});
+            await ctx.answerCbQuery(`تم تغيير جني الأرباح إلى: ${user.tpExecutionMode === 'single' ? 'هدف واحد' : 'أهداف متعددة'}`).catch(() => { });
         } catch (e: any) {
             logger.error(`Error in sett_toggle_tpmode: ${e.message}`);
         }
@@ -190,13 +192,13 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             if (!ctx.from) return;
             const user = await User.findOne({ telegramId: ctx.from.id.toString() });
             if (!user) return;
-            
+
             const { getStrategyInlineKeyboard } = require('../menus/settingsMenu');
             await ctx.editMessageText('🎯 <b>استراتيجية الأهداف ومعالجة الأخطاء الذكية:</b>\n\nاضبط قواعد جني الأرباح الجزئي التلقائي وتأمين الصفقات:', {
                 parse_mode: 'HTML',
                 reply_markup: getStrategyInlineKeyboard(user)
             });
-            await ctx.answerCbQuery().catch(() => {});
+            await ctx.answerCbQuery().catch(() => { });
         } catch (e: any) {
             logger.error(`Error in sett_strategy_details: ${e.message}`);
         }
@@ -207,13 +209,13 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             if (!ctx.from) return;
             const user = await User.findOne({ telegramId: ctx.from.id.toString() });
             if (!user) return;
-            
+
             const { getHitlarSettingsInlineKeyboard } = require('../menus/settingsMenu');
             await ctx.editMessageText('🚀 <b>إعدادات وضع هترل (HITLAR Mode):</b>\n\nتثبيت بارامترات التداول السريعة للمركز:', {
                 parse_mode: 'HTML',
                 reply_markup: getHitlarSettingsInlineKeyboard(user)
             });
-            await ctx.answerCbQuery().catch(() => {});
+            await ctx.answerCbQuery().catch(() => { });
         } catch (e: any) {
             logger.error(`Error in sett_hitlar_details: ${e.message}`);
         }
@@ -224,12 +226,12 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             if (!ctx.from) return;
             const user = await User.findOne({ telegramId: ctx.from.id.toString() });
             if (!user) return;
-            
+
             await ctx.editMessageText('🔔 <b>إعدادات التنبيهات والتحذيرات:</b>\n\nتحكم في إشعارات ضرب الأهداف والوقف:', {
                 parse_mode: 'HTML',
                 reply_markup: buildAlertSettingsKeyboard(user)
             });
-            await ctx.answerCbQuery().catch(() => {});
+            await ctx.answerCbQuery().catch(() => { });
         } catch (e: any) {
             logger.error(`Error in sett_alerts_details: ${e.message}`);
         }
@@ -241,13 +243,13 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             if (!ctx.from) return;
             const user = await User.findOne({ telegramId: ctx.from.id.toString() });
             if (!user) return;
-            
+
             const { getPickerSettingsText, getPickerSettingsInlineKeyboard } = require('../menus/settingsMenu');
             await ctx.editMessageText(getPickerSettingsText(user), {
                 parse_mode: 'HTML',
                 reply_markup: getPickerSettingsInlineKeyboard(user)
             });
-            await ctx.answerCbQuery().catch(() => {});
+            await ctx.answerCbQuery().catch(() => { });
         } catch (e: any) {
             logger.error(`Error in sett_picker_details callback: ${e.message}`);
         }
@@ -258,7 +260,7 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             if (!ctx.from) return;
             const user = await User.findOne({ telegramId: ctx.from.id.toString() });
             if (!user) return;
-            
+
             if (!user.pickerSettings) {
                 user.pickerSettings = { engine: 'ccxt', limit: 20 };
             } else {
@@ -266,13 +268,13 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             }
             user.markModified('pickerSettings');
             await user.save();
-            
+
             const { getPickerSettingsText, getPickerSettingsInlineKeyboard } = require('../menus/settingsMenu');
             await ctx.editMessageText(getPickerSettingsText(user), {
                 parse_mode: 'HTML',
                 reply_markup: getPickerSettingsInlineKeyboard(user)
             });
-            await ctx.answerCbQuery(`تم تبديل محرك الفحص إلى: ${user.pickerSettings.engine === 'ccxt' ? 'CCXT Pro' : 'BingX'}`).catch(() => {});
+            await ctx.answerCbQuery(`تم تبديل محرك الفحص إلى: ${user.pickerSettings.engine === 'ccxt' ? 'CCXT Pro' : 'BingX'}`).catch(() => { });
         } catch (e: any) {
             logger.error(`Error in sett_toggle_picker_engine callback: ${e.message}`);
         }
@@ -283,15 +285,15 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             if (!ctx.from) return;
             const user = await User.findOne({ telegramId: ctx.from.id.toString() });
             if (!user) return;
-            
+
             const { buildNumpadKeyboard } = require('../menus/settingsMenu');
             const label = 'أقصى عدد عملات بالقائمة';
-            
+
             await ctx.editMessageText(`✏️ <b>تعديل ${label}:</b>\nاستخدم لوحة الأرقام للتعديل ثم اضغط تأكيد:`, {
                 parse_mode: 'HTML',
                 reply_markup: buildNumpadKeyboard('picker_limit', '', label)
             });
-            await ctx.answerCbQuery().catch(() => {});
+            await ctx.answerCbQuery().catch(() => { });
         } catch (e: any) {
             logger.error(`Error in sett_edit_picker_limit callback: ${e.message}`);
         }
@@ -304,12 +306,12 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             const type = ctx.match[1];
             const action = ctx.match[2];
             const val = ctx.match[3] || '';
-            
+
             const user = await User.findOne({ telegramId: ctx.from.id.toString() });
             if (!user) return;
-            
+
             const { buildNumpadKeyboard, getTraderSettingsInlineKeyboard, getTraderSettingsText } = require('../menus/settingsMenu');
-            
+
             let label = '';
             if (type === 'risk') label = 'نسبة المخاطرة (%)';
             else if (type === 'leverage') label = 'الرافعة المالية الثابتة (x)';
@@ -318,11 +320,11 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             else if (type === 'hit_lev') label = 'رافعة هترل (x)';
             else if (type === 'hit_sl') label = 'ستوب هترل (%)';
             else if (type === 'picker_limit') label = 'أقصى عدد عملات بالقائمة';
-            
+
             if (action === 'cancel') {
-                await ctx.deleteMessage().catch(() => {});
-                await ctx.answerCbQuery('تم الإلغاء ❌').catch(() => {});
-                
+                await ctx.deleteMessage().catch(() => { });
+                await ctx.answerCbQuery('تم الإلغاء ❌').catch(() => { });
+
                 if (type === 'picker_limit') {
                     const { getPickerSettingsText, getPickerSettingsInlineKeyboard } = require('../menus/settingsMenu');
                     await ctx.reply(getPickerSettingsText(user), {
@@ -337,9 +339,9 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
                 }
                 return;
             }
-            
+
             let newVal = val;
-            
+
             if (action === 'clear') {
                 newVal = '';
             } else if (action === 'back') {
@@ -351,7 +353,7 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
                 if (isNaN(num) || num <= 0) {
                     return ctx.answerCbQuery('⚠️ قيمة غير صحيحة! يرجى إدخال رقم أكبر من الصفر.', { show_alert: true });
                 }
-                
+
                 if (type === 'risk') {
                     if (num < 1 || num > 100) return ctx.answerCbQuery('⚠️ القيمة يجب أن تكون بين 1 و 100.', { show_alert: true });
                     user.riskPercentage = num;
@@ -378,18 +380,18 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
                 } else if (type.startsWith('sl_')) {
                     const symbol = type.split('_')[1];
                     const fullSymbol = `${symbol}/USDT:USDT`;
-                    
-                    const bx = new (require('../../services/BingXService').BingXService)();
-                    const positions = await bx.getPositions();
+
+                    const bx = new (require('../../services/BingXService').BingXService)(user.bingxApiKey, user.bingxSecretKey);
+                    const positions = await bx.getPositions(symbol);
                     const pos = positions.find((p: any) => p.symbol.startsWith(symbol) && parseFloat(p.contracts) > 0);
-                    
+
                     if (!pos) {
                         return ctx.answerCbQuery(`⚠️ لا توجد صفقة مفتوحة لـ ${symbol}`, { show_alert: true });
                     }
-                    
+
                     const side = pos.side.toUpperCase();
                     await bx.setStopLoss(pos.symbol, side, num);
-                    
+
                     const TradeModel = require('../../models/Trade').default;
                     const trade = await TradeModel.findOne({
                         userId: user._id,
@@ -400,17 +402,17 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
                         trade.stopLoss = num;
                         await trade.save();
                     }
-                    
-                    await ctx.deleteMessage().catch(() => {});
-                    await ctx.answerCbQuery(`✅ تم تعديل الوقف إلى ${num}`).catch(() => {});
+
+                    await ctx.deleteMessage().catch(() => { });
+                    await ctx.answerCbQuery(`✅ تم تعديل الوقف إلى ${num}`).catch(() => { });
                     await ctx.reply(`✅ تم بنجاح تعديل سعر وقف الخسارة (SL) لعملة <b>${symbol}</b> إلى <b>${num}</b>.`, { parse_mode: 'HTML' });
                     return;
                 }
-                
+
                 await user.save();
-                await ctx.deleteMessage().catch(() => {});
-                await ctx.answerCbQuery('✅ تم حفظ القيمة بنجاح').catch(() => {});
-                
+                await ctx.deleteMessage().catch(() => { });
+                await ctx.answerCbQuery('✅ تم حفظ القيمة بنجاح').catch(() => { });
+
                 if (type === 'picker_limit') {
                     const { getPickerSettingsText, getPickerSettingsInlineKeyboard } = require('../menus/settingsMenu');
                     await ctx.reply(getPickerSettingsText(user), {
@@ -428,12 +430,12 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
                 if (val === '0') newVal = action;
                 else newVal = val + action;
             }
-            
+
             await ctx.editMessageText(`✏️ <b>تعديل ${label}:</b>\nاستخدم لوحة الأرقام للتعديل ثم اضغط تأكيد:`, {
                 parse_mode: 'HTML',
                 reply_markup: buildNumpadKeyboard(type, newVal, label)
             });
-            await ctx.answerCbQuery().catch(() => {});
+            await ctx.answerCbQuery().catch(() => { });
         } catch (e: any) {
             logger.error(`Error in np numpad action: ${e.message}`);
         }
@@ -1232,7 +1234,7 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
 
         const user = await User.findOne({ telegramId: ctx.from.id.toString() });
         if (!user) return;
-        
+
         // Ensure bs object exists
         if (!user.backtestSettings) {
             user.backtestSettings = {
@@ -1268,12 +1270,12 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             user.backtestSettings.riskSizingEnabled = !user.backtestSettings.riskSizingEnabled;
             await user.save();
         }
-        
+
         if (data === 'bts_toggle_maxslcap') {
             user.backtestSettings.maxSlCapEnabled = !user.backtestSettings.maxSlCapEnabled;
             await user.save();
         }
-        
+
         if (data === 'bts_toggle_fullreport') {
             user.backtestSettings.fullReportEnabled = !user.backtestSettings.fullReportEnabled;
             await user.save();
@@ -1340,7 +1342,7 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
                 reply_markup: getBacktestSettingsKeyboard(user)
             });
         } catch (e) { }
-        
+
         if (!['bts_set_interval', 'bts_cancel'].includes(data) && !data.startsWith('bts_val_')) {
             await ctx.answerCbQuery('✅ تم التحديث').catch(() => { });
         } else if (data.startsWith('bts_val_')) {

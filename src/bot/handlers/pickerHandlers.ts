@@ -81,7 +81,7 @@ export function registerPickerHandlers(bot: Telegraf, bingx: BingXService) {
         // عرض رسالة "جاري الفحص"
         try {
             const descText = engineType === 'ccxt'
-                ? `⏳ *جاري فحص السوق (CCXT Pro)...*\nنقوم بتحليل السيولة وSMC والتقلب لأهم العملات على Bybit Swap.\n_يستغرق ذلك 15-25 ثانية..._`
+                ? `⏳ *جاري فحص السوق (CCXT Pro)...*\nنقوم بتحليل السيولة وSMC والتقلب لأهم عملات العقود الآجلة.\n_يستغرق ذلك 15-25 ثانية..._`
                 : `⏳ *جاري فحص السوق...*\nنقوم بتحليل ~50 عملة وترتيبها حسب الجاهزية للتداول.\n_يستغرق ذلك 15-30 ثانية..._`;
             await ctx.editMessageText(
                 descText,

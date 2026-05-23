@@ -184,7 +184,7 @@ export const getHitlarSettingsInlineKeyboard = (user: any): InlineKeyboardMarkup
  */
 export const getPickerSettingsInlineKeyboard = (user: any): InlineKeyboardMarkup => {
     const settings = user.pickerSettings || { engine: 'multicriteria', limit: 20 };
-    const engineLabel = settings.engine === 'ccxt' ? '🏆 CCXT Pro (Bybit)' : '📊 BingX Multi-criteria';
+    const engineLabel = settings.engine === 'ccxt' ? '🏆 CCXT Pro' : '📊 BingX Multi-criteria';
     
     return {
         inline_keyboard: [
@@ -207,7 +207,7 @@ export const getPickerSettingsInlineKeyboard = (user: any): InlineKeyboardMarkup
 export const getPickerSettingsText = (user: any): string => {
     const settings = user.pickerSettings || { engine: 'multicriteria', limit: 20 };
     const engineDesc = settings.engine === 'ccxt' 
-        ? '<b>🏆 CCXT Professional:</b> محرك فحص متقدم يبحث في سيولة Bybit ويحسب يدوياً SMC (هيكل السوق اليومي والـ 4H) والتقلب ATR وضخ السيولة الاستثنائي.'
+        ? '<b>🏆 CCXT Professional:</b> محرك فحص متقدم يبحث في السيولة العالمية ويحسب يدوياً SMC (هيكل السوق اليومي والـ 4H) والتقلب ATR وضخ السيولة الاستثنائي.'
         : '<b>📊 BingX Multi-criteria:</b> محرك فحص مرن يجمع مؤشرات متعددة (Volume, RSI, MACD, Trend, ATR, Proximity) على BingX.';
 
     return `🔍 <b>لوحة إعدادات فحص السوق وتحديد العملات | Picker Settings</b>\n\n` +
