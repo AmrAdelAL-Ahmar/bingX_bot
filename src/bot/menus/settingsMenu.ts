@@ -37,6 +37,9 @@ export const getTraderSettingsInlineKeyboard = (user: any): InlineKeyboardMarkup
                 { text: '🔔 إعدادات تنبيهات الأهداف والستوب', callback_data: 'sett_alerts_details' }
             ],
             [
+                { text: '🔍 إعدادات فحص السوق والعملات', callback_data: 'sett_picker_details' }
+            ],
+            [
                 { text: '🔙 العودة للقائمة الرئيسية', callback_data: 'menu_open' }
             ]
         ]
@@ -175,3 +178,43 @@ export const getHitlarSettingsInlineKeyboard = (user: any): InlineKeyboardMarkup
         ]
     };
 };
+
+/**
+ * يولّد واجهة إعدادات فحص السوق (Picker Settings Inline Keyboard)
+ */
+export const getPickerSettingsInlineKeyboard = (user: any): InlineKeyboardMarkup => {
+    const settings = user.pickerSettings || { engine: 'multicriteria', limit: 20 };
+    const engineLabel = settings.engine === 'ccxt' ? '🏆 CCXT Pro (Bybit)' : '📊 BingX Multi-criteria';
+    
+    return {
+        inline_keyboard: [
+            [
+                { text: `⚙️ المحرك الفعال: ${engineLabel}`, callback_data: 'sett_toggle_picker_engine' }
+            ],
+            [
+                { text: `🎯 أقصى عدد عملات بالقائمة: ${settings.limit}`, callback_data: 'sett_edit_picker_limit' }
+            ],
+            [
+                { text: '🔙 العودة للإعدادات الرئيسية', callback_data: 'menu_settings' }
+            ]
+        ]
+    };
+};
+
+/**
+ * يولّد نص لوحة تحكم إعدادات فحص السوق
+ */
+export const getPickerSettingsText = (user: any): string => {
+    const settings = user.pickerSettings || { engine: 'multicriteria', limit: 20 };
+    const engineDesc = settings.engine === 'ccxt' 
+        ? '<b>🏆 CCXT Professional:</b> محرك فحص متقدم يبحث في سيولة Bybit ويحسب يدوياً SMC (هيكل السوق اليومي والـ 4H) والتقلب ATR وضخ السيولة الاستثنائي.'
+        : '<b>📊 BingX Multi-criteria:</b> محرك فحص مرن يجمع مؤشرات متعددة (Volume, RSI, MACD, Trend, ATR, Proximity) على BingX.';
+
+    return `🔍 <b>لوحة إعدادات فحص السوق وتحديد العملات | Picker Settings</b>\n\n` +
+        `من هنا يمكنك اختيار المحرك الذكي المفضل للبحث في الأسواق لحظياً وترشيح أفضل العملات المناسبة للتحليل أو الاقتناص:\n\n` +
+        `• <b>⚙️ المحرك الفعال:</b>\n` +
+        `  ${engineDesc}\n\n` +
+        `• <b>🎯 عدد عملات القائمة:</b> ترشيح وترتيب أفضل <b>${settings.limit}</b> عملة فقط في القائمة لتسريع التداول الفوري ومنع التشتيت.\n\n` +
+        `<i>ℹ️ اضغط على الأزرار التفاعلية أدناه للتعديل الفوري.</i>`;
+};
+

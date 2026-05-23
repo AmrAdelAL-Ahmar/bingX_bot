@@ -8,6 +8,8 @@ import { POPULAR_PAIRS } from '../keyboards/sniperKeyboards';
 import { TradeManager } from '../../services/TradeManager';
 import TradeRadar from '../../models/TradeRadar';
 import Trade from '../../models/Trade';
+import { BingXService } from '../../services/BingXService';
+import { showPickerForSniper } from './pickerHandlers';
 import {
     getSniperMainKeyboard,
     getSniperSymbolKeyboard,
@@ -99,6 +101,11 @@ function generateSniperCSVBuffer(trades: any[]): Buffer {
 // ─── registerSniperHandlers ────────────────────────────────────────────────────
 
 export function registerSniperHandlers(bot: Telegraf, sniperManager: SniperManager) {
+    // BingXService مشترك عبر Singleton مع pickerHandlers
+    const bingxService = new BingXService(
+        process.env.BINGX_API_KEY,
+        process.env.BINGX_SECRET_KEY
+    );
 
     // ── فتح لوحة الاقتناص الرئيسية ────────────────────────────────────────────
     bot.action('snp_open', async (ctx) => {
@@ -143,26 +150,17 @@ export function registerSniperHandlers(bot: Telegraf, sniperManager: SniperManag
         await ctx.answerCbQuery().catch(() => {});
     });
 
-    // ── اختيار المحرك → عرض لوحة اختيار العملة ────────────────────────────────
+    // ── اختيار المحرك → عرض قائمة أفضل العملات (مع خيار يدوي) ───────────────
     bot.action(/^snp_sel_eng_(instant|add|backtest)_(.+)$/, async (ctx) => {
         const actionType = ctx.match[1];
         const engineId = ctx.match[2];
         const engine = getSniperEngine(engineId);
         if (!engine) return ctx.answerCbQuery('محرك غير موجود').catch(() => {});
 
-        let titleText = '';
-        if (actionType === 'instant') titleText = '📊 تقرير اقتناص لحظي';
-        else if (actionType === 'add') titleText = '➕ إضافة اقتناص جديد';
-        else titleText = '🧪 الاختبار الرجعي لقناص الصفقات';
-
-        const callbackPrefix = `snp_sel_sym_${actionType}_${engineId}`;
-        const backCallback = actionType === 'instant' ? 'snp_instant' : (actionType === 'add' ? 'snp_add_new' : 'snp_backtest');
-
-        await ctx.editMessageText(
-            `🎯 *${titleText}*\nالمحرك: ${engine.displayName}\n\nاختر العملة للمراقبة:`,
-            { parse_mode: 'Markdown', reply_markup: getSniperSymbolKeyboard(callbackPrefix, backCallback) }
-        );
         await ctx.answerCbQuery().catch(() => {});
+
+        // ── عرض قائمة أفضل العملات (أو رسالة "لم يتم الفحص") ──
+        await showPickerForSniper(ctx, actionType, engineId, bingxService, true);
     });
 
     // ── اختيار العملة بعد اختيار المحرك ──────────────────────────────────────
@@ -604,16 +602,26 @@ export function registerSniperHandlers(bot: Telegraf, sniperManager: SniperManag
             }
 
             const symbolShort = symbol.split('/')[0] || symbol;
-            const tpText = report.tp2 ? `TARGET 1: ${report.tp}\nTARGET 2: ${report.tp2}` : `TARGET 1: ${report.tp}`;
-            const dirEmoji = report.direction === 'LONG' ? '🟢' : '🔴';
+            const finalSymbol = symbol.includes('/') ? symbol : `${symbolShort}/USDT:USDT`;
+            
+            const user = await User.findOne({ telegramId });
+            const levVal = user && user.leverageMode === 'fixed' ? user.fixedLeverageValue : 10;
 
-            const copyBox = 
-`#${symbolShort}
-Direction: ${report.direction} ${dirEmoji}
-Entry Price: ${report.entry}
-Stop Loss: ${report.sl}
-${tpText}
-Leverage: 10x`;
+            const dirEmoji = report.direction === 'LONG' ? '🔼' : '🔻';
+            const targetsText = report.tp2 ? `${report.tp}\n${report.tp2}` : `${report.tp}`;
+
+            const copyBox = `${finalSymbol}
+
+${dirEmoji}${report.direction}  X${levVal}  
+
+▶️ENTER PRICE(سعر الدخول):
+${report.entry}
+
+▶️TARGET  PRICES(الاهداف):
+${targetsText}
+
+▶️STOP LOSE(الاستوب)
+${report.sl}`;
 
             await ctx.reply(
                 `📝 *إليك بيانات الصفقة جاهزة للنسخ بنقرة واحدة:*\n` +

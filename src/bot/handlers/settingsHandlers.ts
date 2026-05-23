@@ -235,6 +235,68 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
         }
     });
 
+    // ─── PICKER / SCANNER SETTINGS CALLBACKS ──────────────────────────────────
+    bot.action('sett_picker_details', async (ctx) => {
+        try {
+            if (!ctx.from) return;
+            const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+            if (!user) return;
+            
+            const { getPickerSettingsText, getPickerSettingsInlineKeyboard } = require('../menus/settingsMenu');
+            await ctx.editMessageText(getPickerSettingsText(user), {
+                parse_mode: 'HTML',
+                reply_markup: getPickerSettingsInlineKeyboard(user)
+            });
+            await ctx.answerCbQuery().catch(() => {});
+        } catch (e: any) {
+            logger.error(`Error in sett_picker_details callback: ${e.message}`);
+        }
+    });
+
+    bot.action('sett_toggle_picker_engine', async (ctx) => {
+        try {
+            if (!ctx.from) return;
+            const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+            if (!user) return;
+            
+            if (!user.pickerSettings) {
+                user.pickerSettings = { engine: 'ccxt', limit: 20 };
+            } else {
+                user.pickerSettings.engine = user.pickerSettings.engine === 'ccxt' ? 'multicriteria' : 'ccxt';
+            }
+            user.markModified('pickerSettings');
+            await user.save();
+            
+            const { getPickerSettingsText, getPickerSettingsInlineKeyboard } = require('../menus/settingsMenu');
+            await ctx.editMessageText(getPickerSettingsText(user), {
+                parse_mode: 'HTML',
+                reply_markup: getPickerSettingsInlineKeyboard(user)
+            });
+            await ctx.answerCbQuery(`تم تبديل محرك الفحص إلى: ${user.pickerSettings.engine === 'ccxt' ? 'CCXT Pro' : 'BingX'}`).catch(() => {});
+        } catch (e: any) {
+            logger.error(`Error in sett_toggle_picker_engine callback: ${e.message}`);
+        }
+    });
+
+    bot.action('sett_edit_picker_limit', async (ctx) => {
+        try {
+            if (!ctx.from) return;
+            const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+            if (!user) return;
+            
+            const { buildNumpadKeyboard } = require('../menus/settingsMenu');
+            const label = 'أقصى عدد عملات بالقائمة';
+            
+            await ctx.editMessageText(`✏️ <b>تعديل ${label}:</b>\nاستخدم لوحة الأرقام للتعديل ثم اضغط تأكيد:`, {
+                parse_mode: 'HTML',
+                reply_markup: buildNumpadKeyboard('picker_limit', '', label)
+            });
+            await ctx.answerCbQuery().catch(() => {});
+        } catch (e: any) {
+            logger.error(`Error in sett_edit_picker_limit callback: ${e.message}`);
+        }
+    });
+
     // --- INTERACTIVE NUMPAD ACTIONS (STATELESS) ---
     bot.action(/^np_([a-zA-Z0-9_]+)_([a-zA-Z0-9_]+)_(.*)$/, async (ctx) => {
         try {
@@ -255,12 +317,19 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             else if (type === 'hit_risk') label = 'نسبة دخول هترل (%)';
             else if (type === 'hit_lev') label = 'رافعة هترل (x)';
             else if (type === 'hit_sl') label = 'ستوب هترل (%)';
+            else if (type === 'picker_limit') label = 'أقصى عدد عملات بالقائمة';
             
             if (action === 'cancel') {
                 await ctx.deleteMessage().catch(() => {});
                 await ctx.answerCbQuery('تم الإلغاء ❌').catch(() => {});
                 
-                if (!type.startsWith('sl_')) {
+                if (type === 'picker_limit') {
+                    const { getPickerSettingsText, getPickerSettingsInlineKeyboard } = require('../menus/settingsMenu');
+                    await ctx.reply(getPickerSettingsText(user), {
+                        parse_mode: 'HTML',
+                        reply_markup: getPickerSettingsInlineKeyboard(user)
+                    });
+                } else if (!type.startsWith('sl_')) {
                     await ctx.reply(getTraderSettingsText(user), {
                         parse_mode: 'HTML',
                         reply_markup: getTraderSettingsInlineKeyboard(user)
@@ -299,6 +368,13 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
                 } else if (type === 'hit_sl') {
                     if (num < 1 || num > 50) return ctx.answerCbQuery('⚠️ القيمة يجب أن تكون بين 1 و 50.', { show_alert: true });
                     user.hitlarSettings.volatilitySlPercentage = num;
+                } else if (type === 'picker_limit') {
+                    if (num < 1 || num > 50) return ctx.answerCbQuery('⚠️ يجب أن يكون العدد بين 1 و 50.', { show_alert: true });
+                    if (!user.pickerSettings) {
+                        user.pickerSettings = { engine: 'multicriteria', limit: 20 };
+                    }
+                    user.pickerSettings.limit = Math.round(num);
+                    user.markModified('pickerSettings');
                 } else if (type.startsWith('sl_')) {
                     const symbol = type.split('_')[1];
                     const fullSymbol = `${symbol}/USDT:USDT`;
@@ -335,10 +411,18 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
                 await ctx.deleteMessage().catch(() => {});
                 await ctx.answerCbQuery('✅ تم حفظ القيمة بنجاح').catch(() => {});
                 
-                await ctx.reply(getTraderSettingsText(user), {
-                    parse_mode: 'HTML',
-                    reply_markup: getTraderSettingsInlineKeyboard(user)
-                });
+                if (type === 'picker_limit') {
+                    const { getPickerSettingsText, getPickerSettingsInlineKeyboard } = require('../menus/settingsMenu');
+                    await ctx.reply(getPickerSettingsText(user), {
+                        parse_mode: 'HTML',
+                        reply_markup: getPickerSettingsInlineKeyboard(user)
+                    });
+                } else {
+                    await ctx.reply(getTraderSettingsText(user), {
+                        parse_mode: 'HTML',
+                        reply_markup: getTraderSettingsInlineKeyboard(user)
+                    });
+                }
                 return;
             } else {
                 if (val === '0') newVal = action;

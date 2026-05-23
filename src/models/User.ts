@@ -68,6 +68,10 @@ export interface IUser extends Document {
         trailingEnabled: boolean;
         notifyOnce: boolean;
     };
+    pickerSettings?: {
+        engine: 'multicriteria' | 'ccxt';
+        limit: number;
+    };
 }
 
 const UserSchema: Schema = new Schema({
@@ -137,6 +141,10 @@ const UserSchema: Schema = new Schema({
         maxSlCapEnabled: { type: Boolean, default: false },
         maxSlPercentage: { type: Number, default: 5 },
         fullReportEnabled: { type: Boolean, default: false }
+    },
+    pickerSettings: {
+        engine: { type: String, enum: ['multicriteria', 'ccxt'], default: 'multicriteria' },
+        limit: { type: Number, default: 20 }
     }
 });
 

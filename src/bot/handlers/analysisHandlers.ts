@@ -23,11 +23,13 @@ import { BingXService } from '../../services/BingXService';
 import { BacktestService } from '../../services/BacktestService';
 import { TradeManager } from '../../services/TradeManager';
 import { generateCSVBuffer } from './messageHandlers';
+import { showPickerForAnalysis } from './pickerHandlers';
 
 export const registerAnalysisHandlers = (bot: Telegraf, tradeManager: TradeManager) => {
     const bingxService = new BingXService();
     const analysisService = new AnalysisService(bingxService);
     const backtestService = new BacktestService(bingxService, analysisService);
+    // bingxService مشترك مع pickerHandlers عبر Singleton
 
     // --- CALLBACK HANDLERS FOR ANALYSIS ACTIONS ---
     bot.action(/^cp_(sc|sw)_(.+)$/, async (ctx) => {
@@ -356,28 +358,22 @@ export const registerAnalysisHandlers = (bot: Telegraf, tradeManager: TradeManag
     });
 
     const algos = [
-        { text: 'الخوارزمية V1 (الأساسي)', state: 'AWAITING_ANALYSIS_SYMBOL_V1', prompt: 'يرجى إرسال رمز العملة للتحليل باستخدام V1 (مثال: BTC):' },
-        { text: 'الخوارزمية V2 (الكمي - Quant)', state: 'AWAITING_ANALYSIS_SYMBOL_V2', prompt: 'يرجى إرسال رمز العملة للتحليل باستخدام V2 (مثال: BTC):' },
-        { text: 'الخوارزمية V3 (المصفوفة)', state: 'AWAITING_ANALYSIS_SYMBOL_V3', prompt: 'يرجى إرسال رمز العملة للتحليل باستخدام V3 (مثال: BTC):' },
-        { text: 'الخوارزمية V4 (ثنائي الاتجاه)', state: 'AWAITING_ANALYSIS_SYMBOL_V4', prompt: 'يرجى إرسال رمز العملة للتحليل باستخدام V4 (مثال: BTC):' },
-        { text: 'الخوارزمية V5 (تنبؤي AI) 🔮', state: 'AWAITING_ANALYSIS_SYMBOL_V5', prompt: 'يرجى إرسال رمز العملة للتحليل باستخدام V5 (التنبؤي) (مثال: BTC):' },
-        { text: 'الخوارزمية V6 (Sniper) 🎯', state: 'AWAITING_ANALYSIS_SYMBOL_V6', prompt: 'يرجى إرسال رمز العملة للتحليل باستخدام V6 (Sniper) 🎯 (مثال: BTC):' },
-        { text: 'الخوارزمية V7 (القناص الهجيني) 🏹', state: 'AWAITING_ANALYSIS_SYMBOL_V7', prompt: 'يرجى إرسال رمز العملة للتحليل باستخدام V7 (القناص الهجيني) 🏹 (مثال: BTC):' },
-        { text: 'الخوارزمية V10 (المؤسساتي المتقدم) 🏆', state: 'AWAITING_ANALYSIS_SYMBOL_V10', prompt: 'يرجى إرسال رمز العملة للتحليل باستخدام V10 (المؤسساتي المتقدم) 🏆 (مثال: BTC):' },
-        { text: 'الخوارزمية V11 (القرار الذكي التكيفي) 👑', state: 'AWAITING_ANALYSIS_SYMBOL_V11', prompt: 'يرجى إرسال رمز العملة للتحليل باستخدام V11 (القرار الذكي التكيفي) 👑 (مثال: BTC):' }
+        { text: 'الخوارزمية V1 (الأساسي)', version: 'V1' },
+        { text: 'الخوارزمية V2 (الكمي - Quant)', version: 'V2' },
+        { text: 'الخوارزمية V3 (المصفوفة)', version: 'V3' },
+        { text: 'الخوارزمية V4 (ثنائي الاتجاه)', version: 'V4' },
+        { text: 'الخوارزمية V5 (تنبؤي AI) 🔮', version: 'V5' },
+        { text: 'الخوارزمية V6 (Sniper) 🎯', version: 'V6' },
+        { text: 'الخوارزمية V7 (القناص الهجيني) 🏹', version: 'V7' },
+        { text: 'الخوارزمية V10 (المؤسساتي المتقدم) 🏆', version: 'V10' },
+        { text: 'الخوارزمية V11 (القرار الذكي التكيفي) 👑', version: 'V11' }
     ];
 
     for (const algo of algos) {
         bot.hears(algo.text, async (ctx) => {
             try {
-                const user = await User.findOne({ telegramId: ctx.from!.id.toString() });
-                if (user) {
-                    user.botState = algo.state;
-                    await user.save();
-                }
-                return ctx.reply(algo.prompt, {
-                    reply_markup: { keyboard: [[{ text: 'إلغاء ❌' }]], resize_keyboard: true }
-                });
+                // ── عرض قائمة أفضل العملات (أو رسالة الفحص) بدلاً من طلب نص مباشرة ──
+                await showPickerForAnalysis(ctx, algo.version, bingxService, false);
             } catch (error) {
                 logger.error(`Error in hears ${algo.text}:`, error);
             }

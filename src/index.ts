@@ -21,6 +21,7 @@ import { registerSettingsHandlers } from './bot/handlers/settingsHandlers';
 import { registerSniperHandlers } from './bot/handlers/sniperHandlers';
 import { registerRadarHandlers } from './bot/handlers/radarHandlers';
 import { registerAnalysisHandlers } from './bot/handlers/analysisHandlers';
+import { registerPickerHandlers } from './bot/handlers/pickerHandlers';
 import { SniperManager } from './services/SniperManager';
 
 dotenv.config();
@@ -68,6 +69,7 @@ registerReportHandlers(bot, bingXService);
 registerTradingHandlers(bot, bingXService);
 registerSettingsHandlers(bot);
 (bot as any).sniperManager = sniperManager;
+registerPickerHandlers(bot, bingXService);      // ← محرك اختيار العملات
 registerSniperHandlers(bot, sniperManager);
 registerRadarHandlers(bot);
 registerAnalysisHandlers(bot, tradeManager);
