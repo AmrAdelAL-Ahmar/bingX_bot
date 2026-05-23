@@ -7,7 +7,7 @@ export class CcxtPickerEngine {
     private exchange: ccxt.Exchange;
 
     constructor() {
-        this.exchange = new ccxt.bybit({
+        this.exchange = new ccxt.bingx({
             enableRateLimit: true,
             options: { 'defaultType': 'swap' }
         });
@@ -18,17 +18,17 @@ export class CcxtPickerEngine {
      */
     async run(limit: number = 20, onProgress?: (done: number, total: number) => void): Promise<PickerResult[]> {
         try {
-            logger.info('🔄 [CcxtPickerEngine] Loading markets and fetching tickers from Bybit...');
+            logger.info('🔄 [CcxtPickerEngine] Loading markets and fetching tickers from bingx...');
             await this.exchange.loadMarkets();
             const allTickers = await this.exchange.fetchTickers();
 
             // Filter for USDT perpetual contracts
-            const symbols = Object.keys(allTickers).filter(symbol => 
+            const symbols = Object.keys(allTickers).filter(symbol =>
                 symbol.endsWith('/USDT:USDT') || (symbol.endsWith('USDT') && !symbol.includes('/'))
             );
 
             if (symbols.length === 0) {
-                logger.warn('[CcxtPickerEngine] No USDT perpetual symbols found on Bybit');
+                logger.warn('[CcxtPickerEngine] No USDT perpetual symbols found on bingx');
                 return [];
             }
 
@@ -129,8 +129,8 @@ export class CcxtPickerEngine {
                             // Calculate RSI from 4H candles to show in UI
                             const rsi4h = this.calculateRSI(ohlcv4H, 14);
 
-                            const trendLabel = structureResult.trend1D === 'BULLISH' && structureResult.trend4H === 'BULLISH' 
-                                ? 'صاعد 📈' 
+                            const trendLabel = structureResult.trend1D === 'BULLISH' && structureResult.trend4H === 'BULLISH'
+                                ? 'صاعد 📈'
                                 : 'هابط 📉';
 
                             const reasonLabel = `SMC: ${structureResult.trend1D}/${structureResult.trend4H} | ATR: ${atrPercentage.toFixed(1)}%${fundamentalScore > 10 ? ' | ⚡ Volume Pump' : ''}`;
@@ -157,7 +157,7 @@ export class CcxtPickerEngine {
                 done += batch.length;
                 onProgress?.(Math.min(done, total), total);
 
-                // Small delay to avoid hitting Bybit rate limits
+                // Small delay to avoid hitting bingx rate limits
                 if (i + BATCH_SIZE < targetSymbols.length) {
                     await new Promise(r => setTimeout(r, 200));
                 }
@@ -203,7 +203,7 @@ export class CcxtPickerEngine {
     private calculateRSI(ohlcv: any[], period = 14): number {
         if (ohlcv.length < period + 1) return 50;
         const closes = ohlcv.map(c => c[4]);
-        
+
         let gains = 0;
         let losses = 0;
         for (let i = 1; i <= period; i++) {
