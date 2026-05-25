@@ -1,144 +1,115 @@
-# 🗄️ User.ts — نموذج بيانات المستخدم
+# 🗄️ User.ts — نموذج بيانات المستخدم وإعداداته الفنية
 
 > **الموقع:** `src/models/User.ts`  
-> **الدور:** يعرّف هيكل بيانات المستخدم في MongoDB. يحتوي على كل إعدادات التداول الخاصة بكل مستخدم.
+> **الدور:** تحديد هيكل بيانات مستخدم البوت في MongoDB لتخزين تفضيلات التداول وإدارة المخاطر وإعدادات تشغيل خدمات الخلفية والمحركات الفردية.
 
 ---
 
 ## 📋 جميع حقول الـ Schema
 
-### 🔑 الحقول الأساسية
+### 🔑 الحقول الأساسية وجلسة البوت
 
 | الحقل | النوع | الافتراضي | الوصف |
-|-------|-------|----------|-------|
-| `telegramId` | String | — (مطلوب) | معرّف المستخدم في Telegram، مفتاح فريد |
-| `username` | String | — | اسم المستخدم في Telegram |
-| `bingxApiKey` | String | — | مفتاح API لمنصة BingX |
-| `bingxSecretKey` | String | — | المفتاح السري لمنصة BingX |
-| `isActive` | Boolean | `true` | هل الحساب نشط؟ |
-| `createdAt` | Date | `Date.now` | تاريخ إنشاء الحساب |
-| `botState` | String | `null` | حالة المحادثة (للـ State Machine) |
+| :--- | :--- | :--- | :--- |
+| **`telegramId`** | String | — (مطلوب) | معرف المستخدم في Telegram، وهو حقل فريد كـ Index. |
+| **`username`** | String | — | اسم المستخدم في Telegram. |
+| **`bingxApiKey`** | String | — | مفتاح API لمنصة BingX. |
+| **`bingxSecretKey`** | String | — | المفتاح السري لمنصة BingX. |
+| **`isActive`** | Boolean | `true` | حالة الحساب (نشط / معطل). |
+| **`createdAt`** | Date | `Date.now` | تاريخ تسجيل الحساب. |
+| **`botState`** | String | `null` | حالة البوت الحالية لإدارة آلة الحالات (State Machine). |
 
 ---
 
-### ⚠️ إعدادات التحذيرات
+### 💰 إعدادات إدارة رأس المال والرافعة
 
 | الحقل | النوع | الافتراضي | الوصف |
-|-------|-------|----------|-------|
-| `slWarningEnabled` | Boolean | `true` | تفعيل تحذير اقتراب SL |
-| `tpWarningEnabled` | Boolean | `true` | تفعيل تحذير اقتراب TP |
-| `tpWarningThresholds` | Number[] | `[70, 90]` | نسب التقدم التي تُرسل عندها تحذيرات |
-
-**مثال:** `tpWarningThresholds: [70, 90]` → تنبيه عند 70% و 90% من المسافة نحو الهدف.
+| :--- | :--- | :--- | :--- |
+| **`riskPercentage`** | Number | `3` | نسبة المخاطرة المخصصة لكل صفقة (مثلاً 3% من الرصيد). |
+| **`maxSlRiskPercentage`** | Number | `6` | درع حماية رأس المال (الحد الأقصى المسموح بخسارته عند الـ SL). |
+| **`enforceMaxSlLoss`** | Boolean | `null` | تشغيل/إيقاف تفعيل درع رأس المال الصارم. |
+| **`leverageMode`** | String | `'default'` | تحديد الرافعة (`default` لاتباع إشارات التحليل أو `fixed` لتثبيتها). |
+| **`fixedLeverageValue`** | Number | `10` | قيمة الرافعة المالية الثابتة (في حال تفعيل Fixed). |
 
 ---
 
-### 💰 إعدادات إدارة رأس المال
+### ⚙️ إعدادات التنفيذ والاستراتيجيات
 
 | الحقل | النوع | الافتراضي | الوصف |
-|-------|-------|----------|-------|
-| `riskPercentage` | Number | `3` | نسبة الهامش المستخدم لكل صفقة (3% = 3% من الرصيد) |
-| `maxSlRiskPercentage` | Number | `6` | أقصى خسارة مسموح بها من SL (6% من الرصيد) |
-| `enforceMaxSlLoss` | Boolean | `null` | تطبيق حد أقصى لخسارة SL؟ |
+| :--- | :--- | :--- | :--- |
+| **`orderMode`** | String | `'market'` | طريقة فتح الأمر (`market` لأمر السوق الفوري أو `limit` للأمر الحدي). |
+| **`tpExecutionMode`** | String | `'multiple'` | طريقة جني الأرباح (`single` للهدف الأول فقط أو `multiple` للأهداف كاملة). |
+| **`autoBreakEven`** | Boolean | `true` | نقل وقف الخسارة إلى سعر الدخول تلقائياً فور ضرب الهدف الأول TP1. |
+| **`tpSplitMode`** | String | `'auto'` | تقسيم الأرباح (`auto` بالتساوي بين الأهداف أو `manual` للمخصص). |
+| **`tpProfitSplits`** | Number[] | `[50, 50]` | نسب تقسيم كميات العقود على الأهداف في الوضع اليدوي. |
+| **`errorMitigationEnabled`** | Boolean | `true` | تفعيل المعالجة التلقائية لأخطاء البورصة (مثل تعديل الهامش والرافعة). |
 
 ---
 
-### ⚙️ إعدادات تنفيذ الأوامر
+### 📉 إعدادات وقف الخسارة المتغير (Volatility SL)
 
 | الحقل | النوع | الافتراضي | الوصف |
-|-------|-------|----------|-------|
-| `orderMode` | `'market'|'limit'` | `'market'` | وضع تنفيذ الأوامر |
-| `leverageMode` | `'default'|'fixed'` | `'default'` | طريقة تحديد الرافعة |
-| `fixedLeverageValue` | Number | `10` | قيمة الرافعة الثابتة (إذا fixed) |
-| `errorMitigationEnabled` | Boolean | `true` | تفعيل التصحيح التلقائي للأخطاء (SL/TP مفقود) |
+| :--- | :--- | :--- | :--- |
+| **`volatilitySlEnabled`** | Boolean | `false` | تفعيل وقف الخسارة النسبي القائم على النسبة المئوية. |
+| **`volatilitySlPercentage`** | Number | `5` | نسبة وقف الخسارة من سعر الدخول (مثلاً 5%). |
 
 ---
 
-### 📉 إعدادات وقف الخسارة المتحرك
+### 🐋 إعدادات القناص والاصطياد (`sniperSettings`)
 
-| الحقل | النوع | الافتراضي | الوصف |
-|-------|-------|----------|-------|
-| `volatilitySlEnabled` | Boolean | `false` | تفعيل SL النسبي (Volatility-based) |
-| `volatilitySlPercentage` | Number | `5` | نسبة SL من سعر الدخول (مثلاً 5% = SL بعد 5% من Entry) |
-
-**المعادلة:**
-```
-LONG:  SL = entryPrice × (1 - volatilitySlPercentage / 100)
-SHORT: SL = entryPrice × (1 + volatilitySlPercentage / 100)
-```
-
----
-
-### 💥 وضع HITLAR
-
+إعدادات افتراضية مخصصة لعمليات الاقتناص:
 ```typescript
-hitlarModeEnabled: boolean           // default: false
+sniperSettings: {
+    autoExecute: boolean; // default: false (تفعيل الصفقات تلقائياً فور اكتمال زناد القناص)
+    notifyOnce: boolean;  // default: false (إرسال إشعار واحد فقط عند تحقق الشروط)
+}
+```
+
+---
+
+### 👁️ إعدادات رادار الحماية ومراقبة المراكز (`radarSettings`)
+
+إعدادات الحماية الحية للمراكز النشطة:
+```typescript
+radarSettings: {
+    wickSweepAlert: boolean;  // default: true  (تنبيه كشط سيولة الوقف بالذيل)
+    reversalAlert: boolean;   // default: true  (تنبيه خطر الانعكاس الفني المبكر)
+    trailingEnabled: boolean; // default: false (تفعيل تحريك وقف الخسارة لتأمين الأرباح)
+    notifyOnce: boolean;      // default: true  (تنبيه لمرة واحدة فقط لكل نوع حدث)
+}
+```
+
+---
+
+### 🔍 إعدادات فرز وتصفية السوق (`pickerSettings`)
+
+تفضيلات خدمة مسح الأسواق وتحديد العملات:
+```typescript
+pickerSettings: {
+    engine: 'multicriteria' | 'ccxt'; // default: 'multicriteria' (نوع محرك الفرز المعتمد)
+    limit: number;                    // default: 20 (الحد الأقصى للعملات في قائمة الترشيحات)
+}
+```
+
+---
+
+### 💥 إعدادات وضع هترل العدواني (`hitlarSettings`)
+
+إعدادات تداول سريعة ومثبتة مسبقاً بدلاً من إعدادات المستخدم العادية:
+```typescript
+hitlarModeEnabled: boolean; // default: false (تشغيل/إيقاف الوضع بالكامل)
 hitlarSettings: {
-    riskPercentage: number,          // default: 3
-    leverage: number,                // default: 20
-    volatilitySlPercentage: number,  // default: 5
-    capitalProtectionEnabled: boolean, // default: false
-    orderMode: 'limit' | 'market'   // default: 'limit'
-}
-```
-
-**الوضع HITLAR** هو وضع تداول عدواني يستخدم:
-- رافعة مالية أعلى (20x افتراضياً)
-- أوامر محدودة (limit) بدلاً من السوقية
-- حماية رأس المال اختيارية
-
----
-
-### 🎯 إعدادات تنفيذ الأهداف
-
-| الحقل | النوع | الافتراضي | الوصف |
-|-------|-------|----------|-------|
-| `tpExecutionMode` | `'single'|'multiple'` | `'multiple'` | هدف واحد أم متعدد |
-| `autoBreakEven` | Boolean | `true` | نقل SL لنقطة الدخول بعد TP1 |
-| `tpSplitMode` | `'auto'|'manual'` | `'auto'` | توزيع تلقائي أم يدوي |
-| `tpProfitSplits` | Number[] | `[50, 50]` | نسب البيع عند كل هدف |
-
-**مثال:** `tpProfitSplits: [30, 70]` → بيع 30% عند TP1، 70% عند TP2.
-
----
-
-### 📊 إعدادات التحليل
-
-```typescript
-analysisSettings: {
-    scalpTF: string,      // default: '5m'  — الإطار السريع
-    swingTF: string,      // default: '1h'  — الإطار البطيء
-    candleLimit: number,  // default: 200   — عدد الشمعات
-    rsiThreshold: number  // default: 30    — حد RSI للإشارة
+    riskPercentage: number;          // default: 3%
+    leverage: number;                // default: 20x
+    volatilitySlPercentage: number;  // default: 5%
+    capitalProtectionEnabled: boolean; // default: false
+    orderMode: 'limit' | 'market';   // default: 'limit'
 }
 ```
 
 ---
 
-### 🧪 إعدادات الـ Backtest
+### 📊 إعدادات التحليل والـ Backtest
 
-```typescript
-backtestSettings: {
-    interval: string,            // default: '15m' — خطوة الزمن
-    initialCapital: number,      // default: 1000  — رأس المال الابتدائي USDT
-    marginMode: 'ISOLATED'|'CROSS', // default: 'ISOLATED'
-    leverage: number,            // default: 10x
-    riskSizingEnabled: boolean,  // default: false
-    riskPercentage: number,      // default: 3%
-    maxSlCapEnabled: boolean,    // default: false
-    maxSlPercentage: number,     // default: 5%
-    fullReportEnabled: boolean   // default: false
-}
-```
-
----
-
-## 🔄 كيف يُستخدم في النظام
-
-| الموقع | الاستخدام |
-|--------|----------|
-| `TradeManager.executeSignal()` | `User.findById(userId)` ← جلب الإعدادات قبل التنفيذ |
-| `PositionMonitor.checkPositions()` | `UserModel.findById(trade.userId)` ← جلب إعدادات التحذيرات |
-| `settingsHandlers.ts` | قراءة وتحديث كل الإعدادات عبر Telegram |
-| `BacktestService` | `user.backtestSettings` ← إعدادات المحاكاة |
-| `ReportingService` | `User.find({ isActive: true })` ← قائمة المستخدمين النشطين |
+* **`analysisSettings`**: إعدادات أطر التحليل الافتراضية (`scalpTF: '5m'`, `swingTF: '1h'`) وحد شمعات التحليل (`candleLimit: 200`).
+* **`backtestSettings`**: إعدادات اختبار الاستراتيجيات بالدورة التاريخية (رأس المال الابتدائي، والرافعة، والـ Margin Mode، وتفعيل Risk Sizing).

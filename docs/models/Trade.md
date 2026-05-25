@@ -1,7 +1,7 @@
 # 📝 Trade.ts — نموذج بيانات الصفقة
 
 > **الموقع:** `src/models/Trade.ts`  
-> **الدور:** يعرّف هيكل بيانات كل صفقة تداول في MongoDB. يتتبع حالة الصفقة من الفتح حتى الإغلاق.
+> **الدور:** يعرّف هيكل بيانات كل صفقة تداول في MongoDB لمتابعة وتوثيق حالتها منذ توليدها كإشارة وحتى فتحها وتنفيذها وإغلاقها النهائي في البورصة، لحساب التقارير والأداء المالي.
 
 ---
 
@@ -10,101 +10,71 @@
 ### 🔑 الحقول الأساسية
 
 | الحقل | النوع | الوصف |
-|-------|-------|-------|
-| `userId` | ObjectId | رابط بجدول المستخدمين (`ref: 'User'`) |
-| `symbol` | String | رمز العملة مثل `'BTC/USDT:USDT'` |
-| `direction` | `'LONG'|'SHORT'` | اتجاه الصفقة |
-| `entryPrice` | Number | سعر الدخول الفعلي (من البورصة) |
-| `stopLoss` | Number | سعر وقف الخسارة |
-| `leverage` | Number | الرافعة المالية (default: 10) |
-| `amount` | Number | حجم الصفقة بـ USDT (القيمة الكاملة) |
-| `pnl` | Number | الربح/الخسارة المئوي (default: 0) |
+| :--- | :--- | :--- |
+| **`userId`** | ObjectId | رابط بجدول المستخدمين المالكين للصفقة (`ref: 'User'`). |
+| **`symbol`** | String | رمز زوج التداول (مثال: `'BTC/USDT:USDT'`). |
+| **`direction`** | String | اتجاه التداول (`LONG` أو `SHORT`). |
+| **`entryPrice`** | Number | سعر الدخول الفعلي المنفذ بالبورصة. |
+| **`stopLoss`** | Number | سعر وقف الخسارة المبدئي. |
+| **`leverage`** | Number | الرافعة المالية المستخدمة (الافتراضي 10). |
+| **`amount`** | Number | الحجم الإجمالي للصفقة بـ USDT (القيمة الكاملة Leverage × Margin). |
+| **`pnl`** | Number | النسبة المئوية الصافية للربح أو الخسارة الحالية (الافتراضي 0). |
 
-### 🎯 الأهداف
+---
 
+### 🎯 مستويات الأهداف (Targets)
+
+تُخزن الأهداف المحددة في إشارة الدخول على هيئة مصفوفة كائنات لتتبع تحقيقها الفردي:
 ```typescript
 targets: [{
-    price: Number,  // سعر الهدف
-    hit: Boolean    // هل تحقق؟ (default: false)
+    price: Number,  // السعر المستهدف
+    hit: Boolean    // هل تم لمسه وتحقيق الهدف؟ (الافتراضي false)
 }]
 ```
 
-**مثال:** `targets: [{ price: 65000, hit: false }, { price: 67000, hit: false }]`
+---
 
-### 📊 حالات الصفقة
+### 📊 حالات الصفقة المعتمدة (`currentStatus`)
 
-```
-'PENDING'        → أمر محدود (Limit) لم ينفَّذ بعد
-'OPEN'           → صفقة مفتوحة ونشطة
-'TP1_HIT'        → ضُرب الهدف الأول
-'TP2_HIT'        → ضُرب الهدف الثاني
-'TP3_HIT'        → ضُرب الهدف الثالث
-'CLOSED_PROFIT'  → أُغلقت برباح (ضرب TP)
-'CLOSED_LOSS'    → أُغلقت بخسارة (ضرب SL)
-'CANCELLED'      → ملغية (مثلاً أمر حدي مُلغى)
-```
-
-### 🔗 حقول التتبع
-
-| الحقل | النوع | الوصف |
-|-------|-------|-------|
-| `bingxOrderId` | String | معرّف الأمر في منصة BingX |
-| `binanceOrderId` | String | معرّف الأمر في منصة Binance |
-| `entryTime` | Date | وقت فتح الصفقة (default: now) |
-| `closeTime` | Date | وقت إغلاق الصفقة |
-| `sourceChatId` | String | مجموعة/قناة مصدر الإشارة |
-| `isBreakEvenSet` | Boolean | هل نُقل SL لنقطة الدخول؟ |
-| `logs` | String[] | سجل أحداث الصفقة |
-
-### ⚠️ حقول التحذيرات
-
-| الحقل | النوع | الوصف |
-|-------|-------|-------|
-| `slWarningSent` | Boolean | هل أُرسل تحذير SL؟ (لمنع التكرار) |
-| `triggeredTpWarnings` | Number[] | النسب التي أُرسلت عندها تحذيرات TP |
-| `correctionAlertEnabled` | Boolean | هل تنبيه التصحيح مفعّل؟ |
-| `correctionWarningSent` | Boolean | هل أُرسل تحذير التصحيح؟ |
+تتغير حالة الصفقة ديناميكياً خلال دورتها الحياتية إلى الحالات التالية:
+* **`PENDING`**: أمر حدي (Limit Order) معلق في البورصة لم ينفذ بعد.
+* **`OPEN`**: صفقة نشطة ومفتوحة حالياً في حساب التداول.
+* **`TP1_HIT` / `TP2_HIT` / `TP3_HIT`**: تم لمس وتحقيق الهدف الأول أو الثاني أو الثالث.
+* **`CLOSED_PROFIT`**: أُغلقت الصفقة كلياً على أرباح (سواء بضرب الهدف الأخير أو يدوياً).
+* **`CLOSED_LOSS`**: أُغلقت الصفقة كلياً على خسارة (سواء بضرب الـ SL أو التصفية).
+* **`CANCELLED`**: ملغية (مثل إلغاء أمر حدي معلق قبل تفعليه).
 
 ---
 
-## 💰 معادلة PnL
+### 🔗 حقول التتبع والتحذيرات
 
-```
-PnL% = لكل LONG:
-    ((currentPrice - entryPrice) / entryPrice) × 100 × leverage
-
-PnL% = لكل SHORT:
-    ((entryPrice - currentPrice) / entryPrice) × 100 × leverage
-
-مبلغ الربح/الخسارة = margin × (PnL% / 100)
-حيث: margin = amount / leverage
-```
+* **معرفات الأوامر:** `bingxOrderId` و `binanceOrderId` لربط المعاملة برقمها الفريد بالمنصة.
+* **الأوقات:** وقت الدخول `entryTime` ووقت الإغلاق `closeTime`.
+* **الـ Break-Even:** مؤشر `isBreakEvenSet` يوضح ما إذا تم نقل الستوب لوز لنقطة الدخول بعد ضرب الهدف الأول TP1 لحماية رأس المال.
+* **السجلات:** مصفوفة نصوص `logs` لتسجيل كل التغييرات والأوقات والتحذيرات التي مرت بها الصفقة.
+* **تحذيرات الـ SL/TP:** مؤشرات `slWarningSent` و `triggeredTpWarnings` لضمان عدم إرسال تنبيهات متكررة للمستخدم عند اقتراب السعر من الأهداف.
+* **تنبيهات التصحيح:** `correctionAlertEnabled` و `correctionWarningSent` لتتبع إرسال تحذيرات الانحرافات.
 
 ---
 
-## 🔄 دورة حياة الصفقة
+## 💰 المعادلات الحسابية المعتمدة للربح والخسارة
 
-```
-TradeManager.executeSignal()
-    └── new Trade({ status: 'PENDING'|'OPEN' })
-        └── trade.save()
-              │
-              ▼
-    PositionMonitor.checkPositions() [كل 30 ثانية]
-        ├── PENDING → يتحقق من البورصة → OPEN
-        ├── OPEN → يتحقق من الموقف:
-        │    ├── لا يزال مفتوح → تحقق من تحذيرات TP/SL
-        │    └── أُغلق → CLOSED_PROFIT / CLOSED_LOSS
-        └── trade.save() → حفظ التغييرات
-```
+### 📈 النسبة المئوية للـ PnL
+
+* **للصفقات الصاعدة LONG:**
+  $$\text{PnL\%} = \frac{\text{CurrentPrice} - \text{EntryPrice}}{\text{EntryPrice}} \times 100 \times \text{Leverage}$$
+* **للصفقات الهابطة SHORT:**
+  $$\text{PnL\%} = \frac{\text{EntryPrice} - \text{CurrentPrice}}{\text{EntryPrice}} \times 100 \times \text{Leverage}$$
+
+### 💵 القيمة الفعلية للربح بالدولار (PnL USDT)
+$$\text{PnL USDT} = \text{Margin} \times \frac{\text{PnL\%}}{100}$$
+حيث أن الهامش الفعلي المخصوم هو:
+$$\text{Margin} = \frac{\text{Amount}}{\text{Leverage}}$$
 
 ---
 
-## 🔗 كيف يُستخدم في النظام
+## 🔌 التفاعل والربط المعماري في النظام
 
-| الموقع | الاستخدام |
-|--------|----------|
-| `TradeManager` | إنشاء وحفظ الصفقات الجديدة |
-| `PositionMonitor` | قراءة وتحديث حالة الصفقات |
-| `ReportingService` | إحصاء الصفقات للتقارير |
-| `portfolioHandlers` | عرض الصفقات المفتوحة للمستخدم |
+* **`TradeManager`**: يُنشئ ويحفظ كائن الـ `Trade` فور تمرير إشارة مقبولة بنجاح.
+* **`PositionMonitor`**: يقوم كل 30 ثانية بجلب الصفقات ذات الحالة `OPEN` أو `PENDING` للتحقق من حالتها في البورصة وتحديثها.
+* **رادار الحماية `TradeRadar`**: يرتبط بالصفقة عبر حقل `tradeId` لتفعيل الوقف التلقائي (Trailing Stop) وتنبيهات كشط السيولة.

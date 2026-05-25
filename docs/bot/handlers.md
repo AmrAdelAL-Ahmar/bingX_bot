@@ -1,203 +1,52 @@
-# 🤖 Bot Handlers — طبقة واجهة Telegram
+# 🤖 Telegram Bot UI Layer — هيكل معالجات البوت والـ State Machine
 
-> **الموقع:** `src/bot/handlers/`  
-> **الدور:** تحويل أوامر المستخدمين في Telegram إلى استدعاءات للخدمات الداخلية. تعتمد على نظام **State Machine** لإدارة تدفق المحادثات.
+> **الموقع:** `src/bot/`  
+> **الدور:** تمثيل واجهة المستخدم الرسومية لـ Telegram. تقوم هذه الطبقة باستقبال الرسائل وتفاعلات الأزرار من المستخدمين، وإدارة الحالة الزمنية للمحادثة (Conversation State)، واستدعاء خدمات طبقة الوساطة `src/services/` لتقديم تقارير وتنفيذ صفقات تفاعلية.
 
 ---
 
-## 🗺️ نظام State Machine
+## 🗺️ نظام آلة الحالات (State Machine)
 
-البوت يستخدم `user.botState` لتتبع المرحلة الحالية للمستخدم:
+البوت يستخدم حقل `user.botState` في قاعدة البيانات لتتبع مرحلة المحادثة الحالية مع كل مستخدم وقراءة مدخلاته النصية التالية بشكل صحيح:
 
 ```
-NONE                      ← وضع الانتظار الطبيعي
-AWAITING_RISK_PERCENTAGE  ← في انتظار إدخال نسبة المخاطرة
-AWAITING_TP_SPLITS        ← في انتظار إدخال نسب تقسيم الأهداف
+NONE                      ← وضع الانتظار الطبيعي (استقبال أوامر عامة أو إشارات تداول)
+AWAITING_RISK_PERCENTAGE  ← في انتظار إدخال نسبة المخاطرة المخصصة لإدارة المحفظة
+AWAITING_FIXED_LEVERAGE   ← في انتظار تحديد قيمة الرافعة المالية الثابتة
+AWAITING_TP_SPLITS        ← في انتظار إدخال نسب تقسيم الأهداف يدوياً
 AWAITING_BT_SYMBOL        ← في انتظار رمز الـ Backtest
-AWAITING_ANALYSIS_SYMBOL_V1..V6 ← في انتظار رمز التحليل
-AWAITING_CANCEL_ALL_CONFIRM ← في انتظار تأكيد إغلاق الصفقات
-AWAITING_CANCEL_SYMBOL    ← في انتظار رمز صفقة للإغلاق
-AWAITING_QUERY_SYMBOL     ← في انتظار رمز للاستعلام
-AWAITING_REPORT_DATE      ← في انتظار تاريخ التقرير
-AWAITING_HITLAR_RISK/LEV/SL ← إعدادات HITLAR
-AWAITING_BTS_CAPITAL/LEVERAGE/RISK/MAX_SL ← إعدادات Backtest
+AWAITING_ANALYSIS_SYMBOL  ← في انتظار الرمز لبدء التحليل الفني الفوري (V1 إلى V11)
+AWAITING_SNIPER_SYMBOL    ← في انتظار الرمز لبدء عملية مراقبة واقتناص الحيتان
+AWAITING_SNIPER_HOURS     ← في انتظار تحديد صلاحية مراقبة الاقتناص بالساعات
+AWAITING_PICKER_LIMIT     ← في انتظار تحديد الحد الأقصى لعملات الفرز
+AWAITING_CANCEL_ALL_CONFIRM ← في انتظار تأكيد إغلاق الصفقات الجماعي (ذعر)
+AWAITING_CANCEL_SYMBOL    ← في انتظار رمز صفقة معينة لإغلاقها يدوياً
+AWAITING_QUERY_SYMBOL     ← في انتظار رمز عملة للاستعلام عن حالتها في البورصة
+AWAITING_REPORT_DATE      ← في انتظار كتابة تاريخ لبدء توليد تقرير مالي مخصص
 ```
 
 ---
 
-## 📁 messageHandlers.ts — المعالج الرئيسي (1183 سطر)
+## 📁 الهيكل الموزع الجديد للمعالجات (Decoupled Handlers)
 
-### الأوامر المسجلة
+لتجنب تكدس الأكواد في ملف واحد ضخم، تم تقسيم معالجات البوت إلى ملفات تخصصية فرعية يتم تسجيلها في `index.ts`:
 
-| الأمر / الرسالة | الوظيفة |
-|-----------------|---------|
-| `/start` | رسالة ترحيب + القائمة الرئيسية |
-| `/menu` | إظهار القائمة الرئيسية |
-| `📊 التحليل الذكي (V1/V2)` | لوحة اختيار الخوارزمية |
-| `الخوارزمية V1..V6` | بدء تحليل بالنسخة المختارة |
-| `🔬 اختبار الاستراتيجيات` | بدء Backtest Wizard |
-| `⚙️ إعدادات المحلل الذكي` | إعدادات التحليل (TF, Candles, RSI) |
-| إشارة تداول نصية | تحليل تلقائي → تنفيذ |
-
----
-
-### تدفق التحليل (AWAITING_ANALYSIS_SYMBOL)
-
-```
-المستخدم يختار V3 → state = 'AWAITING_ANALYSIS_SYMBOL_V3'
-    ↓
-المستخدم يكتب 'BTC'
-    ↓
-analysisService.analyze('BTC', 'V3', {
-    quickTF: user.analysisSettings.scalpTF,   // '5m'
-    longTF:  user.analysisSettings.swingTF,   // '1h'
-    limit:   user.analysisSettings.candleLimit // 200
-})
-    ↓
-analysisService.formatReport(result, 'V3') → نص HTML
-    ↓
-إرسال التقرير + أزرار Inline لتنفيذ Scalp/Swing
-```
+1. **`messageHandlers.ts` (المنسق العام):** معالجة بدء الاستخدام `/start` أو `/menu` والتحقق من وجود المستخدم، وقراءة نصوص الإشارات الخارجية وتمريرها للمحلل التلقائي.
+2. **`analysisHandlers.ts` (التحليل الفني):** إدارة تدفق التحليل الفوري للمؤشرات والمصفوفة وعرض أزرار تنفيذ صفقات Scalp/Swing المقترحة.
+3. **`sniperHandlers.ts` (قناص الحيتان):** إدارة طلبات مراقبة الصفقات المؤسساتية وتفعيل الاقتناص التلقائي أو اليدوي عند اكتمال الشروط.
+4. **`pickerHandlers.ts` (فرز العملات):** تسيير عمليات مسح وتقييم الأسواق لحظياً وعرض شريط تقدم تقدم الفحص (Progress Bar).
+5. **`radarHandlers.ts` (رادار الحماية):** التحكم المباشر بأدوات حماية الصفقات الفعالة وتفعيل الوقف التلقائي أو تنبيهات كشط السيولة.
+6. **`tradingHandlers.ts` (العمليات):** الاستعلام عن المراكز المفتوحة وإلغاء الصفقات الفردية أو الجماعية بالبورصة.
+7. **`portfolioHandlers.ts` (المحفظة):** الاستعلام عن موازين حساب التداول والـ PnL العائم والـ ROE الفعلي للمراكز.
+8. **`reportHandlers.ts` (التقارير):** طلب التقارير المالية الدورية وتخصيص الفترات الزمنية.
+9. **`settingsHandlers.ts` (لوحة الأرقام):** معالجة إدخال وحفظ القيم الفنية وإدارة الـ Numpad تفاعلياً.
 
 ---
 
-### تدفق تنفيذ الإشارة النصية
+## 📚 روابط الوثائق التفصيلية للواجهات
 
-```
-المستخدم يرسل نص إشارة تداول
-    ↓
-SignalParser.parse(message) → ParsedSignal | null
-    ↓
-إذا signal موجود:
-    tradeManager.executeSignal(signal, user._id, chatId)
-    ↓
-    إرسال تقرير التنفيذ:
-        - Entry, TP, SL مع PnL المتوقع
-        - نوع الأمر (Market/Limit)
-        - الرافعة ومبلغ الهامش
-```
+لمزيد من المعلومات حول كود وخصائص واجهات البوت:
 
----
-
-### Backtest Wizard (سلسلة Callbacks)
-
-```
-المستخدم يختار رمز → getBacktestVersionKeyboard()
-    ↓
-callback: btw_v_V3_BTC → getBacktestModeKeyboard()
-    ↓
-callback: btw_m_SCALP_V3_BTC → getBacktestIntervalKeyboard()
-    ↓
-callback: btw_i_15m_SCALP_V3_BTC → getBacktestDaysKeyboard()
-    ↓
-callback: btw_d_30_15m_SCALP_V3_BTC → تشغيل Backtest
-    ↓
-backtestService.runAdvancedBacktest({ symbol, version, mode, ... })
-    ↓
-إرسال التقرير + ملف CSV
-```
-
-### دالة generateCSVBuffer
-
-تُنتج ملف CSV يحتوي على **87+ عموداً** لكل صفقة:
-- معلومات الصفقة الأساسية (Entry, TP, SL, PnL)
-- معلومات رأس المال (Margin, Equity قبل وبعد)
-- سياق التحليل الكامل (RSI, MACD, BB, ATR, Pivot, Fib, SwingLevels لـ 7 إطارات)
-
-| الوضع | عدد الأعمدة |
-|-------|------------|
-| Basic | 24 عموداً |
-| Full Report | 87+ عموداً |
-
----
-
-## 📁 tradingHandlers.ts — مدير الصفقات
-
-| الزر | الوظيفة |
-|------|---------|
-| `🛑 إلغاء كل الصفقات المفتوحة` | عرض PnL الحالي + طلب تأكيد → `tradeManager.closeAllPositions()` |
-| `🔍 الاستعلام عن صفقة محددة` | عرض قائمة رموز نشطة → تفاصيل صفقة |
-| `❌ إلغاء صفقة محددة` | اختيار رمز → `tradeManager.closeSpecificPosition()` |
-| `/status BTC` | تفاصيل صفقة BTC من BingX مباشرة |
-
----
-
-## 📁 portfolioHandlers.ts — عرض المحفظة
-
-| الزر | البيانات المعروضة |
-|------|-----------------|
-| `💰 رصيدي وملخص الأرباح` | الرصيد الحر + إجمالي PnL العائم |
-| `💼 صفقاتي المفتوحة` | كل صفقة: سعر دخول/حالي، PnL، Margin، TP القادم، SL |
-| `/balance` | الرصيد فقط (أمر نصي بسيط) |
-
-**معادلة ROE:**
-```typescript
-if (pos.percentage)       → استخدام مباشر
-else if (margin > 0)      → roe = (pnl / margin) × 100
-else                      → pos.info.profitRate × 100
-```
-
----
-
-## 📁 reportHandlers.ts — التقارير
-
-| الزر | الفترة الزمنية |
-|------|--------------|
-| `📊 تقرير يومي` | من بداية اليوم (00:00) |
-| `📅 تقرير شهري` | من أول الشهر |
-| `📆 تقرير سنوي` | من أول السنة |
-| `📈 تقرير شامل` | كل الوقت (All-Time) |
-| `🗓 تقرير مخصص` | تاريخ يكتبه المستخدم (YYYY-MM-DD) |
-
-**قاعدة البيانات:**
-```typescript
-Trade.find({
-    userId: user._id,
-    currentStatus: { $in: ['CLOSED_PROFIT', 'CLOSED_LOSS', 'CLOSED_MANUAL'] },
-    closeTime: { $gte: startDate }
-})
-```
-
-**دالة `generateReportStr`** (من `views.ts`):
-```typescript
-const netPnl = Σ(margin × (pnl / 100));
-const winRate = (wins / total) × 100;
-```
-
----
-
-## 📁 baseKeyboards.ts — لوحات المفاتيح
-
-يحتوي على **20+ دالة** لتوليد لوحات مفاتيح Telegram المختلفة:
-
-| الدالة | الوصف |
-|--------|-------|
-| `getMainMenuKeyboard(user)` | القائمة الرئيسية (تتغير حسب حالة HITLAR) |
-| `getAlgoVersionKeyboard()` | اختيار V1-V6 |
-| `getAnalysisActionKeyboard()` | أزرار تنفيذ/نسخ إشارة بعد التحليل |
-| `getBacktestVersionKeyboard(symbol)` | اختيار الإصدار للـ Backtest |
-| `getBacktestModeKeyboard(v, s)` | SCALP / SWING |
-| `getBacktestIntervalKeyboard(m, v, s)` | خطوة الزمن (5m, 15m, 30m, 1h) |
-| `getBacktestDaysKeyboard(i, m, v, s)` | عدد أيام الاختبار |
-| `getBacktestSettingsKeyboard(user)` | إعدادات Backtest |
-| `getDynamicSymbolsKeyboard(bingx)` | جلب الرموز النشطة من BingX |
-| `getTFSelectionKeyboard(type)` | اختيار الإطار الزمني |
-| `getLimitSelectionKeyboard()` | اختيار عدد الشمعات |
-| `getRSISelectionKeyboard()` | اختيار قيمة RSI |
-| `getReportsKeyboard()` | قائمة التقارير |
-
----
-
-## 🔄 `getDynamicSymbolsKeyboard` — الأذكى
-
-```typescript
-const positions = await bingxService.getPositions();
-const activeSymbols = positions
-    .filter(p => parseFloat(p.contracts) > 0)
-    .map(p => p.symbol.split('/')[0]);  // BTC, ETH, ...
-
-// تحويل لأزرار Keyboard
-return activeSymbols.map(s => [{ text: s }]);
-```
-
-تجلب الرموز مباشرة من BingX (لا تعتمد على DB) لضمان أن الأزرار دائماً محدّثة.
+* **التفاصيل البرمجية لجميع الأوامر والـ Callbacks:** راجع مستند [Specialized Handlers](./specialized_handlers.md).
+* **تصميم لوحات الأزرار وقوائم الإعدادات والـ Numpad:** راجع مستند [Keyboards & Menus](./keyboards_and_menus.md).
+* **مدقق المستخدم وتهيئة الجلسات (Middleware):** راجع مستند [Infrastructure](./infrastructure.md).
