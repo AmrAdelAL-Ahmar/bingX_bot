@@ -201,7 +201,7 @@ export function registerPickerHandlers(bot: Telegraf, bingx: BingXService) {
     // ── اختيار عملة من القائمة — تحليل ──────────────────────────────────────
     // callback: pkr_sel_analysis_{version}_{symbol}
     bot.action(/^pkr_sel_analysis_([^_]+)_([^_]+)$/, async (ctx) => {
-        const version = ctx.match[1] as 'V1' | 'V2' | 'V3' | 'V4' | 'V5' | 'V6' | 'V7' | 'V10' | 'V11';
+        const version = ctx.match[1] as 'V1' | 'V2' | 'V3' | 'V4' | 'V5' | 'V6' | 'V7' | 'V8' | 'V9' | 'V10' | 'V11' | 'V12' | 'V13' | 'V14';
         const symbolShort = ctx.match[2];
         const fullSymbol = `${symbolShort}/USDT:USDT`;
 
@@ -223,7 +223,8 @@ export function registerPickerHandlers(bot: Telegraf, bingx: BingXService) {
                 quickTF: user?.analysisSettings?.scalpTF,
                 longTF: user?.analysisSettings?.swingTF,
                 limit: user?.analysisSettings?.candleLimit,
-                rsiThreshold: user?.analysisSettings?.rsiThreshold
+                rsiThreshold: user?.analysisSettings?.rsiThreshold,
+                antiRepainting: user?.analysisSettings?.antiRepaintingEnabled
             });
 
             const report = analysisService.formatReport(result, version);

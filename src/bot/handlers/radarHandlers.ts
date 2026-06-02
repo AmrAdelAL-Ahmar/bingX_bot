@@ -330,6 +330,100 @@ export function registerRadarHandlers(bot: Telegraf) {
 
     // ── لا شيء (noop) ─────────────────────────────────────────────────────────
     bot.action('radar_noop', async (ctx) => ctx.answerCbQuery());
+
+    // ── تنفيذ صفقة تعويضية من الرادار ──
+    bot.action(/^radar_exec_comp_(.+)$/, async (ctx) => {
+        const tradeId = ctx.match[1];
+        try {
+            const telegramId = ctx.from?.id.toString();
+            if (!telegramId) return ctx.answerCbQuery().catch(() => {});
+
+            const user = await User.findOne({ telegramId });
+            if (!user) return ctx.answerCbQuery('المستخدم غير موجود').catch(() => {});
+
+            const radar = await TradeRadar.findOne({ tradeId });
+            if (!radar) return ctx.answerCbQuery('لا يوجد رادار نشط لهذه الصفقة').catch(() => {});
+
+            // Find the latest WICK_SWEEP event to get the proposedSL and other parameters
+            const sweepEvent = [...radar.sentEvents].reverse().find(e => e.type === 'WICK_SWEEP');
+            if (!sweepEvent) {
+                await ctx.answerCbQuery('❌ لم يتم العثور على تنبيه سحب سيولة مسجل.').catch(() => {});
+                return;
+            }
+
+            // Parse details: e.g. "SL=100, low=99, proposedSL=98.5, margin=15"
+            const detailsMap: Record<string, string> = {};
+            sweepEvent.details.split(', ').forEach(part => {
+                const [k, v] = part.split('=');
+                if (k && v) detailsMap[k] = v;
+            });
+
+            const proposedSL = parseFloat(detailsMap['proposedSL']);
+            const marginValue = parseFloat(detailsMap['margin']);
+
+            if (isNaN(proposedSL) || isNaN(marginValue)) {
+                await ctx.answerCbQuery('❌ فشل استخراج تفاصيل الصفقة المقترحة.').catch(() => {});
+                return;
+            }
+
+            const originalTrade = await Trade.findById(tradeId);
+            if (!originalTrade) {
+                await ctx.answerCbQuery('❌ الصفقة الأصلية غير موجودة.').catch(() => {});
+                return;
+            }
+
+            await ctx.answerCbQuery('⏳ جاري تنفيذ صفقة التعويض...').catch(() => {});
+
+            const { BingXService } = require('../../services/BingXService');
+            const { TradeManager } = require('../../services/TradeManager');
+
+            // Initialize BingXService with user credentials if available
+            const userBingX = new BingXService(user.bingxApiKey, user.bingxSecretKey);
+            const currentPrice = await userBingX.getMarketPrice(radar.symbol);
+
+            const signal: any = {
+                type: 'TRADE',
+                symbol: radar.symbol,
+                direction: radar.direction,
+                entry: [currentPrice],
+                stopLoss: proposedSL,
+                targets: originalTrade.targets.map((t: any) => t.price),
+                leverage: originalTrade.leverage || 10,
+                risk: (marginValue / originalTrade.amount) * 100 * (originalTrade.leverage || 10),
+                marginMode: 'CROSS'
+            };
+
+            const tradeManager = new TradeManager(userBingX);
+            const compResult = await tradeManager.executeSignal(signal, user._id.toString(), ctx.chat?.id.toString());
+
+            if (compResult) {
+                // record that compensation was executed
+                radar.sentEvents.push({
+                    type: 'CUSTOM',
+                    sentAt: new Date(),
+                    details: `Executed WICK_SWEEP_COMPENSATION trade ${compResult.tradeId} at ${currentPrice} with SL ${proposedSL}`
+                });
+                await radar.save();
+
+                const dirEmoji = compResult.direction === 'LONG' ? '🟢' : '🔴';
+                await ctx.reply(
+                    `✅ *تم تنفيذ صفقة التعويض التحوطية بنجاح!*\n\n` +
+                    `🪙 العملة: *${compResult.symbol.split('/')[0]}*\n` +
+                    `📈 الاتجاه: *${compResult.direction} ${dirEmoji}*\n` +
+                    `💵 سعر الدخول: *${compResult.entryPrice}*\n` +
+                    `🛑 وقف خسارة ضيق: *${proposedSL}*\n` +
+                    `🎯 الأهداف: *${compResult.targets.map((t: any) => t.price).join(', ')}*\n` +
+                    `💰 الهامش المستخدم: *${compResult.margin.toFixed(2)} USDT*`
+                , { parse_mode: 'Markdown' });
+            } else {
+                await ctx.reply('❌ فشل تنفيذ صفقة التعويض، يرجى مراجعة سجلات البوت.');
+            }
+
+        } catch (e: any) {
+            logger.error('radar_exec_comp:', e);
+            await ctx.reply(`❌ حدث خطأ أثناء تنفيذ صفقة التعويض: ${e.message}`);
+        }
+    });
 }
 
 // ─── Helper: عرض القائمة الرئيسية للرادار ─────────────────────────────────────

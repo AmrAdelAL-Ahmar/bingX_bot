@@ -282,6 +282,56 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                 return ctx.reply('تم الإلغاء والعودة للقائمة الرئيسية.', { reply_markup: getMainMenuKeyboard(user) });
             }
 
+            // Unified symbols awaiting states
+            if (user.botState && (user.botState === 'AWAITING_UNIFIED_SYMBOLS_ANALYSIS' || user.botState === 'AWAITING_UNIFIED_SYMBOLS_SNIPER')) {
+                if (message === 'رجوع 🔙' || message === 'إلغاء ❌') {
+                    user.botState = 'NONE';
+                    await user.save();
+                    return ctx.reply('تم الإلغاء والعودة للقائمة الرئيسية.', { reply_markup: getMainMenuKeyboard(user) });
+                }
+
+                const symbols = message.split(/[\s,]+/)
+                    .map(s => s.trim().toUpperCase())
+                    .filter(s => s.length >= 2 && s.length <= 15)
+                    .map(s => s.replace('/USDT', '').replace(':USDT', ''))
+                    .map(s => `${s}/USDT:USDT`);
+
+                if (symbols.length === 0) {
+                    return ctx.reply('⚠️ لم يتم التعرف على رموز عملات صالحة. يرجى إدخال رموز صحيحة (مثال: BTC, ETH):');
+                }
+
+                const isAnalysis = user.botState === 'AWAITING_UNIFIED_SYMBOLS_ANALYSIS';
+                user.botState = 'NONE';
+                await user.save();
+
+                const UnifiedSession = require('../../models/UnifiedSession').default;
+                const { getAnalysisSelectionKeyboard, getSniperSelectionKeyboard } = require('./unifiedHandlers');
+
+                // Initialize with some smart defaults
+                const defaultEngines = isAnalysis
+                    ? ['V10', 'V11', 'V12', 'V13', 'V14']
+                    : ['V14-SCALP', 'V14-SWING', 'V13-SCALP', 'V13-SWING', 'V12-SCALP', 'V12-SWING'];
+
+                const session = new UnifiedSession({
+                    telegramId,
+                    type: isAnalysis ? 'analysis' : 'sniper',
+                    symbols: symbols,
+                    selectedEngines: defaultEngines
+                });
+                await session.save();
+
+                const displaySymbols = symbols.map(s => s.split('/')[0]).join(', ');
+                const text = `⚙️ **لوحة تحديد محركات ${isAnalysis ? 'التحليل' : 'القنص'}:**\n\n` +
+                    `العملات المحددة: \`${displaySymbols}\`\n\n` +
+                    `قم بتحديد المحركات المطلوبة أدناه:`;
+
+                const keyboard = isAnalysis
+                    ? getAnalysisSelectionKeyboard(session._id.toString(), session.selectedEngines)
+                    : getSniperSelectionKeyboard(session._id.toString(), session.selectedEngines);
+
+                return ctx.reply(text, { parse_mode: 'Markdown', reply_markup: keyboard });
+            }
+
             // 1. Check AWAITING States
             if (user.botState && user.botState.startsWith('AWAITING_SNIPER_SYMBOL')) {
                 if (message === 'رجوع 🔙' || message === 'إلغاء ❌') {
@@ -822,6 +872,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                 riskSizingEnabled: bts?.riskSizingEnabled ?? false,
                 maxSlCapEnabled: bts?.maxSlCapEnabled ?? false,
                 maxSlPercentage: bts?.maxSlPercentage ?? 5,
+                alignToStartOfDay: bts?.alignToStartOfDay !== false
             });
 
             if (user) {
@@ -831,7 +882,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
             }
 
             if (result.trades && result.trades.length > 0) {
-                const csvBuffer = generateCSVBuffer(result.trades);
+                const csvBuffer = generateCSVBuffer(result.trades, user?.backtestSettings?.fullReportEnabled);
                 const safeSymbol = symbol.replace(/[\/:]/g, '_');
                 const now = new Date();
                 const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}`;
@@ -841,7 +892,7 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
                 await ctx.reply('⚠️ لم يتم تنفيذ أي صفقات خلال فترة الاختبار.');
             }
 
-            await ctx.deleteMessage().catch(() => {});
+            await ctx.deleteMessage().catch(() => { });
         } catch (error: any) {
             logger.error('Error in backtest wizard run action:', error);
             await ctx.reply(`❌ فشل تشغيل الاختبار الرجعي: ${error.message}`);

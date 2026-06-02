@@ -105,7 +105,8 @@ export const registerAnalysisHandlers = (bot: Telegraf, tradeManager: TradeManag
                 longTF: user?.analysisSettings?.swingTF || '1h',
                 days: 1, // Quick test uses 1 day
                 stepMinutes: 30, // Default to 30 mins
-                mode: mode
+                mode: mode,
+                alignToStartOfDay: user?.backtestSettings?.alignToStartOfDay !== false
             });
 
             if (user) {
@@ -144,7 +145,8 @@ export const registerAnalysisHandlers = (bot: Telegraf, tradeManager: TradeManag
             const user = await User.findOne({ telegramId: ctx.from!.id.toString() });
             const res = await analysisService.analyze(symbol, v as any, {
                 quickTF: user?.analysisSettings?.scalpTF,
-                longTF: user?.analysisSettings?.swingTF
+                longTF: user?.analysisSettings?.swingTF,
+                antiRepainting: user?.analysisSettings?.antiRepaintingEnabled
             });
 
             const details = analysisService.generateDetailedReport(res, type === 'sc' ? 'scalp' : 'swing');
@@ -168,7 +170,8 @@ export const registerAnalysisHandlers = (bot: Telegraf, tradeManager: TradeManag
             const user = await User.findOne({ telegramId: ctx.from!.id.toString() });
             const res = await analysisService.analyze(symbol, v as any, {
                 quickTF: user?.analysisSettings?.scalpTF,
-                longTF: user?.analysisSettings?.swingTF
+                longTF: user?.analysisSettings?.swingTF,
+                antiRepainting: user?.analysisSettings?.antiRepaintingEnabled
             });
 
             const guide = analysisService.generateEducationalGuide(res, type === 'sc' ? 'scalp' : 'swing');
@@ -240,6 +243,23 @@ export const registerAnalysisHandlers = (bot: Telegraf, tradeManager: TradeManag
         }
     });
 
+    bot.action(/^rep_(enable|disable)$/, async (ctx) => {
+        try {
+            const action = ctx.match[1];
+            const isEnabled = action === 'enable';
+            const user = await User.findOne({ telegramId: ctx.from!.id.toString() });
+            if (user) {
+                user.analysisSettings.antiRepaintingEnabled = isEnabled;
+                await user.save();
+                const statusStr = isEnabled ? '🟢 مفعلة' : '🔴 معطلة';
+                await ctx.answerCbQuery(`✅ تم تحديث حماية Repainting: ${statusStr}`);
+                await ctx.editMessageText(`✅ **تم تحديث حماية الـ Repainting بنجاح إلى:** **${statusStr}**\n\n(سيتم الاعتماد على ${isEnabled ? 'الشموع المغلقة فقط' : 'الشموع الحية والمغلقة'} لحساب المؤشرات الفنية).`, { parse_mode: 'Markdown' });
+            }
+        } catch (error) {
+            logger.error('Error updating Anti-Repainting setting:', error);
+        }
+    });
+
     bot.action(/^all_tf_(.+)$/, async (ctx) => {
         try {
             const rest = ctx.match[1];
@@ -252,7 +272,8 @@ export const registerAnalysisHandlers = (bot: Telegraf, tradeManager: TradeManag
             const user = await User.findOne({ telegramId: ctx.from!.id.toString() });
             const res = await analysisService.analyze(symbol, v as any, {
                 quickTF: user?.analysisSettings?.scalpTF,
-                longTF: user?.analysisSettings?.swingTF
+                longTF: user?.analysisSettings?.swingTF,
+                antiRepainting: user?.analysisSettings?.antiRepaintingEnabled
             });
 
             const comprehensiveReport = analysisService.generateComprehensiveReport(res);
@@ -279,7 +300,8 @@ export const registerAnalysisHandlers = (bot: Telegraf, tradeManager: TradeManag
             const user = await User.findOne({ telegramId: ctx.from!.id.toString() });
             const res = await analysisService.analyze(symbol, v as any, {
                 quickTF: user?.analysisSettings?.scalpTF,
-                longTF: user?.analysisSettings?.swingTF
+                longTF: user?.analysisSettings?.swingTF,
+                antiRepainting: user?.analysisSettings?.antiRepaintingEnabled
             });
 
             const correctionReport = await analysisService.generateCorrectionReport(res, d);
@@ -329,19 +351,19 @@ export const registerAnalysisHandlers = (bot: Telegraf, tradeManager: TradeManag
     });
 
     // --- SMART ANALYSIS FLOW ---
-    bot.hears('📊 التحليل الذكي (V1-V11)', async (ctx) => {
+    bot.hears('📊 التحليل الذكي (V1-V14)', async (ctx) => {
         try {
             return ctx.reply('الرجاء اختيار إصدار خوارزمية التحليل التي تود استخدامها:', {
                 reply_markup: getAlgoVersionKeyboard()
             });
         } catch (error) {
-            logger.error('Error in hears 📊 التحليل الذكي (V1-V11):', error);
+            logger.error('Error in hears 📊 التحليل الذكي (V1-V14):', error);
         }
     });
 
     bot.hears('دليل الخوارزميات 📖', async (ctx) => {
         try {
-            const guide = `📖 **دليل الخوارزميات (V1-V11):**\n\n` +
+            const guide = `📖 **دليل الخوارزميات (V1-V14):**\n\n` +
                 `${analysisService.getAlgorithmExplanation('V1')}\n\n` +
                 `${analysisService.getAlgorithmExplanation('V2')}\n\n` +
                 `${analysisService.getAlgorithmExplanation('V3')}\n\n` +
@@ -349,8 +371,13 @@ export const registerAnalysisHandlers = (bot: Telegraf, tradeManager: TradeManag
                 `${analysisService.getAlgorithmExplanation('V5')}\n\n` +
                 `${analysisService.getAlgorithmExplanation('V6')}\n\n` +
                 `${analysisService.getAlgorithmExplanation('V7')}\n\n` +
+                `${analysisService.getAlgorithmExplanation('V8')}\n\n` +
+                `${analysisService.getAlgorithmExplanation('V9')}\n\n` +
                 `${analysisService.getAlgorithmExplanation('V10')}\n\n` +
-                `${analysisService.getAlgorithmExplanation('V11')}`;
+                `${analysisService.getAlgorithmExplanation('V11')}\n\n` +
+                `${analysisService.getAlgorithmExplanation('V12')}\n\n` +
+                `${analysisService.getAlgorithmExplanation('V13')}\n\n` +
+                `${analysisService.getAlgorithmExplanation('V14')}`;
             return ctx.reply(guide);
         } catch (error) {
             logger.error('Error in hears دليل الخوارزميات 📖:', error);
@@ -365,8 +392,13 @@ export const registerAnalysisHandlers = (bot: Telegraf, tradeManager: TradeManag
         { text: 'الخوارزمية V5 (تنبؤي AI) 🔮', version: 'V5' },
         { text: 'الخوارزمية V6 (Sniper) 🎯', version: 'V6' },
         { text: 'الخوارزمية V7 (القناص الهجيني) 🏹', version: 'V7' },
+        { text: 'الخوارزمية V8 (قناص الموجات والسيولة) 🌊', version: 'V8' },
+        { text: 'الخوارزمية V9 (قناص SMC الذكي) 🏛️', version: 'V9' },
         { text: 'الخوارزمية V10 (المؤسساتي المتقدم) 🏆', version: 'V10' },
-        { text: 'الخوارزمية V11 (القرار الذكي التكيفي) 👑', version: 'V11' }
+        { text: 'الخوارزمية V11 (القرار الذكي التكيفي) 👑', version: 'V11' },
+        { text: 'الخوارزمية V12 (تدفق السيولة CVD) 📊', version: 'V12' },
+        { text: 'الخوارزمية V13 (مصائد السيولة وايكوف) 🪤', version: 'V13' },
+        { text: 'الخوارزمية V14 (الشبكة العرضية) ↔️', version: 'V14' }
     ];
 
     for (const algo of algos) {
@@ -431,6 +463,27 @@ export const registerAnalysisHandlers = (bot: Telegraf, tradeManager: TradeManag
         }
     });
 
+    bot.hears('🛡️ حماية الـ Repainting', async (ctx) => {
+        try {
+            const user = await User.findOne({ telegramId: ctx.from!.id.toString() });
+            const status = user?.analysisSettings?.antiRepaintingEnabled !== false ? '🟢 مفعلة' : '🔴 معطلة';
+            return ctx.reply(`🛡️ **نظام حماية التنبيهات من إعادة الرسم (Anti-Repainting):**\n\n` +
+                `الحالة الحالية: **${status}**\n\n` +
+                `عند تفعيل الحماية، سيقوم المحلل الفني وقناص الصفقات بحساب المؤشرات الفنية بناءً على الشموع المغلقة فقط لمنع صدور إشارات دخول خاطئة ومذبذبة قبل إغلاق الشمعة.`, {
+                reply_markup: {
+                    inline_keyboard: [
+                        [
+                            { text: '🟢 تفعيل الحماية', callback_data: 'rep_enable' },
+                            { text: '🔴 تعطيل الحماية', callback_data: 'rep_disable' }
+                        ]
+                    ]
+                }
+            });
+        } catch (error) {
+            logger.error('Error in hears 🛡️ حماية الـ Repainting:', error);
+        }
+    });
+
     // Handle generic message state for analysis symbols
     bot.on('message', async (ctx, next) => {
         try {
@@ -446,7 +499,7 @@ export const registerAnalysisHandlers = (bot: Telegraf, tradeManager: TradeManag
                     await user.save();
                     return ctx.reply('تم الإلغاء والعودة للقائمة الرئيسية.', { reply_markup: getMainMenuKeyboard(user) });
                 }
-                const version = user.botState.split('_').pop() as 'V1' | 'V2' | 'V3' | 'V4' | 'V5' | 'V6' | 'V7' | 'V10' | 'V11';
+                const version = user.botState.split('_').pop() as 'V1' | 'V2' | 'V3' | 'V4' | 'V5' | 'V6' | 'V7' | 'V8' | 'V9' | 'V10' | 'V11' | 'V12' | 'V13' | 'V14';
                 const symbol = message.toUpperCase();
                 ctx.reply(`⏳ جاري تحليل ${symbol} باستخدام ${version}... (TF: ${user.analysisSettings?.scalpTF || '5m'}/${user.analysisSettings?.swingTF || '1h'})`);
                 try {
@@ -454,7 +507,8 @@ export const registerAnalysisHandlers = (bot: Telegraf, tradeManager: TradeManag
                         quickTF: user.analysisSettings?.scalpTF,
                         longTF: user.analysisSettings?.swingTF,
                         limit: user.analysisSettings?.candleLimit,
-                        rsiThreshold: user.analysisSettings?.rsiThreshold
+                        rsiThreshold: user.analysisSettings?.rsiThreshold,
+                        antiRepainting: user.analysisSettings?.antiRepaintingEnabled
                     });
                     const report = analysisService.formatReport(result, version);
 

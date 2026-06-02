@@ -22,6 +22,7 @@ import { registerSniperHandlers } from './bot/handlers/sniperHandlers';
 import { registerRadarHandlers } from './bot/handlers/radarHandlers';
 import { registerAnalysisHandlers } from './bot/handlers/analysisHandlers';
 import { registerPickerHandlers } from './bot/handlers/pickerHandlers';
+import { registerUnifiedHandlers } from './bot/handlers/unifiedHandlers';
 import { SniperManager } from './services/SniperManager';
 
 dotenv.config();
@@ -73,6 +74,7 @@ registerPickerHandlers(bot, bingXService);      // ← محرك اختيار ا�
 registerSniperHandlers(bot, sniperManager);
 registerRadarHandlers(bot);
 registerAnalysisHandlers(bot, tradeManager);
+registerUnifiedHandlers(bot, tradeManager);
 registerMessageHandlers(bot, tradeManager);
 
 const start = async () => {

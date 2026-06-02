@@ -45,6 +45,7 @@ export interface IUser extends Document {
         swingTF: string;
         candleLimit: number;
         rsiThreshold: number;
+        antiRepaintingEnabled?: boolean;
     };
     // Backtest Settings
     backtestSettings: {
@@ -57,6 +58,7 @@ export interface IUser extends Document {
         maxSlCapEnabled: boolean;
         maxSlPercentage: number;
         fullReportEnabled: boolean;
+        alignToStartOfDay?: boolean;
     };
     sniperSettings?: {
         autoExecute: boolean;
@@ -130,6 +132,7 @@ const UserSchema: Schema = new Schema({
         swingTF: { type: String, default: '1h' },
         candleLimit: { type: Number, default: 200 },
         rsiThreshold: { type: Number, default: 30 },
+        antiRepaintingEnabled: { type: Boolean, default: true }
     },
     backtestSettings: {
         interval: { type: String, default: '15m' },
@@ -140,7 +143,8 @@ const UserSchema: Schema = new Schema({
         riskPercentage: { type: Number, default: 3 },
         maxSlCapEnabled: { type: Boolean, default: false },
         maxSlPercentage: { type: Number, default: 5 },
-        fullReportEnabled: { type: Boolean, default: false }
+        fullReportEnabled: { type: Boolean, default: false },
+        alignToStartOfDay: { type: Boolean, default: true }
     },
     pickerSettings: {
         engine: { type: String, enum: ['multicriteria', 'ccxt'], default: 'multicriteria' },

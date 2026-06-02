@@ -39,8 +39,8 @@ export class AnalysisService {
 
     async analyze(
         symbolInput: string,
-        version: 'V1' | 'V2' | 'V3' | 'V4' | 'V5' | 'V6' | 'V7' | 'V10' | 'V11' = 'V1',
-        options: { quickTF?: string, longTF?: string, limit?: number, rsiThreshold?: number } = {}
+        version: 'V1' | 'V2' | 'V3' | 'V4' | 'V5' | 'V6' | 'V7' | 'V8' | 'V9' | 'V10' | 'V11' | 'V12' | 'V13' | 'V14' = 'V1',
+        options: { quickTF?: string, longTF?: string, limit?: number, rsiThreshold?: number, antiRepainting?: boolean } = {}
     ): Promise<AnalysisResult> {
         let symbol = symbolInput.toUpperCase();
         if (!symbol.includes('/')) symbol = `${symbol}/USDT:USDT`;
@@ -63,7 +63,7 @@ export class AnalysisService {
         fetchResults.forEach(res => mtfOHLCV[res.tf] = res.ohlcv);
 
         // Delegate computation to CoreAnalysisService in-memory processor
-        return CoreAnalysisService.analyze(symbol, pricePrecision, mtfOHLCV, version, { quickTF, longTF, limit });
+        return CoreAnalysisService.analyze(symbol, pricePrecision, mtfOHLCV, version, { quickTF, longTF, limit, antiRepainting: options.antiRepainting });
     }
 
     async generateCorrectionReport(res: AnalysisResult, direction: "LONG" | "SHORT"): Promise<string> {

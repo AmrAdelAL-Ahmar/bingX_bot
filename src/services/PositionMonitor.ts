@@ -336,12 +336,9 @@ export class PositionMonitor {
         }
     }
 
-    // =========================================================================
-    // RADAR SYSTEM — مراقبة متقدمة للصفقات
-    // =========================================================================
-
     /**
      * نقطة الدخول الرئيسية للـ Radar — يُستدعى لكل صفقة نشطة
+     * نظام تنبيه ثلاثي المراحل (Three-Phase Position Alert System)
      */
     private async runRadarChecks(
         tradeId: string,
@@ -360,24 +357,325 @@ export class PositionMonitor {
 
             radar.lastCheckedAt = new Date();
 
-            // ── 1. كشف الكسر الكاذب (Wick Sweep) ───────────────────────────────
-            if (radar.settings.wickSweepAlert) {
-                await this.detectWickSweep(radar, ohlcv5m, stopLoss, direction, currentPrice);
+            // حساب Pivot لفريم الساعة لتوفيره للمراحل
+            let pivot1h = 0;
+            try {
+                const ohlcv1h = await this.bingx.fetchOHLCV(symbol, '1h', 2);
+                if (ohlcv1h && ohlcv1h.length >= 2) {
+                    const prev1h = ohlcv1h[ohlcv1h.length - 2];
+                    pivot1h = (prev1h.high + prev1h.low + prev1h.close) / 3;
+                }
+            } catch (err) {
+                logger.error(`Radar: Failed to fetch 1h Pivot for ${symbol}:`, err);
             }
 
-            // ── 2. تنبيه الانعكاس المبكر (CHoCH + Divergence) ───────────────────
-            if (radar.settings.reversalAlert) {
-                await this.detectEarlyReversal(radar, ohlcv5m, direction);
-            }
+            // ── المرحلة 1: تحذيرات الضعف والتصحيح الهيكلي ─────────────────
+            await this.checkPhase1Weakness(radar, ohlcv5m, currentPrice, direction, pivot1h);
 
-            // ── 3. Trailing Stop الديناميكي ──────────────────────────────────────
-            if (radar.settings.trailingEnabled) {
-                await this.updateTrailingStop(radar, ohlcv5m, direction, currentPrice, symbol);
-            }
+            // ── المرحلة 2: تحذيرات كسر الدعم وسحب السيولة ──────────────────
+            await this.checkPhase2Breakout(radar, ohlcv5m, stopLoss, direction, currentPrice);
+
+            // ── المرحلة 3: تحذيرات زخم الاتجاه وتسارعه ──────────────────────
+            await this.checkPhase3Momentum(radar, ohlcv5m, direction, currentPrice, symbol, pivot1h);
 
             await radar.save();
         } catch (err) {
             logger.error(`Radar check error for ${symbol}:`, err);
+        }
+    }
+
+    /**
+     * المرحلة 1: تحذيرات الضعف والتصحيح الهيكلي (Structural Weakness & Fib Correction)
+     */
+    private async checkPhase1Weakness(
+        radar: ITradeRadar,
+        ohlcv5m: any[],
+        currentPrice: number,
+        direction: 'LONG' | 'SHORT',
+        pivot1h: number
+    ): Promise<void> {
+        if (!radar.settings.reversalAlert) return;
+
+        // 1. انحراف RSI (Divergence)
+        const divergence = this.analysis.detectDivergence(ohlcv5m, direction);
+        if (divergence.detected) {
+            const alreadySent = radar.sentEvents.some(
+                e => e.type === 'REVERSAL_WARNING' && e.details === 'RSI_DIVERGENCE'
+            );
+            if (!alreadySent) {
+                logger.info(`Radar Phase 1: RSI Divergence detected for ${radar.symbol}`);
+                const msg = `⚠️ <b>رادار المراكز - المرحلة 1: ضعف الزخم (RSI Divergence)!</b>\n\n` +
+                    `📍 الرمز: <b>${radar.symbol}</b> (${direction})\n` +
+                    `🔍 الإشارة: <b>${divergence.description}</b>\n\n` +
+                    `💡 <i>تم رصد انحراف في المؤشرات الفنية، مما يشير إلى ضعف محتمل في الاتجاه الحالي.</i>`;
+                await this.notifier(radar.telegramId, msg);
+                radar.sentEvents.push({
+                    type: 'REVERSAL_WARNING',
+                    sentAt: new Date(),
+                    details: 'RSI_DIVERGENCE'
+                });
+            }
+        }
+
+        // 2. كسر مستوى الـ Pivot
+        if (pivot1h > 0) {
+            const isPivotBroken = this.analysis.isPivotBroken(currentPrice, pivot1h, direction);
+            if (isPivotBroken) {
+                const alreadySent = radar.sentEvents.some(
+                    e => e.type === 'REVERSAL_WARNING' && e.details === 'PIVOT_BREAK'
+                );
+                if (!alreadySent) {
+                    logger.info(`Radar Phase 1: Pivot broken for ${radar.symbol}`);
+                    const msg = `🚨 <b>رادار المراكز - المرحلة 1: كسر هيكل السوق (Pivot Break)!</b>\n\n` +
+                        `📍 الرمز: <b>${radar.symbol}</b> (${direction})\n` +
+                        `⛔ الحالة: كسر السعر لمستوى الـ Pivot اليومي/الاسبوعي عند <b>$${pivot1h.toFixed(4)}</b>\n\n` +
+                        `💡 <i>فقد السعر الدعم المؤسساتي وبدأ التصحيح رسمياً. يرجى تأمين الصفقة!</i>`;
+                    await this.notifier(radar.telegramId, msg);
+                    radar.sentEvents.push({
+                        type: 'REVERSAL_WARNING',
+                        sentAt: new Date(),
+                        details: 'PIVOT_BREAK'
+                    });
+                }
+            }
+        }
+
+        // 3. تصحيح فيبوناتشي 50% أو 61.8%
+        const fib = this.analysis.calculateCorrectionFibLevels(ohlcv5m, direction);
+        if (direction === 'LONG') {
+            if (currentPrice <= fib.fib618) {
+                const alreadySent = radar.sentEvents.some(
+                    e => e.type === 'REVERSAL_WARNING' && e.details === 'FIB_618_RETRACEMENT'
+                );
+                if (!alreadySent) {
+                    logger.info(`Radar Phase 1: Fib 61.8% hit for ${radar.symbol}`);
+                    const msg = `📉 <b>رادار المراكز - المرحلة 1: ملامسة تصحيح فيبوناتشي الذهبي 61.8%!</b>\n\n` +
+                        `📍 الرمز: <b>${radar.symbol}</b> (LONG)\n` +
+                        `📊 السعر الحالي: <b>$${currentPrice.toFixed(4)}</b>\n` +
+                        `🎯 المستوى الذهبي: <b>$${fib.fib618.toFixed(4)}</b>\n\n` +
+                        `💡 <i>السعر يتداول عند أقوى مناطق الدعم للتصحيح. راقب حدوث ارتداد صاعد.</i>`;
+                    await this.notifier(radar.telegramId, msg);
+                    radar.sentEvents.push({
+                        type: 'REVERSAL_WARNING',
+                        sentAt: new Date(),
+                        details: 'FIB_618_RETRACEMENT'
+                    });
+                }
+            } else if (currentPrice <= fib.fib500) {
+                const alreadySent = radar.sentEvents.some(
+                    e => e.type === 'REVERSAL_WARNING' && e.details === 'FIB_50_RETRACEMENT'
+                );
+                if (!alreadySent) {
+                    logger.info(`Radar Phase 1: Fib 50% hit for ${radar.symbol}`);
+                    const msg = `📉 <b>رادار المراكز - المرحلة 1: ملامسة تصحيح فيبوناتشي 50%!</b>\n\n` +
+                        `📍 الرمز: <b>${radar.symbol}</b> (LONG)\n` +
+                        `📊 السعر الحالي: <b>$${currentPrice.toFixed(4)}</b>\n` +
+                        `🎯 مستوى 50%: <b>$${fib.fib500.toFixed(4)}</b>\n\n` +
+                        `💡 <i>السعر لامس مستوى الـ 50% للتصحيح، وهي منطقة الارتداد الأولية.</i>`;
+                    await this.notifier(radar.telegramId, msg);
+                    radar.sentEvents.push({
+                        type: 'REVERSAL_WARNING',
+                        sentAt: new Date(),
+                        details: 'FIB_50_RETRACEMENT'
+                    });
+                }
+            }
+        } else { // SHORT
+            if (currentPrice >= fib.fib618) {
+                const alreadySent = radar.sentEvents.some(
+                    e => e.type === 'REVERSAL_WARNING' && e.details === 'FIB_618_RETRACEMENT'
+                );
+                if (!alreadySent) {
+                    logger.info(`Radar Phase 1: Fib 61.8% hit for ${radar.symbol}`);
+                    const msg = `📈 <b>رادار المراكز - المرحلة 1: ملامسة تصحيح فيبوناتشي الذهبي 61.8%!</b>\n\n` +
+                        `📍 الرمز: <b>${radar.symbol}</b> (SHORT)\n` +
+                        `📊 السعر الحالي: <b>$${currentPrice.toFixed(4)}</b>\n` +
+                        `🎯 المستوى الذهبي: <b>$${fib.fib618.toFixed(4)}</b>\n\n` +
+                        `💡 <i>السعر يتداول عند أقوى مناطق المقاومة للتصحيح. راقب حدوث ارتداد هابط.</i>`;
+                    await this.notifier(radar.telegramId, msg);
+                    radar.sentEvents.push({
+                        type: 'REVERSAL_WARNING',
+                        sentAt: new Date(),
+                        details: 'FIB_618_RETRACEMENT'
+                    });
+                }
+            } else if (currentPrice >= fib.fib500) {
+                const alreadySent = radar.sentEvents.some(
+                    e => e.type === 'REVERSAL_WARNING' && e.details === 'FIB_50_RETRACEMENT'
+                );
+                if (!alreadySent) {
+                    logger.info(`Radar Phase 1: Fib 50% hit for ${radar.symbol}`);
+                    const msg = `📈 <b>رادار المراكز - المرحلة 1: ملامسة تصحيح فيبوناتشي 50%!</b>\n\n` +
+                        `📍 الرمز: <b>${radar.symbol}</b> (SHORT)\n` +
+                        `📊 السعر الحالي: <b>$${currentPrice.toFixed(4)}</b>\n` +
+                        `🎯 مستوى 50%: <b>$${fib.fib500.toFixed(4)}</b>\n\n` +
+                        `💡 <i>السعر لامس مستوى الـ 50% للتصحيح، وهي منطقة الارتداد الأولية.</i>`;
+                    await this.notifier(radar.telegramId, msg);
+                    radar.sentEvents.push({
+                        type: 'REVERSAL_WARNING',
+                        sentAt: new Date(),
+                        details: 'FIB_50_RETRACEMENT'
+                    });
+                }
+            }
+        }
+    }
+
+    /**
+     * المرحلة 2: تحذيرات كسر الدعم/المقاومة وسحب السيولة (S/R Breakout & Wick Sweep)
+     */
+    private async checkPhase2Breakout(
+        radar: ITradeRadar,
+        ohlcv5m: any[],
+        stopLoss: number,
+        direction: 'LONG' | 'SHORT',
+        currentPrice: number
+    ): Promise<void> {
+        // 1. كشف Wick Sweep (إذا مفعل)
+        if (radar.settings.wickSweepAlert) {
+            await this.detectWickSweep(radar, ohlcv5m, stopLoss, direction, currentPrice);
+        }
+
+        // 2. كسر الدعم والمقاومة المحلية (Fractal Swing Support/Resistance Break)
+        if (radar.settings.reversalAlert) {
+            const recent = ohlcv5m.slice(-15, -1); // exclude live candle
+            if (recent.length >= 5) {
+                if (direction === 'LONG') {
+                    const localSwingLow = Math.min(...recent.map(c => c.low));
+                    if (currentPrice < localSwingLow) {
+                        const alreadySent = radar.sentEvents.some(
+                            e => e.type === 'REVERSAL_WARNING' && e.details === 'LOCAL_SWING_BREAK'
+                        );
+                        if (!alreadySent) {
+                            logger.info(`Radar Phase 2: Swing Low Broken for ${radar.symbol}`);
+                            const msg = `🚨 <b>رادار المراكز - المرحلة 2: كسر الدعم المحلي (Swing Low)!</b>\n\n` +
+                                `📍 الرمز: <b>${radar.symbol}</b> (LONG)\n` +
+                                `⛔ كسر القاع المحلي: السعر الحالي <b>$${currentPrice.toFixed(4)}</b> كسر الدعم السابق عند <b>$${localSwingLow.toFixed(4)}</b>.\n\n` +
+                                `💡 <i>يشير هذا إلى كسر هيكلي هابط وسلبي للمركز الصاعد. ينصح بنقل وقف الخسارة أو تأمين الأرباح.</i>`;
+                            await this.notifier(radar.telegramId, msg);
+                            radar.sentEvents.push({
+                                type: 'REVERSAL_WARNING',
+                                sentAt: new Date(),
+                                details: 'LOCAL_SWING_BREAK'
+                            });
+                        }
+                    }
+                } else { // SHORT
+                    const localSwingHigh = Math.max(...recent.map(c => c.high));
+                    if (currentPrice > localSwingHigh) {
+                        const alreadySent = radar.sentEvents.some(
+                            e => e.type === 'REVERSAL_WARNING' && e.details === 'LOCAL_SWING_BREAK'
+                        );
+                        if (!alreadySent) {
+                            logger.info(`Radar Phase 2: Swing High Broken for ${radar.symbol}`);
+                            const msg = `🚨 <b>رادار المراكز - المرحلة 2: كسر المقاومة المحلية (Swing High)!</b>\n\n` +
+                                `📍 الرمز: <b>${radar.symbol}</b> (SHORT)\n` +
+                                `⛔ كسر القمة المحلية: السعر الحالي <b>$${currentPrice.toFixed(4)}</b> كسر المقاومة السابقة عند <b>$${localSwingHigh.toFixed(4)}</b>.\n\n` +
+                                `💡 <i>يشير هذا إلى كسر هيكلي صاعد وسلبي لصفقة الشورت المفتوحة.</i>`;
+                            await this.notifier(radar.telegramId, msg);
+                            radar.sentEvents.push({
+                                type: 'REVERSAL_WARNING',
+                                sentAt: new Date(),
+                                details: 'LOCAL_SWING_BREAK'
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * المرحلة 3: تحذيرات زخم الترند وتسارع الحركة (Momentum Bounce & Trend Expansion)
+     */
+    private async checkPhase3Momentum(
+        radar: ITradeRadar,
+        ohlcv5m: any[],
+        direction: 'LONG' | 'SHORT',
+        currentPrice: number,
+        symbol: string,
+        pivot1h: number
+    ): Promise<void> {
+        // 1. ارتداد إيجابي (Pivot/Support Bounce + Volume Spike)
+        const recent3 = ohlcv5m.slice(-3);
+        const fib = this.analysis.calculateCorrectionFibLevels(ohlcv5m, direction);
+        const lastCandle = ohlcv5m[ohlcv5m.length - 1];
+
+        // حساب متوسط الحجم لآخر 15 شمعة لاستخلاص انفجار الأحجام (Volume Spike)
+        const lookback = ohlcv5m.slice(-15, -1);
+        const avgVolume = lookback.reduce((sum, c) => sum + c.volume, 0) / lookback.length;
+
+        if (recent3.length >= 3 && avgVolume > 0 && lastCandle) {
+            const volSpike = lastCandle.volume > avgVolume * 1.5;
+            const extremeVolSpike = lastCandle.volume > avgVolume * 2.2;
+
+            // 1.1 Volume Spike (standalone alert if extremely high)
+            if (extremeVolSpike) {
+                const alreadySent = radar.sentEvents.some(
+                    e => e.type === 'CUSTOM' && e.details === 'VOLUME_SPIKE'
+                );
+                if (!alreadySent) {
+                    logger.info(`Radar Phase 3: Volume Spike detected for ${radar.symbol}`);
+                    const msg = `⚡ <b>رادار المراكز - المرحلة 3: انفجار في حجم التداول (Volume Spike)!</b>\n\n` +
+                        `📍 الرمز: <b>${radar.symbol}</b> (${direction})\n` +
+                        `📊 الحجم الحالي: <b>${lastCandle.volume.toFixed(0)}</b> (أعلى بـ ${((lastCandle.volume / avgVolume) * 100).toFixed(0)}% من المتوسط).\n\n` +
+                        `💡 <i>سيولة ضخمة تدخل السوق الآن، توقع حركة سعرية قوية وعنيفة.</i>`;
+                    await this.notifier(radar.telegramId, msg);
+                    radar.sentEvents.push({
+                        type: 'CUSTOM',
+                        sentAt: new Date(),
+                        details: 'VOLUME_SPIKE'
+                    });
+                }
+            }
+
+            // 1.2 Pivot/Support Bounce with Vol Spike
+            let bounced = false;
+            if (direction === 'LONG') {
+                const closeToPivot = pivot1h > 0 && recent3.some(c => Math.abs(c.low - pivot1h) / pivot1h < 0.0015);
+                const closeToFib618 = recent3.some(c => Math.abs(c.low - fib.fib618) / fib.fib618 < 0.0015);
+                const closeToFib500 = recent3.some(c => Math.abs(c.low - fib.fib500) / fib.fib500 < 0.0015);
+                const isGreen = currentPrice > ohlcv5m[ohlcv5m.length - 2].close;
+
+                if ((closeToPivot || closeToFib618 || closeToFib500) && isGreen && volSpike) {
+                    bounced = true;
+                }
+            } else { // SHORT
+                const closeToPivot = pivot1h > 0 && recent3.some(c => Math.abs(c.high - pivot1h) / pivot1h < 0.0015);
+                const closeToFib618 = recent3.some(c => Math.abs(c.high - fib.fib618) / fib.fib618 < 0.0015);
+                const closeToFib500 = recent3.some(c => Math.abs(c.high - fib.fib500) / fib.fib500 < 0.0015);
+                const isRed = currentPrice < ohlcv5m[ohlcv5m.length - 2].close;
+
+                if ((closeToPivot || closeToFib618 || closeToFib500) && isRed && volSpike) {
+                    bounced = true;
+                }
+            }
+
+            if (bounced) {
+                const alreadySent = radar.sentEvents.some(
+                    e => e.type === 'CUSTOM' && e.details === 'MOMENTUM_BOUNCE'
+                );
+                if (!alreadySent) {
+                    logger.info(`Radar Phase 3: Pivot/Support Bounce detected for ${radar.symbol}`);
+                    const bounceType = direction === 'LONG' ? 'صاعد 📈' : 'هابط 📉';
+                    const msg = `🟢 <b>رادار المراكز - المرحلة 3: ارتداد ${bounceType} مع تأكيد سيولة!</b>\n\n` +
+                        `📍 الرمز: <b>${radar.symbol}</b> (${direction})\n` +
+                        `⚡ الإشارة: ارتداد ناجح من مستوى دعم/Pivot مع انفجار أحجام التداول لتأكيد الحركة.\n` +
+                        `📊 السعر الحالي: <b>$${currentPrice.toFixed(4)}</b>\n\n` +
+                        `💡 <i>تأكيد أمان الصفقة واستمرار الزخم باتجاه الأهداف المحددة.</i>`;
+                    await this.notifier(radar.telegramId, msg);
+                    radar.sentEvents.push({
+                        type: 'CUSTOM',
+                        sentAt: new Date(),
+                        details: 'MOMENTUM_BOUNCE'
+                    });
+                }
+            }
+        }
+
+        // 2. Trailing Stop التكيفي (إذا مفعل)
+        if (radar.settings.trailingEnabled) {
+            await this.updateTrailingStop(radar, ohlcv5m, direction, currentPrice, symbol);
         }
     }
 
@@ -404,100 +702,45 @@ export class PositionMonitor {
         }
 
         logger.info(`Radar: Wick Sweep detected for ${radar.symbol}`);
+
+        // Calculate proposed tight stop loss just below sweep candle
+        const compSL = direction === 'LONG' ? lastCandle.low * 0.998 : lastCandle.high * 1.002;
+        const originalTrade = await Trade.findById(radar.tradeId);
+        if (!originalTrade) return;
+
+        const originalMargin = originalTrade.amount / (originalTrade.leverage || 10);
+        const compRiskMargin = originalMargin * 0.5;
+
         const msg = `⚠️ <b>تحذير: سحب سيولة (Wick Sweep)!</b>\n\n` +
             `📍 الرمز: <b>${radar.symbol}</b> (${direction})\n` +
             `📉 الذيل اخترق وقف الخسارة: <b>$${stopLoss.toFixed(4)}</b>\n` +
-            `✅ جسم الشمعة أُغلق خارج خطر الخسارة\n\n` +
-            `<i>هذا سحب سيولة محتمل — الصفقة لا تزال صالحة هيكلياً. راقب الإغلاق القادم.</i>`;
+            `✅ جسم الشمعة أُغلق خارج خطر الخسارة (كسر كاذب)\n\n` +
+            `🛡️ <b>صفقة تعويضية تحوطية مقترحة (بمخاطرة 50%):</b>\n` +
+            `🏁 سعر الدخول: <b>$${currentPrice.toFixed(4)}</b>\n` +
+            `🛑 وقف خسارة ضيق: <b>$${compSL.toFixed(4)}</b>\n` +
+            `💰 الهامش المطلوب: <b>${compRiskMargin.toFixed(2)} USDT</b>\n\n` +
+            `<i>هل تود تنفيذ صفقة التعويض التحوطية الآن؟</i>`;
 
-        await this.notifier(radar.telegramId, msg);
-        radar.sentEvents.push({ type: 'WICK_SWEEP', sentAt: new Date(), details: `SL=${stopLoss}, low=${lastCandle.low}` });
-
-        // --- 🛡️ Wick Sweep Guard: Automatic Compensation Trade ---
-        const alreadyCompensated = radar.sentEvents.some(e => e.type === 'CUSTOM' && e.details.includes('WICK_SWEEP_COMPENSATION'));
-        if (alreadyCompensated) return;
-
-        logger.info(`[Wick Sweep Guard] Placing hedging compensation trade for ${radar.symbol}`);
-
-        try {
-            const originalTrade = await Trade.findById(radar.tradeId);
-            if (!originalTrade) return;
-
-            // Calculate tight stop loss just below sweep candle
-            const compSL = direction === 'LONG' ? lastCandle.low * 0.998 : lastCandle.high * 1.002;
-            const originalMargin = originalTrade.amount / (originalTrade.leverage || 10);
-            
-            // Risk size is 50% of the original risk size (margin)
-            const compRiskMargin = originalMargin * 0.5;
-
-            const signal: any = {
-                type: 'TRADE',
-                symbol: radar.symbol,
-                direction: direction,
-                entry: [currentPrice],
-                stopLoss: compSL,
-                targets: originalTrade.targets.map(t => t.price),
-                leverage: originalTrade.leverage || 10,
-                risk: (compRiskMargin / originalTrade.amount) * 100 * (originalTrade.leverage || 10), // equivalent risk percent
-                marginMode: 'CROSS'
-            };
-
-            const tradeManager = new TradeManager(this.bingx);
-            const compResult = await tradeManager.executeSignal(signal, originalTrade.userId.toString(), originalTrade.sourceChatId);
-
-            if (compResult) {
-                logger.info(`[Wick Sweep Guard] Compensation trade placed: ${compResult.tradeId}`);
-                
-                radar.sentEvents.push({
-                    type: 'CUSTOM',
-                    sentAt: new Date(),
-                    details: `Placed WICK_SWEEP_COMPENSATION trade ${compResult.tradeId} at ${currentPrice} with SL ${compSL}`
-                });
-
-                const compMsg = `🛡️ <b>تفعيل درع سحب السيولة (Wick Sweep Guard)!</b>\n\n` +
-                    `📍 الرمز: <b>${radar.symbol}</b> (${direction})\n` +
-                    `✅ تم رصد كسر كاذب للوقف بواسطة ذيل الشمعة ارتد داخل الأمان.\n` +
-                    `⚡ <b>صفقة تعويضية تلقائية:</b> تم فتح صفقة تحوط تعويضية بسعر دخول أفضل وتدفق سيولة مؤسساتي!\n\n` +
-                    `🏁 سعر الدخول الجديد: <b>$${currentPrice.toFixed(4)}</b>\n` +
-                    `🛑 الوقف الجديد الضيق: <b>$${compSL.toFixed(4)}</b>\n` +
-                    `💰 حجم الهامش: <b>${compRiskMargin.toFixed(2)} USDT</b> (حماية وإدارة مخاطر تلقائية)`;
-                await this.notifier(radar.telegramId, compMsg);
+        const extra = {
+            parse_mode: 'HTML',
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: '⚡ تنفيذ صفقة التعويض', callback_data: `radar_exec_comp_${radar.tradeId}` },
+                        { text: '❌ تجاهل التنبيه', callback_data: `radar_noop` }
+                    ]
+                ]
             }
-        } catch (err: any) {
-            logger.error(`[Wick Sweep Guard] Failed to place compensation trade:`, err);
-        }
-    }
+        };
 
-    /**
-     * كشف الانعكاس المبكر: CHoCH عكسي + RSI Divergence
-     */
-    private async detectEarlyReversal(
-        radar: ITradeRadar,
-        ohlcv: any[],
-        direction: 'LONG' | 'SHORT'
-    ): Promise<void> {
-        // هل أُرسل هذا الحدث مسبقاً؟
-        if (radar.settings.notifyOnce) {
-            const alreadySent = radar.sentEvents.some(e => e.type === 'REVERSAL_WARNING');
-            if (alreadySent) return;
-        }
+        // notifier handles optional extra parameters (like inline keyboard) in bot/index.ts
+        await (this.notifier as any)(radar.telegramId, msg, extra);
 
-        const reversal = CoreTradeRadar.checkEarlyReversal(ohlcv, direction);
-        if (!reversal.detected) return;
-
-        logger.info(`Radar: Early Reversal Warning for ${radar.symbol}`);
-        const actionMsg = direction === 'LONG'
-            ? 'يُنصح بإغلاق 50% من المركز أو نقل SL لنقطة الدخول (Break-Even)'
-            : 'يُنصح بإغلاق 50% من المركز أو نقل SL لنقطة الدخول (Break-Even)';
-
-        const msg = `🚨 <b>تنبيه انعكاس مبكر!</b>\n\n` +
-            `📍 الرمز: <b>${radar.symbol}</b> (${direction})\n` +
-            `⚡ كسر هيكل عكسي: <b>${reversal.description}</b>\n` +
-            `📊 Divergence: <b>${direction === 'LONG' ? 'Bearish Divergence' : 'Bullish Divergence'} ✅</b>\n\n` +
-            `💡 <i>${actionMsg}</i>`;
-
-        await this.notifier(radar.telegramId, msg);
-        radar.sentEvents.push({ type: 'REVERSAL_WARNING', sentAt: new Date(), details: reversal.description });
+        radar.sentEvents.push({
+            type: 'WICK_SWEEP',
+            sentAt: new Date(),
+            details: `SL=${stopLoss}, low=${lastCandle.low}, proposedSL=${compSL}, margin=${compRiskMargin}`
+        });
     }
 
     /**

@@ -1,9 +1,9 @@
-
 import ccxt from 'ccxt';
 import logger from '../utils/logger';
 
 export class BingXService {
     private exchange: any; // Using any to avoid specific version type mismatches for now
+    private candleCache: Map<string, { timestamp: number; data: any }> = new Map();
 
     constructor(apiKey?: string, secretKey?: string) {
         // @ts-ignore
@@ -21,15 +21,40 @@ export class BingXService {
         this.exchange.loadMarkets().catch((err: any) => logger.error('Failed to load markets:', err));
     }
 
+    /**
+     * Resolves the symbol format dynamically based on loaded BingX markets
+     */
+    private resolveSymbol(symbol: string): string {
+        if (!this.exchange.markets) return symbol;
+        if (symbol in this.exchange.markets) return symbol;
+
+        // Try base symbol (split by :)
+        const baseSymbol = symbol.split(':')[0]; // e.g. BTC/USDT
+        if (baseSymbol in this.exchange.markets) return baseSymbol;
+
+        // Try clean uppercase comparisons
+        const symbolClean = symbol.toUpperCase().replace('/', '').replace(':', '').replace('-', '');
+
+        // Search in markets
+        const match = Object.keys(this.exchange.markets).find(m => {
+            const mClean = m.toUpperCase().replace('/', '').replace(':', '').replace('-', '');
+            return mClean === symbolClean || mClean === baseSymbol.toUpperCase().replace('/', '').replace('-', '');
+        });
+
+        if (match) return match;
+        return symbol; // fallback
+    }
+
     async setLeverage(symbol: string, leverage: number, side: 'LONG' | 'SHORT' = 'LONG') {
         const cleanSide = side.toUpperCase();
         const cleanLeverage = Math.floor(leverage); // Ensure integer
 
         try {
             await this.exchange.loadMarkets(); // Ensure markets are loaded for precision
-            logger.info(`Attempting to set leverage: ${cleanLeverage}x for ${symbol} side=${cleanSide}`);
-            await this.exchange.setLeverage(cleanLeverage, symbol, { side: cleanSide });
-            logger.info(`✅ Leverage set to ${cleanLeverage}x for ${symbol} (${cleanSide})`);
+            const targetSymbol = this.resolveSymbol(symbol);
+            logger.info(`Attempting to set leverage: ${cleanLeverage}x for ${targetSymbol} side=${cleanSide}`);
+            await this.exchange.setLeverage(cleanLeverage, targetSymbol, { side: cleanSide });
+            logger.info(`✅ Leverage set to ${cleanLeverage}x for ${targetSymbol} (${cleanSide})`);
         } catch (error: any) {
             logger.error(`❌ Failed to set leverage for ${symbol} ${cleanSide}: ${error.message}`);
             // No retry here, let TradeManager handle logic if needed
@@ -40,11 +65,12 @@ export class BingXService {
     async setMarginMode(symbol: string, mode: 'CROSS' | 'ISOLATED') {
         try {
             await this.exchange.loadMarkets();
+            const targetSymbol = this.resolveSymbol(symbol);
             const marginMode = mode.toUpperCase();
-            logger.info(`Attempting to set margin mode: ${marginMode} for ${symbol}`);
+            logger.info(`Attempting to set margin mode: ${marginMode} for ${targetSymbol}`);
             // BingX specific params might be needed, but ccxt unified usually handles it
-            await this.exchange.setMarginMode(marginMode, symbol);
-            logger.info(`✅ Margin mode set to ${marginMode} for ${symbol}`);
+            await this.exchange.setMarginMode(marginMode, targetSymbol);
+            logger.info(`✅ Margin mode set to ${marginMode} for ${targetSymbol}`);
         } catch (error: any) {
             logger.error(`❌ Failed to set margin mode for ${symbol}: ${error.message}`);
             // Don't throw fatal error, just log. Some pairs might process differently.
@@ -53,15 +79,17 @@ export class BingXService {
 
     async priceToPrecision(symbol: string, price: number) {
         await this.exchange.loadMarkets();
-        return parseFloat(this.exchange.priceToPrecision(symbol, price));
+        const targetSymbol = this.resolveSymbol(symbol);
+        return parseFloat(this.exchange.priceToPrecision(targetSymbol, price));
     }
 
     async amountToPrecision(symbol: string, amount: number) {
         await this.exchange.loadMarkets();
+        const targetSymbol = this.resolveSymbol(symbol);
         try {
-            return parseFloat(this.exchange.amountToPrecision(symbol, amount));
+            return parseFloat(this.exchange.amountToPrecision(targetSymbol, amount));
         } catch (error: any) {
-            logger.error(`❌ (amountToPrecision) Failed to set margin mode for ${symbol}: ${error.message}`);
+            logger.error(`❌ (amountToPrecision) Failed to set precision for ${targetSymbol}: ${error.message}`);
             // If the amount is too small, CCXT throws an error instead of returning 0
             if (error.message && error.message.includes('minimum amount precision')) {
                 return 0;
@@ -72,18 +100,18 @@ export class BingXService {
 
     async getMarketMinAmount(symbol: string) {
         await this.exchange.loadMarkets();
-        const market = this.exchange.market(symbol);
+        const targetSymbol = this.resolveSymbol(symbol);
+        const market = this.exchange.market(targetSymbol);
         return market?.limits?.amount?.min || 0;
     }
 
     async getPricePrecision(symbol: string): Promise<number> {
         try {
             await this.exchange.loadMarkets();
+            const targetSymbol = this.resolveSymbol(symbol);
 
             // Try direct lookup
-            let market = this.exchange.markets[symbol];
-
-
+            let market = this.exchange.markets[targetSymbol];
             const pricePrecision = market?.info?.pricePrecision;
 
             return pricePrecision;
@@ -117,7 +145,9 @@ export class BingXService {
 
     async getMarketPrice(symbol: string) {
         try {
-            const ticker = await this.exchange.fetchTicker(symbol);
+            await this.exchange.loadMarkets();
+            const targetSymbol = this.resolveSymbol(symbol);
+            const ticker = await this.exchange.fetchTicker(targetSymbol);
             return ticker.last;
         } catch (error) {
             logger.error(`Error fetching price for ${symbol}: `, error);
@@ -126,10 +156,18 @@ export class BingXService {
     }
 
     async fetchOHLCV(symbol: string, timeframe: string, limit: number = 100) {
+        const key = `ohlcv:${symbol}:${timeframe}:${limit}`;
+        const now = Date.now();
+        const cached = this.candleCache.get(key);
+        if (cached && (now - cached.timestamp < 45000)) {
+            return cached.data;
+        }
+
         try {
             await this.exchange.loadMarkets();
-            const ohlcv = await this.exchange.fetchOHLCV(symbol, timeframe, undefined, limit);
-            return ohlcv.map((candle: any) => ({
+            const targetSymbol = this.resolveSymbol(symbol);
+            const ohlcv = await this.exchange.fetchOHLCV(targetSymbol, timeframe, undefined, limit);
+            const result = ohlcv.map((candle: any) => ({
                 timestamp: candle[0],
                 open: candle[1],
                 high: candle[2],
@@ -137,6 +175,8 @@ export class BingXService {
                 close: candle[4],
                 volume: candle[5]
             }));
+            this.candleCache.set(key, { timestamp: now, data: result });
+            return result;
         } catch (error) {
             logger.error(`Error fetching OHLCV for ${symbol} (${timeframe}): `, error);
             throw error;
@@ -144,17 +184,24 @@ export class BingXService {
     }
 
     async fetchDeepHistoricalData(symbol: string, timeframe: string, days: number = 7) {
+        const key = `deep:${symbol}:${timeframe}:${days}`;
+        const now = Date.now();
+        const cached = this.candleCache.get(key);
+        if (cached && (now - cached.timestamp < 45000)) {
+            return cached.data;
+        }
+
         try {
             await this.exchange.loadMarkets();
-            const now = Date.now();
+            const targetSymbol = this.resolveSymbol(symbol);
             let since = now - (days * 24 * 60 * 60 * 1000);
             const allCandles: any[] = [];
             const limit = 500; // Safe limit for CCXT/BingX usually
 
-            logger.info(`Fetching deep historical data for ${symbol} (${timeframe}) for the last ${days} days...`);
+            logger.info(`Fetching deep historical data for ${targetSymbol} (${timeframe}) for the last ${days} days...`);
 
             while (since < now) {
-                const ohlcv = await this.exchange.fetchOHLCV(symbol, timeframe, since, limit);
+                const ohlcv = await this.exchange.fetchOHLCV(targetSymbol, timeframe, since, limit);
                 if (!ohlcv || ohlcv.length === 0) break;
 
                 const mapped = ohlcv.map((candle: any) => ({
@@ -167,14 +214,14 @@ export class BingXService {
                 }));
 
                 allCandles.push(...mapped);
-                
+
                 const lastCandleTime = ohlcv[ohlcv.length - 1][0];
-                
+
                 // If the last candle time is not progressing, break to avoid infinite loop
                 if (lastCandleTime <= since) {
                     break;
                 }
-                
+
                 since = lastCandleTime + 1; // move to next ms
 
                 // Small delay to avoid rate limits
@@ -183,11 +230,12 @@ export class BingXService {
 
             // CCXT might return overlapping or duplicate candles if we fetch exactly by timestamp, so let's deduplicate
             const uniqueCandles = Array.from(new Map(allCandles.map(item => [item.timestamp, item])).values());
-            
+
             // Sort to ensure chronological order
             uniqueCandles.sort((a, b) => a.timestamp - b.timestamp);
 
-            logger.info(`Successfully fetched ${uniqueCandles.length} candles for ${symbol} (${timeframe})`);
+            logger.info(`Successfully fetched ${uniqueCandles.length} candles for ${targetSymbol} (${timeframe})`);
+            this.candleCache.set(key, { timestamp: now, data: uniqueCandles });
             return uniqueCandles;
 
         } catch (error) {
@@ -207,9 +255,11 @@ export class BingXService {
      */
     async placeOrder(symbol: string, type: 'market' | 'limit', side: 'buy' | 'sell', amount: number, price?: number, params: any = {}) {
         try {
-            logger.info(`Placing Order: ${symbol} ${side} ${amount} with params: ${JSON.stringify(params)}`);
-            const order = await this.exchange.createOrder(symbol, type, side, amount, price, params);
-            logger.info(`Order placed: ${order.id} for ${symbol} ${side} ${amount} `);
+            await this.exchange.loadMarkets();
+            const targetSymbol = this.resolveSymbol(symbol);
+            logger.info(`Placing Order: ${targetSymbol} ${side} ${amount} with params: ${JSON.stringify(params)}`);
+            const order = await this.exchange.createOrder(targetSymbol, type, side, amount, price, params);
+            logger.info(`Order placed: ${order.id} for ${targetSymbol} ${side} ${amount} `);
             return order;
         } catch (error) {
             logger.error(`Error placing order for ${symbol}: `, error);
@@ -220,7 +270,8 @@ export class BingXService {
     async getPositions(symbol?: string) {
         try {
             await this.exchange.loadMarkets();
-            const symbols = symbol ? [symbol] : undefined;
+            const targetSymbol = symbol ? this.resolveSymbol(symbol) : undefined;
+            const symbols = targetSymbol ? [targetSymbol] : undefined;
             const positions = await this.exchange.fetchPositions(symbols);
             return positions;
         } catch (error) {
@@ -231,7 +282,9 @@ export class BingXService {
 
     async getOrder(symbol: string, orderId: string) {
         try {
-            return await this.exchange.fetchOrder(orderId, symbol);
+            await this.exchange.loadMarkets();
+            const targetSymbol = this.resolveSymbol(symbol);
+            return await this.exchange.fetchOrder(orderId, targetSymbol);
         } catch (error) {
             logger.error(`Error fetching order ${orderId}:`, error);
             // Don't throw, return null to handle gracefully in monitor
@@ -242,11 +295,12 @@ export class BingXService {
     async setStopLoss(symbol: string, stopPrice: number, side: 'LONG' | 'SHORT', amount?: number) {
         try {
             await this.exchange.loadMarkets();
+            const targetSymbol = this.resolveSymbol(symbol);
             const orderSide = side === 'LONG' ? 'sell' : 'buy';
-            
+
             let finalAmount = amount;
             if (!finalAmount || finalAmount <= 0) {
-                const positions = await this.getPositions(symbol);
+                const positions = await this.getPositions(targetSymbol);
                 const matchingPos = positions.find((p: any) =>
                     ((side === 'LONG' && p.side.toLowerCase() === 'long') ||
                         (side === 'SHORT' && p.side.toLowerCase() === 'short')) &&
@@ -258,14 +312,14 @@ export class BingXService {
             }
 
             if (!finalAmount || finalAmount <= 0) {
-                throw new Error(`No active position found for ${symbol} to set stop loss.`);
+                throw new Error(`No active position found for ${targetSymbol} to set stop loss.`);
             }
 
             const params = {
                 stopPrice: stopPrice,
                 positionSide: side
             };
-            return await this.exchange.createOrder(symbol, 'TRIGGER_MARKET', orderSide, finalAmount, undefined, params);
+            return await this.exchange.createOrder(targetSymbol, 'TRIGGER_MARKET', orderSide, finalAmount, undefined, params);
         } catch (error) {
             logger.error(`Error setting stop loss for ${symbol}: `, error);
             throw error;
@@ -286,6 +340,8 @@ export class BingXService {
         hedgeMode: boolean,
         tpProfitSplits?: number[]
     ) {
+        await this.exchange.loadMarkets();
+        const targetSymbol = this.resolveSymbol(symbol);
         const closeSide = direction === 'LONG' ? 'sell' : 'buy';
 
         // --- Stop Loss Order ---
@@ -296,8 +352,8 @@ export class BingXService {
             } else {
                 slParams.reduceOnly = true;
             }
-            await this.exchange.createOrder(symbol, 'STOP', closeSide, amount, undefined, slParams);
-            logger.info(`✅ Stop Loss order placed at ${stopLossPrice.toFixed(6)} for ${symbol}`);
+            await this.exchange.createOrder(targetSymbol, 'STOP', closeSide, amount, undefined, slParams);
+            logger.info(`✅ Stop Loss order placed at ${stopLossPrice.toFixed(6)} for ${targetSymbol}`);
         } catch (err: any) {
             logger.error(`❌ Failed to place Stop Loss for ${symbol}: ${err.message}`);
         }
@@ -328,13 +384,13 @@ export class BingXService {
                 }
 
                 let tpAmount = isLastTP ? remainingAmount : portionSize;
-                tpAmount = await this.amountToPrecision(symbol, tpAmount);
+                tpAmount = await this.amountToPrecision(targetSymbol, tpAmount);
 
                 if (tpAmount <= 0) continue;
 
-                await this.exchange.createOrder(symbol, 'TAKE_PROFIT', closeSide, tpAmount, undefined, tpParams);
+                await this.exchange.createOrder(targetSymbol, 'TAKE_PROFIT', closeSide, tpAmount, undefined, tpParams);
                 remainingAmount -= tpAmount;
-                logger.info(`✅ Take Profit order placed at ${tpPrice.toFixed(6)} (${tpAmount} contracts) for ${symbol}`);
+                logger.info(`✅ Take Profit order placed at ${tpPrice.toFixed(6)} (${tpAmount} contracts) for ${targetSymbol}`);
             } catch (err: any) {
                 logger.error(`❌ Failed to place Take Profit at ${tpPrice.toFixed(6)} for ${symbol}: ${err.message}`);
             }

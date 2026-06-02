@@ -48,8 +48,9 @@ export class TechnicalAnalyzer {
         };
     }
 
-    static calculateTechnicalData(ohlcv: OHLCV[], tf: string, vwap: number): AnalysisDetails {
-        const data = this.prepareCandleData(ohlcv);
+    static calculateTechnicalData(ohlcv: OHLCV[], tf: string, vwap: number, antiRepainting: boolean = false): AnalysisDetails {
+        const candles = antiRepainting ? ohlcv.slice(0, -1) : ohlcv;
+        const data = this.prepareCandleData(candles);
         const { closes, highs, lows, last, prev } = data;
 
         const ma20 = SMA.calculate({ period: 20, values: closes }).slice(-1)[0] || last.close;
@@ -58,12 +59,17 @@ export class TechnicalAnalyzer {
         const rsi = RSI.calculate({ period: 14, values: closes }).slice(-1)[0] || 50;
         const atr = ATR.calculate({ period: 14, high: highs, low: lows, close: closes }).slice(-1)[0] || 0;
 
-        const recentCandles = ohlcv.slice(-15);
+        const recentCandles = candles.slice(-15);
         const lastSwingHigh = Math.max(...recentCandles.map(c => c.high));
         const lastSwingLow = Math.min(...recentCandles.map(c => c.low));
 
+        // When anti-repainting is active, the pivot is calculated using the last closed candle.
+        // If not active, 'prev' is the last closed candle (since 'last' is live).
+        // If active, we sliced out the live candle, so 'last' is now the last closed candle.
+        const pivotBaseCandle = antiRepainting ? last : prev;
+
         const levels: TechnicalLevels = {
-            pivot: (prev.high + prev.low + prev.close) / 3,
+            pivot: (pivotBaseCandle.high + pivotBaseCandle.low + pivotBaseCandle.close) / 3,
             r1: 0, s1: 0, r2: 0, s2: 0,
             ma7: SMA.calculate({ period: 7, values: closes }).slice(-1)[0],
             ma20: ma20,
@@ -75,12 +81,12 @@ export class TechnicalAnalyzer {
             lastSwingLow
         };
 
-        levels.r1 = (2 * levels.pivot) - prev.low;
-        levels.s1 = (2 * levels.pivot) - prev.high;
-        levels.r2 = levels.pivot + (prev.high - prev.low);
-        levels.s2 = levels.pivot - (prev.high - prev.low);
+        levels.r1 = (2 * levels.pivot) - pivotBaseCandle.low;
+        levels.s1 = (2 * levels.pivot) - pivotBaseCandle.high;
+        levels.r2 = levels.pivot + (pivotBaseCandle.high - pivotBaseCandle.low);
+        levels.s2 = levels.pivot - (pivotBaseCandle.high - pivotBaseCandle.low);
 
-        const fibCandles = ohlcv.slice(-50);
+        const fibCandles = candles.slice(-50);
         const maxH = Math.max(...fibCandles.map(c => c.high));
         const minL = Math.min(...fibCandles.map(c => c.low));
         const diff = maxH - minL;

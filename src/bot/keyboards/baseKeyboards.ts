@@ -17,10 +17,11 @@ export const getMainMenuKeyboard = (user: any) => {
                 { text: '❌ إلغاء صفقة محددة' }
             ],
             [
-                { text: '📊 التحليل الذكي (V1-V11)' },
+                { text: '📊 التحليل الذكي (V1-V14)' },
                 { text: '🔬 اختبار الاستراتيجيات' }
             ],
             [
+                { text: '🔍 التحليل والقنص الموحد' },
                 { text: '⚙️ إعدادات الاختبار الرجعي' }
             ],
             [
@@ -319,8 +320,10 @@ export const getBacktestVersionKeyboard = (symbol: string) => {
             [{ text: 'V1 (الأساسي)', callback_data: `btw_v_V1_${symbol}` }, { text: 'V2 (الكمي)', callback_data: `btw_v_V2_${symbol}` }],
             [{ text: 'V3 (المصفوفة)', callback_data: `btw_v_V3_${symbol}` }, { text: 'V4 (ثنائي الاتجاه)', callback_data: `btw_v_V4_${symbol}` }],
             [{ text: 'V5 (تنبؤي)', callback_data: `btw_v_V5_${symbol}` }, { text: 'V6 (Sniper)', callback_data: `btw_v_V6_${symbol}` }],
-            [{ text: 'V7 (القناص الهجيني) 🏹', callback_data: `btw_v_V7_${symbol}` }, { text: 'V10 (المؤسساتي المتقدم) 🏆', callback_data: `btw_v_V10_${symbol}` }],
-            [{ text: 'V11 (القرار الذكي التكيفي) 👑', callback_data: `btw_v_V11_${symbol}` }],
+            [{ text: 'V7 (القناص الهجيني) 🏹', callback_data: `btw_v_V7_${symbol}` }, { text: 'V8 (قناص الموجات) 🌊', callback_data: `btw_v_V8_${symbol}` }],
+            [{ text: 'V9 (قناص SMC) 🏛️', callback_data: `btw_v_V9_${symbol}` }, { text: 'V10 (المؤسساتي المتقدم) 🏆', callback_data: `btw_v_V10_${symbol}` }],
+            [{ text: 'V11 (القرار الذكي التكيفي) 👑', callback_data: `btw_v_V11_${symbol}` }, { text: 'V12 (تدفق السيولة CVD) 📊', callback_data: `btw_v_V12_${symbol}` }],
+            [{ text: 'V13 (مصائد وايكوف) 🪤', callback_data: `btw_v_V13_${symbol}` }, { text: 'V14 (الشبكة العرضية) ↔️', callback_data: `btw_v_V14_${symbol}` }],
             [{ text: 'إلغاء ❌', callback_data: 'btw_cancel' }]
         ]
     };
@@ -414,6 +417,7 @@ export const getBacktestSettingsKeyboard = (user: any) => {
             [{ text: `تقييد أقصى مسافة للاستوب: ${isMaxSlCap}`, callback_data: 'bts_toggle_maxslcap' }],
             [{ text: `[ ${bs.maxSlPercentage || 5}% ] أقصى مسافة للاستوب`, callback_data: 'bts_set_maxslpercentage' }],
             [{ text: `نوع التقرير (CSV): ${isFullReport}`, callback_data: 'bts_toggle_fullreport' }],
+            [{ text: `وقت بدء الاختبار: ${bs.alignToStartOfDay !== false ? '🌅 بداية اليوم (00:00)' : '⏱ وقت الطلب الحالي'}`, callback_data: 'bts_toggle_alignstart' }],
             [{ text: '🔄 استنساخ إعدادات التداول الحي', callback_data: 'bts_sync_live' }],
             [{ text: '✅ إغلاق لوحة الإعدادات', callback_data: 'bts_close' }]
         ]

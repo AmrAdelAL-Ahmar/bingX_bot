@@ -1281,6 +1281,11 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             await user.save();
         }
 
+        if (data === 'bts_toggle_alignstart') {
+            user.backtestSettings.alignToStartOfDay = !(user.backtestSettings.alignToStartOfDay !== false);
+            await user.save();
+        }
+
         if (data === 'bts_set_marginmode') {
             user.backtestSettings.marginMode = user.backtestSettings.marginMode === 'CROSS' ? 'ISOLATED' : 'CROSS';
             await user.save();
@@ -1293,6 +1298,7 @@ export const registerSettingsHandlers = (bot: Telegraf) => {
             user.backtestSettings.maxSlCapEnabled = user.enforceMaxSlLoss || false;
             user.backtestSettings.maxSlPercentage = user.maxSlRiskPercentage || 5;
             user.backtestSettings.riskSizingEnabled = true; // Typically live uses risk sizing
+            user.backtestSettings.alignToStartOfDay = true;
             await user.save();
             await ctx.answerCbQuery('✅ تم استنساخ إعداداتك الحية بنجاح').catch(() => { });
         }

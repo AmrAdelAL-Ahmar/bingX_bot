@@ -6,8 +6,13 @@ import { V4Engine } from './engines/V4Engine';
 import { V5Engine } from './engines/V5Engine';
 import { V6Engine } from './engines/V6Engine';
 import { V7Engine } from './engines/V7Engine';
+import { V8Engine } from './engines/V8Engine';
+import { V9Engine } from './engines/V9Engine';
 import { V10Engine } from './engines/V10Engine';
 import { V11Engine } from './engines/V11Engine';
+import { V12Engine } from './engines/V12Engine';
+import { V13Engine } from './engines/V13Engine';
+import { V14Engine } from './engines/V14Engine';
 import { TechnicalAnalyzer, MATRIX_TFS } from './TechnicalAnalyzer';
 import { OHLCV, AnalysisDetails, AnalysisResult } from '../shared/types';
 
@@ -19,8 +24,13 @@ const ENGINES: Record<string, ITradingEngine> = {
     'V5': new V5Engine(),
     'V6': new V6Engine(),
     'V7': new V7Engine(),
+    'V8': new V8Engine(),
+    'V9': new V9Engine(),
     'V10': new V10Engine(),
-    'V11': new V11Engine()
+    'V11': new V11Engine(),
+    'V12': new V12Engine(),
+    'V13': new V13Engine(),
+    'V14': new V14Engine()
 };
 
 export class CoreAnalysisService {
@@ -28,10 +38,10 @@ export class CoreAnalysisService {
         symbol: string,
         pricePrecision: number,
         mtfOHLCV: Record<string, OHLCV[]>,
-        version: 'V1' | 'V2' | 'V3' | 'V4' | 'V5' | 'V6' | 'V7' | 'V10' | 'V11' = 'V1',
-        options: { quickTF: string, longTF: string, limit: number }
+        version: 'V1' | 'V2' | 'V3' | 'V4' | 'V5' | 'V6' | 'V7' | 'V8' | 'V9' | 'V10' | 'V11' | 'V12' | 'V13' | 'V14' = 'V1',
+        options: { quickTF: string, longTF: string, limit: number, antiRepainting?: boolean }
     ): AnalysisResult {
-        const { quickTF, longTF, limit } = options;
+        const { quickTF, longTF, limit, antiRepainting } = options;
 
         const quickOHLCV = mtfOHLCV[quickTF] || mtfOHLCV['5m'];
         if (!quickOHLCV || quickOHLCV.length === 0) {
@@ -50,7 +60,7 @@ export class CoreAnalysisService {
         const allTimeframes: Record<string, AnalysisDetails> = {};
         MATRIX_TFS.forEach(tf => {
             if (mtfOHLCV[tf] && mtfOHLCV[tf].length > 0) {
-                allTimeframes[tf] = TechnicalAnalyzer.calculateTechnicalData(mtfOHLCV[tf], tf, vwap);
+                allTimeframes[tf] = TechnicalAnalyzer.calculateTechnicalData(mtfOHLCV[tf], tf, vwap, antiRepainting);
             }
         });
 

@@ -24,7 +24,7 @@ import {
 } from '../keyboards/sniperKeyboards';
 import { getMainMenuKeyboard } from '../keyboards/baseKeyboards';
 
-function generateSniperCSVBuffer(trades: any[]): Buffer {
+function generateSniperCSVBuffer(trades: any[], fullReportEnabled?: boolean): Buffer {
     if (!trades || trades.length === 0) return Buffer.from('');
 
     // ── الأعمدة الأساسية للصفقة ──
@@ -41,7 +41,7 @@ function generateSniperCSVBuffer(trades: any[]): Buffer {
     ];
 
     // ── أعمدة كل فريم زمني ──
-    const tfList = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '1d'];
+    const tfList = ['1m', '5m', '15m', '30m', '1h', '4h', '1d'];
     const tfMetrics = ['RSI', 'Trend', 'ATR', 'MACD', 'MACD_Sig', 'MACD_Hist',
         'BB_Up', 'BB_Low', 'StochRSI', 'CCI', 'WilliamsR',
         'Pivot', 'R1', 'S1', 'Fib382', 'Fib618', 'SwingHigh', 'SwingLow'];
@@ -49,6 +49,10 @@ function generateSniperCSVBuffer(trades: any[]): Buffer {
     tfList.forEach(tf => tfMetrics.forEach(m => tfHeaders.push(`${tf}_${m}`)));
 
     const allHeaders = [...baseHeaders, ...analysisHeaders, ...tfHeaders];
+
+    if (!fullReportEnabled) {
+        allHeaders.splice(24);
+    }
     let csvContent = '\uFEFF' + allHeaders.map(h => `"${h}"`).join(',') + '\n';
 
     const safe = (v: any) => {
@@ -92,7 +96,12 @@ function generateSniperCSVBuffer(trades: any[]): Buffer {
             });
         });
 
-        csvContent += [...baseRow, ...analysisRow, ...tfRow].join(',') + '\n';
+        const row = [...baseRow, ...analysisRow, ...tfRow];
+        if (!fullReportEnabled) {
+            row.splice(24);
+        }
+
+        csvContent += row.join(',') + '\n';
     });
 
     return Buffer.from(csvContent, 'utf-8');
@@ -111,15 +120,15 @@ export function registerSniperHandlers(bot: Telegraf, sniperManager: SniperManag
     bot.action('snp_open', async (ctx) => {
         try {
             const telegramId = ctx.from?.id.toString();
-            if (!telegramId) return ctx.answerCbQuery().catch(() => {});
+            if (!telegramId) return ctx.answerCbQuery().catch(() => { });
             const user = await User.findOne({ telegramId });
-            if (!user) return ctx.answerCbQuery('المستخدم غير موجود').catch(() => {});
+            if (!user) return ctx.answerCbQuery('المستخدم غير موجود').catch(() => { });
             const count = await SniperWatch.countDocuments({ userId: user._id, status: 'ACTIVE' });
             await ctx.editMessageText(
                 '🎯 *نظام الاقتناص الذكي*\n\nاختر ما تريد:',
                 { parse_mode: 'Markdown', reply_markup: getSniperMainKeyboard(count) }
             );
-            await ctx.answerCbQuery().catch(() => {});
+            await ctx.answerCbQuery().catch(() => { });
         } catch (e: any) { logger.error('snp_open:', e); }
     });
 
@@ -129,7 +138,7 @@ export function registerSniperHandlers(bot: Telegraf, sniperManager: SniperManag
             '📊 *تقرير اقتناص لحظي*\nاختر محرك الاقتناص أولاً:',
             { parse_mode: 'Markdown', reply_markup: getSniperEngineSelectionKeyboard('instant') }
         );
-        await ctx.answerCbQuery().catch(() => {});
+        await ctx.answerCbQuery().catch(() => { });
     });
 
     // ── إضافة اقتناص جديد — اختيار المحرك أولاً ──────────────────────────────
@@ -138,7 +147,7 @@ export function registerSniperHandlers(bot: Telegraf, sniperManager: SniperManag
             '➕ *إضافة اقتناص جديد*\nاختر محرك الاقتناص أولاً:',
             { parse_mode: 'Markdown', reply_markup: getSniperEngineSelectionKeyboard('add') }
         );
-        await ctx.answerCbQuery().catch(() => {});
+        await ctx.answerCbQuery().catch(() => { });
     });
 
     // ── اختبار رجعي للمحرك — اختيار المحرك أولاً ──────────────────────────────
@@ -147,7 +156,7 @@ export function registerSniperHandlers(bot: Telegraf, sniperManager: SniperManag
             '🧪 *الاختبار الرجعي لقناص الصفقات*\nاختر محرك الاقتناص أولاً:',
             { parse_mode: 'Markdown', reply_markup: getSniperEngineSelectionKeyboard('backtest') }
         );
-        await ctx.answerCbQuery().catch(() => {});
+        await ctx.answerCbQuery().catch(() => { });
     });
 
     // ── اختيار المحرك → عرض قائمة أفضل العملات (مع خيار يدوي) ───────────────
@@ -155,9 +164,9 @@ export function registerSniperHandlers(bot: Telegraf, sniperManager: SniperManag
         const actionType = ctx.match[1];
         const engineId = ctx.match[2];
         const engine = getSniperEngine(engineId);
-        if (!engine) return ctx.answerCbQuery('محرك غير موجود').catch(() => {});
+        if (!engine) return ctx.answerCbQuery('محرك غير موجود').catch(() => { });
 
-        await ctx.answerCbQuery().catch(() => {});
+        await ctx.answerCbQuery().catch(() => { });
 
         // ── عرض قائمة أفضل العملات (أو رسالة "لم يتم الفحص") ──
         await showPickerForSniper(ctx, actionType, engineId, bingxService, true);
@@ -174,7 +183,7 @@ export function registerSniperHandlers(bot: Telegraf, sniperManager: SniperManag
         if (symbol === 'manual') {
             const telegramId = ctx.from?.id.toString();
             if (!telegramId) {
-                await ctx.answerCbQuery().catch(() => {});
+                await ctx.answerCbQuery().catch(() => { });
                 return;
             }
             const user = await User.findOne({ telegramId });
@@ -189,7 +198,7 @@ export function registerSniperHandlers(bot: Telegraf, sniperManager: SniperManag
         } else {
             const fullSymbol = `${symbol}/USDT:USDT`;
             if (actionType === 'instant') {
-                await ctx.answerCbQuery(`⏳ جاري تحليل ${symbol}...`).catch(() => {});
+                await ctx.answerCbQuery(`⏳ جاري تحليل ${symbol}...`).catch(() => { });
                 answered = true;
                 const report = await sniperManager.instantReport(fullSymbol, engineId);
                 if (!report) {
@@ -198,7 +207,7 @@ export function registerSniperHandlers(bot: Telegraf, sniperManager: SniperManag
                     });
                     return;
                 }
-                
+
                 const directionExists = report.direction && report.direction !== 'NONE';
                 const actionButtons: any[][] = [];
                 if (directionExists) {
@@ -207,7 +216,7 @@ export function registerSniperHandlers(bot: Telegraf, sniperManager: SniperManag
                         { text: '📝 نسخ الصفقة', callback_data: `snp_copy_${fullSymbol}_${engineId}` }
                     ]);
                 }
-                
+
                 await ctx.editMessageText(report.details, {
                     parse_mode: 'Markdown',
                     reply_markup: {
@@ -232,7 +241,7 @@ export function registerSniperHandlers(bot: Telegraf, sniperManager: SniperManag
             }
         }
         if (!answered) {
-            await ctx.answerCbQuery().catch(() => {});
+            await ctx.answerCbQuery().catch(() => { });
         }
     });
 
@@ -277,7 +286,7 @@ export function registerSniperHandlers(bot: Telegraf, sniperManager: SniperManag
                 }
 
                 if (result.trades && result.trades.length > 0) {
-                    const csvContent = generateSniperCSVBuffer(result.trades);
+                    const csvContent = generateSniperCSVBuffer(result.trades, user?.backtestSettings?.fullReportEnabled);
                     const safeSymbol = symbol.replace(/[\/:]/g, '_');
                     const now = new Date();
                     const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}`;
@@ -525,7 +534,7 @@ export function registerSniperHandlers(bot: Telegraf, sniperManager: SniperManag
     bot.action('snp_close', async (ctx) => {
         const telegramId = ctx.from?.id.toString();
         const user = telegramId ? await User.findOne({ telegramId }) : null;
-        await ctx.deleteMessage().catch(() => {});
+        await ctx.deleteMessage().catch(() => { });
         if (user) {
             await ctx.reply('تم الإغلاق.', { reply_markup: getMainMenuKeyboard(user) });
         }
@@ -538,12 +547,12 @@ export function registerSniperHandlers(bot: Telegraf, sniperManager: SniperManag
             const symbol = ctx.match[1];
             const engineId = ctx.match[2];
             const telegramId = ctx.from?.id.toString();
-            if (!telegramId) return ctx.answerCbQuery().catch(() => {});
-            
-            const user = await User.findOne({ telegramId });
-            if (!user) return ctx.answerCbQuery('المستخدم غير موجود').catch(() => {});
+            if (!telegramId) return ctx.answerCbQuery().catch(() => { });
 
-            await ctx.answerCbQuery('⏳ جاري تنفيذ الصفقة فورا...').catch(() => {});
+            const user = await User.findOne({ telegramId });
+            if (!user) return ctx.answerCbQuery('المستخدم غير موجود').catch(() => { });
+
+            await ctx.answerCbQuery('⏳ جاري تنفيذ الصفقة فورا...').catch(() => { });
 
             const report = await sniperManager.instantReport(symbol, engineId);
             if (!report || report.direction === 'NONE') {
@@ -575,7 +584,7 @@ export function registerSniperHandlers(bot: Telegraf, sniperManager: SniperManag
                     `🎯 الأهداف: *${result.targets.map(t => t.price).join(', ')}*\n` +
                     `⚙️ الرافعة: *${result.leverage}x*\n` +
                     `💰 الهامش المستخدم: *${result.margin.toFixed(2)} USDT* (${result.marginPercentage}%)`
-                , { parse_mode: 'Markdown' });
+                    , { parse_mode: 'Markdown' });
             } else {
                 await ctx.reply('❌ فشل تنفيذ الصفقة، يرجى مراجعة سجلات البوت.');
             }
@@ -591,9 +600,9 @@ export function registerSniperHandlers(bot: Telegraf, sniperManager: SniperManag
             const symbol = ctx.match[1];
             const engineId = ctx.match[2];
             const telegramId = ctx.from?.id.toString();
-            if (!telegramId) return ctx.answerCbQuery().catch(() => {});
+            if (!telegramId) return ctx.answerCbQuery().catch(() => { });
 
-            await ctx.answerCbQuery('⏳ جاري جلب بيانات النسخ...').catch(() => {});
+            await ctx.answerCbQuery('⏳ جاري جلب بيانات النسخ...').catch(() => { });
 
             const report = await sniperManager.instantReport(symbol, engineId);
             if (!report || report.direction === 'NONE') {
@@ -603,7 +612,7 @@ export function registerSniperHandlers(bot: Telegraf, sniperManager: SniperManag
 
             const symbolShort = symbol.split('/')[0] || symbol;
             const finalSymbol = symbol.includes('/') ? symbol : `${symbolShort}/USDT:USDT`;
-            
+
             const user = await User.findOne({ telegramId });
             const levVal = user && user.leverageMode === 'fixed' ? user.fixedLeverageValue : 10;
 
@@ -627,7 +636,7 @@ ${report.sl}`;
                 `📝 *إليك بيانات الصفقة جاهزة للنسخ بنقرة واحدة:*\n` +
                 `(اضغط على الكود أدناه لنسخه تلقائياً)\n\n` +
                 `\`\`\`\n${copyBox}\n\`\`\``
-            , { parse_mode: 'Markdown' });
+                , { parse_mode: 'Markdown' });
         } catch (e: any) {
             logger.error('snp_copy:', e);
             await ctx.reply(`❌ حدث خطأ أثناء نسخ الصفقة: ${e.message}`);
@@ -639,9 +648,9 @@ ${report.sl}`;
         try {
             const watchId = ctx.match[1];
             const telegramId = ctx.from?.id.toString();
-            if (!telegramId) return ctx.answerCbQuery().catch(() => {});
+            if (!telegramId) return ctx.answerCbQuery().catch(() => { });
 
-            await ctx.answerCbQuery('⏳ جاري تنفيذ صفقة الاقتناص...').catch(() => {});
+            await ctx.answerCbQuery('⏳ جاري تنفيذ صفقة الاقتناص...').catch(() => { });
 
             const watch = await SniperWatch.findById(watchId);
             if (!watch) {
@@ -688,7 +697,7 @@ ${report.sl}`;
                     `🎯 الأهداف: *${result.targets.map(t => t.price).join(', ')}*\n` +
                     `⚙️ الرافعة: *${result.leverage}x*\n` +
                     `💰 الهامش المستخدم: *${result.margin.toFixed(2)} USDT* (${result.marginPercentage}%)`
-                , { parse_mode: 'Markdown' });
+                    , { parse_mode: 'Markdown' });
             } else {
                 await ctx.reply('❌ فشل تنفيذ الصفقة، يرجى مراجعة السجلات.');
             }
@@ -703,9 +712,9 @@ ${report.sl}`;
         try {
             const watchId = ctx.match[1];
             const telegramId = ctx.from?.id.toString();
-            if (!telegramId) return ctx.answerCbQuery().catch(() => {});
+            if (!telegramId) return ctx.answerCbQuery().catch(() => { });
 
-            await ctx.answerCbQuery('⏳ جاري ربط صفقة الرادار...').catch(() => {});
+            await ctx.answerCbQuery('⏳ جاري ربط صفقة الرادار...').catch(() => { });
 
             const watch = await SniperWatch.findById(watchId);
             if (!watch) {
@@ -756,7 +765,7 @@ ${report.sl}`;
                 `✅ *تم تفعيل رادار المراقبة بنجاح لهذه الصفقة!*\n\n` +
                 `📡 الصفقة: *${trade.symbol.split('/')[0]}* (${trade.direction})\n\n` +
                 `سيقوم الرادار الآن بمراقبة الشموع الحية وسعر السوق لحمايتك وتفعيل الميزات الذكية.`
-            , { parse_mode: 'Markdown' });
+                , { parse_mode: 'Markdown' });
 
         } catch (e: any) {
             logger.error('snp_radar:', e);

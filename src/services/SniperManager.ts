@@ -51,13 +51,15 @@ export class SniperManager {
             const activeWatches = await SniperWatch.find({ status: 'ACTIVE' });
             if (activeWatches.length === 0) return;
 
-            logger.info(`🎯 SniperManager: checking ${activeWatches.length} active watches`);
+            logger.info(`🎯 SniperManager: checking ${activeWatches.length} active watches in parallel`);
 
-            for (const watch of activeWatches) {
-                await this.processWatch(watch).catch(err =>
-                    logger.error(`SniperManager error for ${watch.symbol}:`, err)
-                );
-            }
+            await Promise.all(
+                activeWatches.map(watch =>
+                    this.processWatch(watch).catch(err =>
+                        logger.error(`SniperManager error for ${watch.symbol}:`, err)
+                    )
+                )
+            );
         } catch (err) {
             logger.error('SniperManager runCycle error:', err);
         }

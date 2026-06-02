@@ -8,8 +8,13 @@ import { V4Engine } from '../analysis/engines/V4Engine';
 import { V5Engine } from '../analysis/engines/V5Engine';
 import { V6Engine } from '../analysis/engines/V6Engine';
 import { V7Engine } from '../analysis/engines/V7Engine';
+import { V8Engine } from '../analysis/engines/V8Engine';
+import { V9Engine } from '../analysis/engines/V9Engine';
 import { V10Engine } from '../analysis/engines/V10Engine';
 import { V11Engine } from '../analysis/engines/V11Engine';
+import { V12Engine } from '../analysis/engines/V12Engine';
+import { V13Engine } from '../analysis/engines/V13Engine';
+import { V14Engine } from '../analysis/engines/V14Engine';
 import { MTFDataBuilder } from '../shared/MTFDataBuilder';
 
 const ENGINES: Record<string, ITradingEngine> = {
@@ -20,8 +25,13 @@ const ENGINES: Record<string, ITradingEngine> = {
     'V5': new V5Engine(),
     'V6': new V6Engine(),
     'V7': new V7Engine(),
+    'V8': new V8Engine(),
+    'V9': new V9Engine(),
     'V10': new V10Engine(),
-    'V11': new V11Engine()
+    'V11': new V11Engine(),
+    'V12': new V12Engine(),
+    'V13': new V13Engine(),
+    'V14': new V14Engine()
 };
 
 export interface BacktestOptions {
@@ -37,6 +47,7 @@ export interface BacktestOptions {
     riskSizingEnabled?: boolean;
     maxSlCapEnabled?: boolean;
     maxSlPercentage?: number;
+    alignToStartOfDay?: boolean;
 }
 
 export interface BacktestSimulationResult {
@@ -53,7 +64,12 @@ export class CoreBacktestEngine {
     ): BacktestSimulationResult {
         const stepMs = options.stepMinutes * 60 * 1000;
         const now = Date.now();
-        const startTime = now - (options.days * 24 * 60 * 60 * 1000);
+        let startTime = now - (options.days * 24 * 60 * 60 * 1000);
+        if (options.alignToStartOfDay) {
+            const startOfStartDay = new Date(startTime);
+            startOfStartDay.setUTCHours(0, 0, 0, 0);
+            startTime = startOfStartDay.getTime();
+        }
 
         const engine = ENGINES[version] || ENGINES['V1'];
         const generatedTrades: any[] = [];
@@ -323,6 +339,9 @@ export class CoreBacktestEngine {
 
         events.sort((a, b) => a.time - b.time);
 
+        const slippageRate = 0.0003; // 0.03% Slippage
+        const takerFeeRate = 0.0005; // 0.05% Taker Fee (standard fee)
+
         for (const event of events) {
             if (event.type === 'OPEN') {
                 let slDistancePercentage = 0;
@@ -340,7 +359,9 @@ export class CoreBacktestEngine {
                     }
                 }
 
-                if (activeCapital < 5) {
+                const entryFee = (requestedMargin * defaultLeverage) * takerFeeRate;
+
+                if (activeCapital - entryFee < 5) {
                     event.trade.skipped = true;
                     event.trade.skipReason = 'Insufficient Margin';
                     skippedTrades++;
@@ -361,45 +382,65 @@ export class CoreBacktestEngine {
                 event.trade.availableCapitalBefore = activeCapital;
                 event.trade.totalCapitalBefore = totalCapital;
 
-                let actualMargin = Math.min(requestedMargin, activeCapital);
-                activeCapital -= actualMargin;
+                let actualMargin = Math.min(requestedMargin, activeCapital - entryFee);
+                activeCapital -= (actualMargin + entryFee);
+                totalCapital -= entryFee;
 
                 event.trade.marginUsed = actualMargin;
                 event.trade.marginPercent = (actualMargin / totalCapital) * 100;
                 event.trade.leverage = defaultLeverage;
+                event.trade.entryFee = entryFee;
             } else if (event.type === 'CLOSE') {
                 if (event.trade.skipped) continue;
 
                 const margin = event.trade.marginUsed;
-                let pnlMultiplier = 0;
+                const exitFee = (margin * defaultLeverage) * takerFeeRate;
 
+                // Slippage adjustment on entry and close prices
+                const entrySlippage = event.trade.type === 'LONG' ? (1 + slippageRate) : (1 - slippageRate);
+                const effectiveEntry = event.trade.entry * entrySlippage;
+
+                const exitSlippage = event.trade.type === 'LONG' ? (1 - slippageRate) : (1 + slippageRate);
+                const effectiveClose = event.trade.closePrice * exitSlippage;
+
+                let pnlMultiplier = 0;
                 if (event.trade.type === 'LONG') {
-                    pnlMultiplier = ((event.trade.closePrice - event.trade.entry) / event.trade.entry) * defaultLeverage;
+                    pnlMultiplier = ((effectiveClose - effectiveEntry) / effectiveEntry) * defaultLeverage;
                 } else {
-                    pnlMultiplier = ((event.trade.entry - event.trade.closePrice) / event.trade.entry) * defaultLeverage;
+                    pnlMultiplier = ((effectiveEntry - effectiveClose) / effectiveEntry) * defaultLeverage;
                 }
 
-                let pnlUSDT = margin * pnlMultiplier;
+                let pnlUSDT = margin * pnlMultiplier - exitFee;
 
                 if (event.trade.marginMode === 'ISOLATED' && pnlUSDT < -margin) {
                     pnlUSDT = -margin;
+                } else if (event.trade.marginMode === 'CROSS') {
+                    // Check if totalCapital drops below maintenance margin (e.g., 5% of position value)
+                    const maintenanceMargin = (margin * defaultLeverage) * 0.05;
+                    if (totalCapital + pnlUSDT <= maintenanceMargin) {
+                        pnlUSDT = -totalCapital;
+                    }
                 }
-
-                const pnlPercent = (pnlUSDT / margin) * 100;
 
                 activeCapital += (margin + pnlUSDT);
                 totalCapital += pnlUSDT;
 
+                // If cross liquidation happened
+                if (totalCapital <= 0) {
+                    totalCapital = 0;
+                    activeCapital = 0;
+                }
+
                 if (totalCapital > peakCapital) {
                     peakCapital = totalCapital;
                 }
-                const currentDrawdown = ((peakCapital - totalCapital) / peakCapital) * 100;
+                const currentDrawdown = peakCapital > 0 ? (((peakCapital - totalCapital) / peakCapital) * 100) : 0;
                 if (currentDrawdown > maxDrawdown) {
                     maxDrawdown = currentDrawdown;
                 }
 
                 event.trade.pnlUSDT = pnlUSDT;
-                event.trade.pnlPercent = pnlPercent;
+                event.trade.pnlPercent = (pnlUSDT / margin) * 100;
                 event.trade.availableCapitalAfter = activeCapital;
                 event.trade.totalCapitalAfter = totalCapital;
             }
