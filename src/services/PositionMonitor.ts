@@ -7,6 +7,9 @@ import { TechnicalAnalyzer } from './TechnicalAnalyzer';
 import { TradeManager } from './TradeManager';
 import { CoreTradeRadar } from '../core/radar/CoreTradeRadar';
 import logger from '../utils/logger';
+import { getRadarEngine } from '../core/radar/RadarEngineRegistry';
+import { FrozenPairsRegistry } from '../utils/FrozenPairsRegistry';
+import { OHLCV, AnalysisDetails } from '../core/shared/types';
 
 export class PositionMonitor {
     private bingx: BingXService;
@@ -15,10 +18,18 @@ export class PositionMonitor {
     private isRunning: boolean = false;
     private intervalId?: NodeJS.Timeout;
 
-    constructor(bingx: BingXService, analysis: AnalysisService, notifier: (telegramId: string, msg: string) => Promise<void>) {
+    private tradeManager: TradeManager;
+
+    constructor(
+        bingx: BingXService,
+        analysis: AnalysisService,
+        notifier: (telegramId: string, msg: string) => Promise<void>,
+        tradeManager?: TradeManager
+    ) {
         this.bingx = bingx;
         this.analysis = analysis;
         this.notifier = notifier;
+        this.tradeManager = tradeManager || new TradeManager(bingx);
     }
 
     start(intervalMs: number = 30000) { // Check every 30s
@@ -350,6 +361,108 @@ export class PositionMonitor {
         try {
             const radar = await TradeRadar.findOne({ tradeId, isActive: true });
             if (!radar) return;
+
+            // ── Call Independent Radar monitoring engine if engineId is set ──
+            if (radar.engineId) {
+                const radarEngine = getRadarEngine(radar.engineId);
+                if (radarEngine) {
+                    try {
+                        const ohlcv5m = await this.bingx.fetchOHLCV(symbol, '5m', 100);
+                        const ohlcv15m = await this.bingx.fetchOHLCV(symbol, '15m', 100);
+                        const ohlcv1h = await this.bingx.fetchOHLCV(symbol, '1h', 100);
+                        const ohlcv4h = await this.bingx.fetchOHLCV(symbol, '4h', 100);
+                        const ohlcv1d = await this.bingx.fetchOHLCV(symbol, '1d', 100).catch(() => []);
+
+                        const mtfOHLCV: Record<string, OHLCV[]> = {
+                            '5m': ohlcv5m,
+                            '15m': ohlcv15m,
+                            '1h': ohlcv1h,
+                            '4h': ohlcv4h,
+                            '1d': ohlcv1d
+                        };
+
+                        const allTimeframes: Record<string, AnalysisDetails> = {};
+                        for (const [tf, candles] of Object.entries(mtfOHLCV)) {
+                            if (candles.length >= 14) {
+                                allTimeframes[tf] = TechnicalAnalyzer.calculateTechnicalData(candles, tf, currentPrice);
+                            }
+                        }
+
+                        const checkResult = radarEngine.monitor(
+                            direction,
+                            currentPrice,
+                            ohlcv5m,
+                            allTimeframes,
+                            mtfOHLCV
+                        );
+
+                        if (checkResult.invalidate) {
+                            logger.warn(`[PositionMonitor] Radar Engine ${radar.engineId} invalidated position for ${symbol}: ${checkResult.reason}`);
+
+                            // Close position immediately
+                            await this.tradeManager.closeSpecificPosition(radar.userId.toString(), symbol);
+
+                            radar.isActive = false;
+                            radar.sentEvents.push({
+                                type: 'CUSTOM',
+                                sentAt: new Date(),
+                                details: `INVALIDATION: ${checkResult.action} - ${checkResult.reason}`
+                            });
+                            await radar.save();
+
+                            const originalTrade = await Trade.findById(tradeId);
+                            if (originalTrade) {
+                                originalTrade.currentStatus = 'CLOSED_LOSS';
+                                originalTrade.closeTime = new Date();
+                                originalTrade.logs.push(`Invalidated by Radar Engine ${radar.engineId}. Action: ${checkResult.action}. Reason: ${checkResult.reason}`);
+                                await originalTrade.save();
+                            }
+
+                            let actionLabel = '';
+                            if (checkResult.action === 'EXIT') actionLabel = 'خروج فوري (EXIT)';
+                            else if (checkResult.action === 'FREEZE') actionLabel = 'تجميد التداول (FREEZE)';
+                            else if (checkResult.action === 'FLIP') actionLabel = 'انعكاس المركز (FLIP)';
+                            else if (checkResult.action === 'RESET') actionLabel = 'إعادة ضبط النموذج (RESET)';
+
+                            const notifyMsg = `🚨 <b>تنبيه المراقب المستقل (Radar ${radar.engineId}): كسر شروط الاستمرار!</b>\n\n` +
+                                `📍 الرمز: <b>${symbol}</b> (${direction})\n` +
+                                `⛔ السبب: ${checkResult.reason}\n` +
+                                `⚙️ الإجراء المتخذ: <b>${actionLabel}</b>\n\n` +
+                                `💡 <i>تم إغلاق المركز فوراً لحماية رأس المال.</i>`;
+                            await this.notifier(radar.telegramId, notifyMsg);
+
+                            // Handle actions
+                            if (checkResult.action === 'FREEZE') {
+                                FrozenPairsRegistry.freeze(symbol, 2 * 60 * 60 * 1000); // 2 hours
+                                await this.notifier(radar.telegramId, `❄️ <b>تم تجميد التداول على زوج ${symbol} لمدة ساعتين!</b>`);
+                            } else if (checkResult.action === 'FLIP') {
+                                const flipDirection = direction === 'LONG' ? 'SHORT' : 'LONG';
+                                if (originalTrade) {
+                                    const flipSignal = {
+                                        symbol,
+                                        type: 'TRADE' as const,
+                                        direction: flipDirection as 'LONG' | 'SHORT',
+                                        entry: [currentPrice],
+                                        stopLoss: flipDirection === 'LONG' ? currentPrice * 0.98 : currentPrice * 1.02,
+                                        targets: [flipDirection === 'LONG' ? currentPrice * 1.04 : currentPrice * 0.96],
+                                        risk: originalTrade.leverage ? originalTrade.amount * (originalTrade.leverage / 100) : 2,
+                                        leverage: originalTrade.leverage || 10,
+                                        engineId: radar.engineId
+                                    };
+                                    await this.notifier(radar.telegramId, `🔄 <b>بدء تنفيذ مركز عكسي (FLIP) لـ ${symbol}...</b>`);
+                                    await this.tradeManager.executeSignal(flipSignal, radar.userId.toString(), originalTrade.sourceChatId);
+                                }
+                            } else if (checkResult.action === 'RESET') {
+                                await this.notifier(radar.telegramId, `🔄 <b>تمت إعادة تهيئة نموذج ${radar.engineId} وتصفير المعاملات للرمز ${symbol}.</b>`);
+                            }
+
+                            return; // Stop further checks for this closed trade
+                        }
+                    } catch (err: any) {
+                        logger.error(`[PositionMonitor] Error running Radar Engine ${radar.engineId} check: ${err.message}`, err);
+                    }
+                }
+            }
 
             // جلب شموع 5m للتحليل
             const ohlcv5m = await this.bingx.fetchOHLCV(symbol, '5m', 30);

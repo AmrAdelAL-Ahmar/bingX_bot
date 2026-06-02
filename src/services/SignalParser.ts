@@ -10,6 +10,7 @@ export interface ParsedSignal {
     risk?: number;
     leverage?: number;
     marginMode?: 'CROSS' | 'ISOLATED';
+    engineId?: string;
 }
 
 export class SignalParser {

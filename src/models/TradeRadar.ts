@@ -33,6 +33,7 @@ export interface ITradeRadar extends Document {
     }[];
     lastCheckedAt?: Date;
     createdAt: Date;
+    engineId?: string;
 }
 
 // ─── Schema ────────────────────────────────────────────────────────────────────
@@ -46,6 +47,7 @@ const TradeRadarSchema: Schema = new Schema({
     entryPrice: { type: Number, required: true },
     currentSL: { type: Number, required: true },
     isActive: { type: Boolean, default: true },
+    engineId: { type: String },
     settings: {
         notifyOnce: { type: Boolean, default: true },
         trailingEnabled: { type: Boolean, default: false },

@@ -17,7 +17,7 @@ export const getMainMenuKeyboard = (user: any) => {
                 { text: '❌ إلغاء صفقة محددة' }
             ],
             [
-                { text: '📊 التحليل الذكي (V1-V14)' },
+                { text: '📊 التحليل الذكي (V1-V16)' },
                 { text: '🔬 اختبار الاستراتيجيات' }
             ],
             [
@@ -322,8 +322,9 @@ export const getBacktestVersionKeyboard = (symbol: string) => {
             [{ text: 'V5 (تنبؤي)', callback_data: `btw_v_V5_${symbol}` }, { text: 'V6 (Sniper)', callback_data: `btw_v_V6_${symbol}` }],
             [{ text: 'V7 (القناص الهجيني) 🏹', callback_data: `btw_v_V7_${symbol}` }, { text: 'V8 (قناص الموجات) 🌊', callback_data: `btw_v_V8_${symbol}` }],
             [{ text: 'V9 (قناص SMC) 🏛️', callback_data: `btw_v_V9_${symbol}` }, { text: 'V10 (المؤسساتي المتقدم) 🏆', callback_data: `btw_v_V10_${symbol}` }],
-            [{ text: 'V11 (القرار الذكي التكيفي) 👑', callback_data: `btw_v_V11_${symbol}` }, { text: 'V12 (تدفق السيولة CVD) 📊', callback_data: `btw_v_V12_${symbol}` }],
-            [{ text: 'V13 (مصائد وايكوف) 🪤', callback_data: `btw_v_V13_${symbol}` }, { text: 'V14 (الشبكة العرضية) ↔️', callback_data: `btw_v_V14_${symbol}` }],
+            [{ text: 'V11 (القرار الذكي التكيفي) 👑', callback_data: `btw_v_V11_${symbol}` }, { text: 'V12 (CVD تدفق السيولة) 📊', callback_data: `btw_v_V12_${symbol}` }],
+            [{ text: 'V13 (مصائد السيولة وايكوف) 🪤', callback_data: `btw_v_V13_${symbol}` }, { text: 'V14 (رينكو السحابية التكيفية) ☁️', callback_data: `btw_v_V14_${symbol}` }],
+            [{ text: 'V15 (تشان الهارمونية الكمية) 🌌', callback_data: `btw_v_V15_${symbol}` }, { text: 'V16 (مصفوفة الزمان والمكان الهجينة) 🏹', callback_data: `btw_v_V16_${symbol}` }],
             [{ text: 'إلغاء ❌', callback_data: 'btw_cancel' }]
         ]
     };

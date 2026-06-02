@@ -351,19 +351,19 @@ export const registerAnalysisHandlers = (bot: Telegraf, tradeManager: TradeManag
     });
 
     // --- SMART ANALYSIS FLOW ---
-    bot.hears('📊 التحليل الذكي (V1-V14)', async (ctx) => {
+    bot.hears('📊 التحليل الذكي (V1-V16)', async (ctx) => {
         try {
             return ctx.reply('الرجاء اختيار إصدار خوارزمية التحليل التي تود استخدامها:', {
                 reply_markup: getAlgoVersionKeyboard()
             });
         } catch (error) {
-            logger.error('Error in hears 📊 التحليل الذكي (V1-V14):', error);
+            logger.error('Error in hears 📊 التحليل الذكي (V1-V16):', error);
         }
     });
 
     bot.hears('دليل الخوارزميات 📖', async (ctx) => {
         try {
-            const guide = `📖 **دليل الخوارزميات (V1-V14):**\n\n` +
+            const guide = `📖 **دليل الخوارزميات (V1-V16):**\n\n` +
                 `${analysisService.getAlgorithmExplanation('V1')}\n\n` +
                 `${analysisService.getAlgorithmExplanation('V2')}\n\n` +
                 `${analysisService.getAlgorithmExplanation('V3')}\n\n` +
@@ -377,7 +377,9 @@ export const registerAnalysisHandlers = (bot: Telegraf, tradeManager: TradeManag
                 `${analysisService.getAlgorithmExplanation('V11')}\n\n` +
                 `${analysisService.getAlgorithmExplanation('V12')}\n\n` +
                 `${analysisService.getAlgorithmExplanation('V13')}\n\n` +
-                `${analysisService.getAlgorithmExplanation('V14')}`;
+                `${analysisService.getAlgorithmExplanation('V14')}\n\n` +
+                `${analysisService.getAlgorithmExplanation('V15')}\n\n` +
+                `${analysisService.getAlgorithmExplanation('V16')}`;
             return ctx.reply(guide);
         } catch (error) {
             logger.error('Error in hears دليل الخوارزميات 📖:', error);
@@ -398,14 +400,16 @@ export const registerAnalysisHandlers = (bot: Telegraf, tradeManager: TradeManag
         { text: 'الخوارزمية V11 (القرار الذكي التكيفي) 👑', version: 'V11' },
         { text: 'الخوارزمية V12 (تدفق السيولة CVD) 📊', version: 'V12' },
         { text: 'الخوارزمية V13 (مصائد السيولة وايكوف) 🪤', version: 'V13' },
-        { text: 'الخوارزمية V14 (الشبكة العرضية) ↔️', version: 'V14' }
+        { text: 'الخوارزمية V14 (رينكو السحابية التكيفية) ☁️', version: 'V14' },
+        { text: 'الخوارزمية V15 (تشان الهارمونية الكمية) 🌌', version: 'V15' },
+        { text: 'الخوارزمية V16 (مصفوفة الزمان والمكان الهجينة) 🏹', version: 'V16' }
     ];
 
     for (const algo of algos) {
         bot.hears(algo.text, async (ctx) => {
             try {
                 // ── عرض قائمة أفضل العملات (أو رسالة الفحص) بدلاً من طلب نص مباشرة ──
-                await showPickerForAnalysis(ctx, algo.version, bingxService, false);
+                await showPickerForAnalysis(ctx, algo.version as any, bingxService, false);
             } catch (error) {
                 logger.error(`Error in hears ${algo.text}:`, error);
             }

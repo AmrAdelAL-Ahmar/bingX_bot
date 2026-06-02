@@ -30,7 +30,8 @@
 │   ├────────────────────────────────────────────────────────────────┤   │
 │   │   External API Bridge: BingXService (CCXT Connection)          │   │
 │   ├────────────────────────────────────────────────────────────────┤   │
-│   │   Operations Facades: TradeManager / SymbolPickerService       │   │
+│   │   Operations Facades: TradeManager / SymbolPickerService /     │   │
+│   │                       UnifiedScannerService                    │   │
 │   └────────────────────────────────────────────────────────────────┘   │
 └───────────────────────────────────┬────────────────────────────────────┘
                                     │ يمرر البيانات ويطلب الحساب
@@ -43,7 +44,7 @@
 │   │    core/analysis/    │  │     core/sniper/     │  │ core/radar/ │  │
 │   │  CoreAnalysisService │  │  CoreSniperScanner   │  │  CoreTrade- │  │
 │   │  TechnicalAnalyzer   │  │    SniperRegistry    │  │    Radar    │  │
-│   │   Engines (V1-V11)   │  │  Engines (V7-V11)    │  │ (Trailing)  │  │
+│   │   Engines (V1-V14)   │  │  Engines (V7-V14)    │  │ (Trailing)  │  │
 │   └──────────────────────┘  └──────────────────────┘  └─────────────┘  │
 │   ┌──────────────────────┐  ┌──────────────────────┐                   │
 │   │     core/picker/     │  │    core/backtest/    │                   │
@@ -68,8 +69,8 @@ BingXService.fetchOHLCV() for 7 Timeframes
  └─> CoreAnalysisService.analyze() (Core Layer)
          │
          ├─> TechnicalAnalyzer.calculateTechnicalData() (Compute Indicators)
-         ├─> EnginesV1..V11.analyze() (Evaluate Strategies)
-         └─> AnalysisFormatter.formatReport() (Generate Arabic UI) ──> [Telegram Message]
+         ├─> EnginesV1..V14.analyze() (Evaluate Strategies)
+          └─> AnalysisFormatter.formatReport() (Generate Arabic UI) ──> [Telegram Message]
 ```
 
 ### 2. تدفق رصد واقتناص الصفقات (Whale Sniper Flow)
@@ -84,7 +85,7 @@ SniperManager.ts (Worker)
  ├─> BingXService.fetchDeepHistoricalData() (Get Candle Padding)
  └─> CoreSniperScanner.scan() (Core Layer)
          │
-         ├─> SniperRegistry.getEngine(V7..V11)
+         ├─> SniperRegistry.getEngine(V7..V14)
          ├─> VEngine.scan() (Compute POI, SMC Structure, Volume Spikes)
          └─> SniperReport (Return stats & readyToFire flag)
                  │
@@ -97,6 +98,78 @@ SniperManager.ts (Worker)
 [User Telegram] ──> pickerHandlers.ts ──> SymbolPickerService.ts
                                                   │
  ┌────────────────────────────────────────────────┴─ (Batch Size = 5)
+ ▼
+CcxtPickerEngine / CurrencyPickerEngine (Core Layer)
+ │
+ ├─> ccxt.bingx.loadMarkets() & fetchTickers() (Global volume rank)
+ ├─> Filter Quote Volume > 15M & Exclude Choppy Markets (SMC filter)
+ ├─> Score Volatility (ATR), Volume Pump, MACD, RSI, Level Proximity
+ └─> Rank & Update DB (MarketScanner) ──> Return Top N ──> pickerHandlers Progress Bar
+```
+
+### 4. تدفق الرادار والمراقبة النشطة (Trade Radar Flow)
+```
+PositionMonitor (Worker Cycle: 30s)
+ │
+ ├─> BingXService.getPositions() & TradeRadar.find({ isActive: true })
+ ├─> CoreTradeRadar.checkWickSweep() ──> [If true] ──> Telegram Alert (Liquidity Hunt)
+ ├─> CoreTradeRadar.checkEarlyReversal() ──> [If true] ──> Telegram Reversal Alert (CHOCH+RSI Div)
+ └─> CoreTradeRadar.calculateTrailingStop() ──> [If new SL] ──> Update SL on BingX & DB ──> Tel Msg
+```
+
+---
+
+## 🗄️ خريطة النماذج المخزنة (Database Models)
+
+* **`User`**: إعدادات التداول والمخاطر والرافعة ووضع HITLAR والـ State الحالية للبوت.
+* **`Trade`**: بيانات الصفقة الفعلية المفتوحة والمغلقة، الـ PnL، أوقات التنفيذ، والمعرف الفريد.
+* **`SniperWatch`**: طلبات مراقبة الاقتناص النشطة، المحرك المستهدف، تاريخ الانتهاء، وآخر تقرير.
+* **`TradeRadar`**: إعدادات الحماية النشطة للصفقات (الوقف المتحرك وتنبيهات كشط السيولة).
+* **`MarketScanner`**: نتائج فرز العملات اليومي لحساب السيولة والاتجاه والتقلب.
+
+---
+
+## 📚 هيكل ملفات التوثيق المرجعي (Documentation Directory)
+
+تجد تفاصيل أدق لكل مكون في التوثيق الخاص به:
+
+```
+docs/
+├── SYSTEM_OVERVIEW.md          ← هذا الملف (النظرة المعمارية ونظام التواصل)
+├── FULL_SYSTEM_OVERVIEW.md     ← الدليل الشامل لكافة دورات حياة الصفقات والـ Backtest
+├── AnalysisService.md          ← خدمة التحليل المركزي وجسر التوافقية
+├── TechnicalAnalyzer.md        ← المعادلات الرياضية لحساب المؤشرات الفنية
+├── MTFDataBuilder.md           ← معالجة وتوحيد الشموع المتعددة ومنع Look-Ahead
+├── BacktestService.md          ← محاكاة الصفقات التاريخية للمحركات العادية ومحركات القنص
+├── infrastructure.md           ← نقطة الدخول والاتصال بـ DB والـ Logger والتقارير الدورية
+│
+├── upgrade/
+│   ├── CORE_UPGRADE_PLAN.md    ← خطة تطوير المحركات والتنبيهات المحدثة
+│   ├── CORE_UPGRADE_IMPLEMENTATION_PLAN.md ← خطة التنفيذ المعتمدة للتطوير
+│   └── SYSTEM_UPGRADE_V2.1_REPORT.md ← تقرير ترقية وتطوير النظام V2.1 بالتفصيل
+│
+├── core/
+│   ├── sniper/
+│   │   └── SniperSystem.md     ← تفاصيل محركات الاقتناص V7-V14 والماسح والنماذج
+│   ├── picker/
+│   │   └── PickerSystem.md     ← خوارزميات فرز واكتشاف العملات ومعايير التقييم
+│   └── radar/
+│       └── RadarSystem.md      ← معادلات تحريك الوقف التلقائي وكشف Wick Sweep والانعكاس
+│
+├── services/
+│   ├── BingXService.md         ← التفاعل المباشر مع API البورصة وحساب Precision
+│   ├── TradeManager.md         ← إدارة المخاطر، الرافعة، دروع رأس المال، وتنفيذ الصفقات
+│   ├── PositionMonitor.md      ← مراقبة الصفقات كل 30 ثانية وتنبيهات الأرباح
+│   ├── UnifiedScannerService.md ← خدمة المسح الموحد والتحليل متعدد العملات والمحركات
+│   ├── SignalParser.md         ← تحليل الإشارات النصية القادمة من قنوات التوصيات
+│   ├── SniperManager.md        ← دورة الاقتناص بالخلفية وMargin Lock
+│   └── SymbolPickerService.md  ← تسيير عمليات مسح السوق بالدفعات المتوازية
+│
+└── bot/
+    ├── handlers.md             ← الهيكل العام لطبقة Telegram UI وفصل الملفات
+    ├── specialized_handlers.md ← معالجة الأوامر المتخصصة (Analysis, Sniper, Picker, Radar)
+    └── keyboards_and_menus.md  ← تصميم لوحات التحكم وقوائم الإعدادات ولوحة الأرقام Numpad
+```��────┴─ (Batch Size = 5)
  ▼
 CcxtPickerEngine / CurrencyPickerEngine (Core Layer)
  │

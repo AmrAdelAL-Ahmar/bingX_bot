@@ -9,6 +9,8 @@ import { SniperReport } from '../core/sniper/ISniperEngine';
 import { AnalysisFormatter } from '../core/analysis/AnalysisFormatter';
 
 const ANALYSIS_TRUST_SCORES: Record<string, number> = {
+    'V16': 98,
+    'V15': 97,
     'V11': 95,
     'V10': 93,
     'V12': 90,
@@ -39,10 +41,14 @@ const ANALYSIS_ARABIC_NAMES: Record<string, string> = {
     'V11': 'الخوارزمية V11 (القرار التكيفي) 👑',
     'V12': 'الخوارزمية V12 (تدفق السيولة CVD) 📊',
     'V13': 'الخوارزمية V13 (مصائد وايكوف) 🪤',
-    'V14': 'الخوارزمية V14 (الشبكة العرضية) ↔️'
+    'V14': 'الخوارزمية V14 (رينكو السحابية التكيفية) ☁️',
+    'V15': 'الخوارزمية V15 (تشان الهارمونية الكمية) 🌌',
+    'V16': 'الخوارزمية V16 (مصفوفة الزمان والمكان الهجينة) 🏹'
 };
 
 const SNIPER_TRUST_SCORES: Record<string, number> = {
+    'V16': 98,
+    'V15': 97,
     'V11': 95,
     'V10': 93,
     'V12': 90,

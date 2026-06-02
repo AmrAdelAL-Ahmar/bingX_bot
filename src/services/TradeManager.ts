@@ -509,7 +509,8 @@ export class TradeManager {
                     bingxOrderId: order.id,
                     sourceChatId: sourceChatId,
                     currentStatus: resolvedOrderType === 'limit' && order.status === 'open' ? 'PENDING' : 'OPEN',
-                    logs: [tradeLog]
+                    logs: [tradeLog],
+                    engineId: signal.engineId
                 });
                 await trade.save();
 

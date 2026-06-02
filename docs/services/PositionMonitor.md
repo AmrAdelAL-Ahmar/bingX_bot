@@ -128,54 +128,52 @@ for (const threshold of thresholds) {
 
 ---
 
-### 2د. Correction Guard — رادار التصحيح (V7)
+### 2د. رادار الصفقات النشط — نظام التنبيه ثلاثي المراحل (Three-Phase Alert System)
 
-**يعمل فقط إذا:** `trade.correctionAlertEnabled === true`
+يتم استدعاء الرادار لكل صفقة نشطة خاضعة للمراقبة عبر الدالة `runRadarChecks`. يقوم بجلب شموع الـ 5 دقائق وحساب الـ Pivot اليومي/الاسبوعي لفريم الساعة، ثم تشغيل الفحوصات الفنية مقسمة إلى ثلاث مراحل هيكلية:
 
 ```
-البيانات المجلوبة:
-├─ ohlcv5m  = fetchOHLCV(symbol, '5m', 50)  ← 50 شمعة
-└─ ohlcv1h  = fetchOHLCV(symbol, '1h', 2)   ← آخر شمعتان
-
-الحسابات:
-├─ analysis.detectDivergence(ohlcv5m, direction)
-│   → إذا كشف Bearish/Bullish Divergence:
-│       حساب نطاق فيبوناتشي للتصحيح
-│       إرسال تحذير مع نطاق 0.5-0.618
-│       trade.correctionWarningSent = true
-│
-└─ Pivot = (prev1h.high + prev1h.low + prev1h.close) / 3
-    analysis.isPivotBroken(currentPrice, pivot, direction)
-    → إذا كسر Pivot:
-        إرسال تنبيه حرج
-        trade.correctionAlertEnabled = false  (يُوقف المراقبة)
-```
-
-**منطق isPivotBroken:**
-```
-LONG:  currentPrice < pivot → كسر مستوى Pivot = خطر
-SHORT: currentPrice > pivot → خرق Pivot = خطر
+runRadarChecks()
+    │
+    ├─► checkPhase1Weakness() — المرحلة 1: تحذيرات الضعف والتصحيح الهيكلي
+    │     ├─ كشف انحراف RSI (Divergence) معاكس للزخم.
+    │     ├─ فحص كسر مستوى الـ Pivot (فقدان الدعم المؤسساتي).
+    │     └─ فحص زيارة مستويات تصحيح فيبوناتشي 50% والمستوى الذهبي 61.8%.
+    │
+    ├─► checkPhase2Breakout() — المرحلة 2: تحذيرات كسر الدعم وسحب السيولة
+    │     ├─ كشف كسر القمم/القيعان الفركتالية المحلية المعاكسة لاتجاه الصفقة.
+    │     └─ كشف Wick Sweep: إذا اخترق الذيل الوقف وجسم الشمعة أغلق داخل الأمان
+    │           (يرسل تنبيهاً يدوياً تفاعلياً للموافقة بدلاً من الدخول التلقائي).
+    │
+    └─► checkPhase3Momentum() — المرحلة 3: تحذيرات زخم الاتجاه وتسارعه
+          ├─ كشف ارتداد السعر من دعم/Pivot بالتزامن مع طفرة حجم (Volume Spike > 1.5x).
+          ├─ كشف طفرة أحجام التداول المطلقة (Volume Spike > 2.2x).
+          └─ تحديث الوقف المتحرك التكيفي (Trailing Stop) بناءً على ATR ونقل مستويات SL على البورصة.
 ```
 
 ---
 
-## ❌ القسم الثالث: الصفقات المغلقة
+## 🛡️ القسم الثالث: درع سحب السيولة (Wick Sweep Guard) التفاعلي اليدوي
+
+على عكس الإصدارات السابقة التي كانت تفتح صفقات تعويضية/تحوطية تلقائياً وتسبب مخاطر إضافية، تم تعديل درع سحب السيولة ليعمل يدوياً بشكل تفاعلي بالكامل:
+1. **كشف الكسر الكاذب:** يقوم الرادار باستدعاء `CoreTradeRadar.checkWickSweep` للتحقق مما إذا كان ذيل الشمعة قد لامس أو اخترق الوقف، في حين أن جسم الشمعة قد أغلق في منطقة آمنة.
+2. **صياغة التنبيه:** يتم حساب وقف خسارة ضيق جداً أسفل ذيل شمعة الكسح مباشرة، وتخصيص هامش مخاطرة يمثل 50% من هامش الصفقة الأصلية.
+3. **أزرار تليجرام التفاعلية:** يرسل البوت التنبيه للمستخدم مع زرين تفاعليين (Inline Buttons):
+   * `⚡ تنفيذ صفقة التعويض`: عند ضغطه، يقوم البوت فوراً بفتح صفقة تعويضية تحوطية بالهامش المخفض والوقف الضيق المقترح.
+   * `❌ تجاهل التنبيه`: لإغلاق التنبيه دون اتخاذ أي إجراء.
+
+---
+
+## 📈 القسم الرابع: الصفقات المغلقة
 
 ```
 إذا matchingPos غير موجود → الصفقة أُغلقت على البورصة
     │
-    ├─ جلب السعر الحالي
-    ├─ حساب PnL:
-    │   LONG:  pnlPercent = (cp - entry) / entry × 100 × leverage
-    │   SHORT: pnlPercent = (entry - cp) / entry × 100 × leverage
-    │
-    ├─ trade.currentStatus = pnlPercent > 0 ? 'CLOSED_PROFIT' : 'CLOSED_LOSS'
-    ├─ trade.closeTime = new Date()
-    ├─ trade.pnl = pnlPercent
-    └─ إرسال إشعار مفصل للمستخدم:
-        - الربح/الخسارة USDT ونسبة من رأس المال
-        - سعر الدخول والإغلاق
-        - مدة الصفقة (بالدقائق/الساعات)
+    ├─ جلب السعر الحالي من البورصة
+    ├─ حساب PnL الفعلي بناءً على اتجاه الصفقة والرافعة المالية المستخدمة
+    ├─ تحديث حالة الصفقة في قاعدة البيانات لـ CLOSED_PROFIT أو CLOSED_LOSS
+    ├─ تسجيل وقت الإغلاق وحساب مدة استمرار الصفقة الفعلي (بالساعات والدقائق)
+    └─ إرسال إشعار خروج منسق ومفصل للمستخدم (يشمل PnL بالدولار والنسبة المئوية، رأس المال المستخدم، والمدة).
 ```
 
 ---
@@ -186,10 +184,11 @@ SHORT: currentPrice > pivot → خرق Pivot = خطر
 const durationMs = closeTime.getTime() - trade.entryTime.getTime();
 const durationMinutes = Math.floor(durationMs / 60000);
 const durationHours = Math.floor(durationMinutes / 60);
-const text = durationHours > 0 
+const durationStr = durationHours > 0
     ? `${durationHours} ساعة و ${durationMinutes % 60} دقيقة`
     : `${durationMinutes} دقيقة`;
 ```
+
 
 ---
 

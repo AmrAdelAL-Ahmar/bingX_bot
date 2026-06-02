@@ -7,11 +7,17 @@ import { V11SniperEngine } from './engines/V11SniperEngine';
 import { V12SniperEngine } from './engines/V12SniperEngine';
 import { V13SniperEngine } from './engines/V13SniperEngine';
 import { V14SniperEngine } from './engines/V14SniperEngine';
+import { V15SniperEngine } from './engines/V15SniperEngine';
+import { V16SniperEngine } from './engines/V16SniperEngine';
 
 // ─── Sniper Engine Registry ────────────────────────────────────────────────────
 // أضف محركات جديدة هنا دون تعديل أي ملف آخر
 
 export const SNIPER_ENGINES: Record<string, ISniperEngine> = {
+    'V16-SWING': new V16SniperEngine('SWING'),
+    'V16-SCALP': new V16SniperEngine('SCALP'),
+    'V15-SWING': new V15SniperEngine('SWING'),
+    'V15-SCALP': new V15SniperEngine('SCALP'),
     'V14-SWING': new V14SniperEngine('SWING'),
     'V14-SCALP': new V14SniperEngine('SCALP'),
     'V13-SWING': new V13SniperEngine('SWING'),

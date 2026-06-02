@@ -6,6 +6,7 @@ import { getSniperEngine } from '../core/sniper/SniperRegistry';
 import { SniperReport } from '../core/sniper/ISniperEngine';
 import { CoreSniperScanner } from '../core/sniper/CoreSniperScanner';
 import SniperWatch, { ISniperWatch } from '../models/SniperWatch';
+import { FrozenPairsRegistry } from '../utils/FrozenPairsRegistry';
 
 // ─── SniperManager ─────────────────────────────────────────────────────────────
 /**
@@ -66,6 +67,12 @@ export class SniperManager {
     }
 
     private async processWatch(watch: ISniperWatch) {
+        // 0. هل الزوج مجمد؟
+        if (FrozenPairsRegistry.isFrozen(watch.symbol)) {
+            logger.info(`[SniperManager] Skipped watch for ${watch.symbol} because the symbol is frozen.`);
+            return;
+        }
+
         // 1. انتهت المدة؟
         if (watch.expiresAt < new Date()) {
             watch.status = 'EXPIRED';

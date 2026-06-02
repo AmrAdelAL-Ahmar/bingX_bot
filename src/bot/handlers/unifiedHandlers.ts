@@ -7,9 +7,11 @@ import { BingXService } from '../../services/BingXService';
 import { TradeManager } from '../../services/TradeManager';
 import { getMainMenuKeyboard } from '../keyboards/baseKeyboards';
 
-const ALL_ANALYSIS_ENGINES = ['V1', 'V2', 'V3', 'V4', 'V5', 'V6', 'V7', 'V8', 'V9', 'V10', 'V11', 'V12', 'V13', 'V14'];
+const ALL_ANALYSIS_ENGINES = ['V1', 'V2', 'V3', 'V4', 'V5', 'V6', 'V7', 'V8', 'V9', 'V10', 'V11', 'V12', 'V13', 'V14', 'V15', 'V16'];
 
 const ALL_SNIPER_ENGINES = [
+    'V16-SWING', 'V16-SCALP',
+    'V15-SWING', 'V15-SCALP',
     'V14-SWING', 'V14-SCALP',
     'V13-SWING', 'V13-SCALP',
     'V12-SWING', 'V12-SCALP',

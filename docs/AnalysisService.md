@@ -12,7 +12,7 @@
 ```
 AnalysisService.ts (Bridge)
     ├── Core/Shared/Types      ← استيراد وإعادة تصدير التايبات للحفاظ على التوافقية
-    ├── CoreAnalysisService    ← تفويض معالجة الشموع والمحركات (V1-V11) في الذاكرة
+    ├── CoreAnalysisService    ← تفويض معالجة الشموع والمحركات (V1-V14) في الذاكرة
     └── AnalysisFormatter      ← تفويض تنسيق التقارير العربية وتوليد رسائل البوت
 ```
 
@@ -39,15 +39,15 @@ AnalysisService.ts (Bridge)
   ```typescript
   analyze(
       symbolInput: string,
-      version: 'V1' | 'V2' | ... | 'V11' = 'V1',
-      options: { quickTF?, longTF?, limit? }
+      version: 'V1' | 'V2' | ... | 'V14' = 'V1',
+      options: { quickTF?, longTF?, limit?, rsiThreshold?, antiRepainting? }
   )
   ```
 * **آلية العمل:**
   1. تطبيع العملة (مثل تحويل `BTC` إلى الرمز القياسي `BTC/USDT:USDT`).
   2. جلب دقة السعر في البورصة (`BingXService.getPricePrecision`).
-  3. جلب الشموع المطلوبة بالتوازي لجميع الأطر السبعة المعتمدة في المصفوفة (`MATRIX_TFS`) باستخدام `Promise.all` لتسريع التجاوب وتفادي البطء.
-  4. تمرير دقة الأسعار والشموع المجلوبة لـ **`CoreAnalysisService.analyze`** في طبقة الـ Core لحساب جميع المؤشرات والـ Matrix وتشغيل محرك التداول المختار في الذاكرة وإرجاع النتيجة الكاملة.
+  3. جلب الشموع المطلوبة بالتوازي لجميع الأطر السبعة المعتمدة في المصفوفة (`MATRIX_TFS`) باستخدام `Promise.all` لتسريع التجاوب وتفادي البطء (مع فحص الكاش المؤقت 45 ثانية لتخفيف الضغط).
+  4. تمرير دقة الأسعار والشموع المجلوبة لـ **`CoreAnalysisService.analyze`** في طبقة الـ Core لحساب جميع المؤشرات والـ Matrix وتشغيل محرك التداول المختار في الذاكرة وإرجاع النتيجة الكاملة. يراعى تطبيق خيار `antiRepainting` لاستبعاد الشمعة الحية الأخيرة غير المغلقة عند حساب المؤشرات لتجنب صدور إشارات وهمية مذبذبة.
 
 ### 2. دالة تقرير التصحيح المتعدد (`generateCorrectionReport`)
 * **آلية العمل:**

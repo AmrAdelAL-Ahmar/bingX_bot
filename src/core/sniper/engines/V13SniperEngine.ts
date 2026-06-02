@@ -32,46 +32,103 @@ export class V13SniperEngine implements ISniperEngine {
         const quickKey = this.mode === 'SWING' ? '15m' : '5m';
         const ohlcv = mtfOHLCV[quickKey] || [];
 
-        if (ohlcv.length < 25) {
-            return this.noSignal(symbol, cp, 'بيانات غير كافية لـ V13', now);
+        if (ohlcv.length < 96) {
+            return this.noSignal(symbol, cp, 'بيانات غير كافية لـ V13 (تحتاج 96 شمعة على الأقل لحساب POC لـ 24 ساعة)', now);
         }
 
-        // 1. Detect Liquidity Sweep (Wyckoff Spring or Upthrust)
+        // ── 1. Macro POC Gate (Volume Profile POC of last 24 hours) ──
+        // 24 hours represented by: 96 candles of 15m, 288 candles of 5m
+        const candles24hCount = this.mode === 'SWING' ? 96 : 288;
+        const ohlcv24h = ohlcv.slice(-Math.min(ohlcv.length, candles24hCount));
+        const vp = TechnicalAnalyzer.calculateVolumeProfile(ohlcv24h, 30);
+        const poc = vp.poc;
+
+        const pocError = Math.abs(cp - poc) / poc;
+        const pocConfluence = pocError <= 0.0075;
+
+        if (pocConfluence) {
+            completed.push(`✅ بوابة السيولة العادلة ماكرو (Macro POC Gate): السعر قريب من السعر العادل POC ($${poc.toFixed(4)}) بفرط انحراف ${ (pocError * 100).toFixed(2) }% <= 0.75%`);
+        } else {
+            pending.push(`⏳ في انتظار عودة السعر لمنطقة السيطرة السعرية للمؤسسات (POC: $${poc.toFixed(4)} ، انحراف الحالي: ${(pocError * 100).toFixed(2)}% > 0.75%)`);
+        }
+
+        // ── 2. Meso Spring / Upthrust Sweep ──
         const recent = ohlcv.slice(-25, -1);
         const highestHigh = Math.max(...recent.map(c => c.high));
         const lowestLow = Math.min(...recent.map(c => c.low));
         const last = ohlcv[ohlcv.length - 1];
 
-        // Volume Spike confirmation: last candle volume must be > 1.5x of previous 20-candle average
-        const recentForVolume = ohlcv.slice(-21, -1);
-        const avgVolume = recentForVolume.reduce((sum, c) => sum + c.volume, 0) / (recentForVolume.length || 1);
-        const isVolumeSpike = last.volume > avgVolume * 1.5;
+        const totalRange = last.high - last.low || 0.0001;
 
         let direction: 'LONG' | 'SHORT' | 'NONE' = 'NONE';
-        let confidence = 30;
 
         if (last.low < lowestLow && last.close > lowestLow) {
-            direction = 'LONG';
-            confidence += 40;
-            completed.push(`✅ تم رصد Wyckoff Spring: السعر سحب سيولة القاع السابق ($${lowestLow.toFixed(4)}) وارتد مغلقاً أعلاه`);
+            // Spring candidate: bottom wick ratio must be >= 50%
+            const wickRatio = (Math.min(last.open, last.close) - last.low) / totalRange;
+            if (wickRatio >= 0.50) {
+                direction = 'LONG';
+                completed.push(`✅ كشط سيولة قاع التجميع (Meso Spring): السعر سحب سيولة القاع السابق ($${lowestLow.toFixed(4)}) بذيل شمعة يمثل ${(wickRatio * 100).toFixed(0)}% >= 50%`);
+            } else {
+                pending.push(`⏳ تم اختراق القاع ولكن نسبة ذيل الشموع غير كافية للـ Spring (النسبة الحالية: ${(wickRatio * 100).toFixed(0)}% < 50%)`);
+            }
         } else if (last.high > highestHigh && last.close < highestHigh) {
-            direction = 'SHORT';
-            confidence += 40;
-            completed.push(`✅ تم رصد Wyckoff Upthrust: السعر سحب سيولة القمة السابقة ($${highestHigh.toFixed(4)}) وارتد مغلقاً أدناها`);
+            // Upthrust candidate: top wick ratio must be >= 50%
+            const wickRatio = (last.high - Math.max(last.open, last.close)) / totalRange;
+            if (wickRatio >= 0.50) {
+                direction = 'SHORT';
+                completed.push(`✅ كشط سيولة قمة التصريف (Meso Upthrust): السعر سحب سيولة القمة السابقة ($${highestHigh.toFixed(4)}) بذيل شمعة يمثل ${(wickRatio * 100).toFixed(0)}% >= 50%`);
+            } else {
+                pending.push(`⏳ تم اختراق القمة ولكن نسبة ذيل الشموع غير كافية للـ Upthrust (النسبة الحالية: ${(wickRatio * 100).toFixed(0)}% < 50%)`);
+            }
         } else {
-            pending.push('⏳ في انتظار حدوث كسر كاذب وسحب سيولة للقمم أو القيعان الهيكلية');
+            pending.push('⏳ في انتظار حدوث كسر كاذب وسحب سيولة للقمم أو القيعان الهيكلية (Spring / Upthrust) على فريم 15M');
         }
 
+        // ── 3. Micro Order Flow Trigger ──
+        let triggerOk = false;
+        let imbalanceRatio = 0;
+        let delta = 0;
+
         if (direction !== 'NONE') {
-            if (isVolumeSpike) {
-                confidence += 15;
-                completed.push(`✅ تم تأكيد طفرة أحجام التداول: الحجم الحالي (${last.volume.toFixed(0)}) > 1.5x من المتوسط (${avgVolume.toFixed(0)})`);
+            const spread = last.high - last.low || 0.0001;
+            const buyVolume = last.volume * (last.close - last.low) / spread;
+            const sellVolume = last.volume * (last.high - last.close) / spread;
+            delta = ((last.close - last.open) / spread) * last.volume;
+
+            const recentForVolume = ohlcv.slice(-21, -1);
+            const avgVolume = recentForVolume.reduce((sum, c) => sum + c.volume, 0) / (recentForVolume.length || 1);
+
+            if (direction === 'LONG') {
+                imbalanceRatio = buyVolume / (sellVolume || 1);
+                const deltaAccelerating = delta > 0;
+                const volumeSurge = Math.abs(delta) >= avgVolume * 0.1;
+
+                if (imbalanceRatio >= 3.0 && deltaAccelerating && volumeSurge) {
+                    triggerOk = true;
+                    completed.push(`✅ اختلال توازن شرائي حاد (Footprint Imbalance): Ask/Bid Imbalance ${imbalanceRatio.toFixed(1)}x >= 3.0x مع تسارع دلتا CVD إيجابي (${delta.toFixed(0)} >= ${(avgVolume * 0.1).toFixed(0)})`);
+                } else {
+                    pending.push(`⏳ انتظار اختلال توازن شرائي Ask/Bid Imbalance >= 3.0x وتسارع دلتا CVD (الحالي: ${imbalanceRatio.toFixed(1)}x ، دلتا: ${delta.toFixed(0)})`);
+                }
             } else {
-                pending.push(`⏳ انتظار تأكيد طفرة أحجام التداول (الحجم الحالي ${last.volume.toFixed(0)}، المتوسط المطلق ${avgVolume.toFixed(0)})`);
+                imbalanceRatio = sellVolume / (buyVolume || 1);
+                const deltaAccelerating = delta < 0;
+                const volumeSurge = Math.abs(delta) >= avgVolume * 0.1;
+
+                if (imbalanceRatio >= 3.0 && deltaAccelerating && volumeSurge) {
+                    triggerOk = true;
+                    completed.push(`✅ اختلال توازن بيعي حاد (Footprint Imbalance): Bid/Ask Imbalance ${imbalanceRatio.toFixed(1)}x >= 3.0x مع تسارع دلتا CVD سلبي (${delta.toFixed(0)} <= -${(avgVolume * 0.1).toFixed(0)})`);
+                } else {
+                    pending.push(`⏳ انتظار اختلال توازن بيعي Bid/Ask Imbalance >= 3.0x وتسارع دلتا CVD (الحالي: ${imbalanceRatio.toFixed(1)}x ، دلتا: ${delta.toFixed(0)})`);
+                }
             }
         }
 
-        // 2. Confluence with multi-timeframe matrix
+        let confidence = 30;
+        if (pocConfluence) confidence += 15;
+        if (direction !== 'NONE') confidence += 25;
+        if (triggerOk) confidence += 15;
+
+        // Confluence with multi-timeframe matrix
         const matrix = TechnicalAnalyzer.calculateMatrix(allTimeframes);
         const matrixOk = direction === 'LONG' ? matrix.percentage >= 55 : matrix.percentage <= 45;
         if (direction !== 'NONE') {
@@ -83,7 +140,7 @@ export class V13SniperEngine implements ISniperEngine {
             }
         }
 
-        // 3. Stop loss and target calculations (Tight stop loss below/above the sweep wick)
+        // SL & TP calculations (Tight stop loss below/above the sweep wick)
         const sl = direction === 'LONG' ? last.low * 0.998 : last.high * 1.002;
         const execData = allTimeframes[quickKey];
         const atr = execData?.atr || cp * 0.005;
@@ -91,7 +148,7 @@ export class V13SniperEngine implements ISniperEngine {
 
         confidence = Math.min(Math.max(confidence, 10), 95);
         const winRate = Math.min(50 + confidence * 0.45, 96);
-        const readyToFire = direction !== 'NONE' && confidence >= 65 && matrixOk && isVolumeSpike;
+        const readyToFire = direction !== 'NONE' && triggerOk && pocConfluence && matrixOk;
 
         const summary = readyToFire
             ? `🚀 V13 جاهز للاقتناص (${completed.length} شروط مكتملة)`
@@ -130,12 +187,12 @@ export class V13SniperEngine implements ISniperEngine {
         readyToFire: boolean
     ): string {
         const sym = symbol.split('/')[0];
-        const dirText = direction === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
-        const title = `🏆 *محرك قناص وايكوف ومصائد السيولة الهيكلية V13 (${this.mode})*`;
+        const dirText = direction === 'LONG' ? '🟢 LONG' : direction === 'SHORT' ? '🔴 SHORT' : '⚪ NONE';
+        const title = `🏆 *محرك قناص التدفق الحجمي V13 (${this.mode})*`;
 
         let text = `${title}\n🪙 ${sym}/USDT | ${dirText}\n━━━━━━━━━━━━━━\n`;
         text += `• نسبة الثقة: \`${confidence}%\` | النجاح المتوقع: \`${winRate.toFixed(0)}%\`\n\n`;
-        text += `🎯 *المستويات المقترحة:*\n` +
+        text += `🎯 *المستويات المقترحة (Wyckoff Spring):*\n` +
             `• الدخول: \`$${entry.toFixed(4)}\`\n` +
             `• الستوب (SL): \`$${sl.toFixed(4)}\`\n` +
             `• الهدف (TP): \`$${tp.toFixed(4)}\`\n\n`;
@@ -150,7 +207,7 @@ export class V13SniperEngine implements ISniperEngine {
 
         text += `━━━━━━━━━━━━━━\n` + (readyToFire
             ? `🚀 *تم رصد الكشط الهيكلي وامتصاص العروض، جاهز للتنفيذ!*`
-            : `⏳ *في انتظار حدوث كشط سيولة مؤكد...*`);
+            : `⏳ *في انتظار حدوث كشط سيولة وتوافق تدفق الأحجام...*`);
 
         return text;
     }

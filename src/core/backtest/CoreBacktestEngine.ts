@@ -15,6 +15,8 @@ import { V11Engine } from '../analysis/engines/V11Engine';
 import { V12Engine } from '../analysis/engines/V12Engine';
 import { V13Engine } from '../analysis/engines/V13Engine';
 import { V14Engine } from '../analysis/engines/V14Engine';
+import { V15Engine } from '../analysis/engines/V15Engine';
+import { V16Engine } from '../analysis/engines/V16Engine';
 import { MTFDataBuilder } from '../shared/MTFDataBuilder';
 
 const ENGINES: Record<string, ITradingEngine> = {
@@ -31,7 +33,9 @@ const ENGINES: Record<string, ITradingEngine> = {
     'V11': new V11Engine(),
     'V12': new V12Engine(),
     'V13': new V13Engine(),
-    'V14': new V14Engine()
+    'V14': new V14Engine(),
+    'V15': new V15Engine(),
+    'V16': new V16Engine()
 };
 
 export interface BacktestOptions {
