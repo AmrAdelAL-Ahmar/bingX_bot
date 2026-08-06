@@ -52,6 +52,7 @@ export interface BacktestOptions {
     maxSlCapEnabled?: boolean;
     maxSlPercentage?: number;
     alignToStartOfDay?: boolean;
+    params?: Record<string, any>;
 }
 
 export interface BacktestSimulationResult {
@@ -119,7 +120,11 @@ export class CoreBacktestEngine {
 
             if (!allTimeframes[options.quickTF]) continue;
 
-            const result = engine.analyze(currentPrice, vwap, allTimeframes, mtfSnapshot, { quickTF: options.quickTF, longTF: options.longTF });
+            const result = engine.analyze(currentPrice, vwap, allTimeframes, mtfSnapshot, { 
+                quickTF: options.quickTF, 
+                longTF: options.longTF,
+                params: options.params
+            });
 
             let signal: any = { type: 'NONE', tp: 0, sl: 0 };
             if (options.mode === 'SCALP') {

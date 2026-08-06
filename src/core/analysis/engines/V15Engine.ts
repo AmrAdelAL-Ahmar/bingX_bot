@@ -8,14 +8,14 @@ export class V15Engine implements ITradingEngine {
         vwap: number,
         allTimeframes: Record<string, AnalysisDetails>,
         mtfOHLCV: Record<string, OHLCV[]>,
-        options: { quickTF: string; longTF: string }
+        options: { quickTF: string; longTF: string; params?: Record<string, any> }
     ): EngineResult {
         const matrix = TechnicalAnalyzer.calculateMatrix(allTimeframes);
 
         return {
             matrix,
-            scalp: this.runV15Pipeline(cp, allTimeframes, mtfOHLCV, matrix, 'SCALP'),
-            swing: this.runV15Pipeline(cp, allTimeframes, mtfOHLCV, matrix, 'SWING'),
+            scalp: this.runV15Pipeline(cp, allTimeframes, mtfOHLCV, matrix, 'SCALP', options.params),
+            swing: this.runV15Pipeline(cp, allTimeframes, mtfOHLCV, matrix, 'SWING', options.params),
         };
     }
 
@@ -24,7 +24,8 @@ export class V15Engine implements ITradingEngine {
         allTimeframes: Record<string, AnalysisDetails>,
         mtfOHLCV: Record<string, OHLCV[]>,
         matrix: MatrixResult,
-        mode: 'SCALP' | 'SWING'
+        mode: 'SCALP' | 'SWING',
+        params?: Record<string, any>
     ): TradeRecommendation {
         const quickTF = mode === 'SWING' ? '15m' : '5m';
         const ohlcv = mtfOHLCV[quickTF] || [];
@@ -151,8 +152,11 @@ export class V15Engine implements ITradingEngine {
         const winRate = Math.min(50 + score * 0.45, 96);
 
         const atr = allTimeframes[quickTF]?.atr || cp * 0.005;
-        const sl = direction === 'LONG' ? xVal * 0.995 : xVal * 1.005;
-        const tp = direction === 'LONG' ? cp + atr * 4.5 : cp - atr * 4.5;
+        const xSlMargin = params?.xSlMargin ?? 0.005;
+        const atrMultiplier = params?.atrMultiplier ?? 4.5;
+
+        const sl = direction === 'LONG' ? xVal * (1 - xSlMargin) : xVal * (1 + xSlMargin);
+        const tp = direction === 'LONG' ? cp + atr * atrMultiplier : cp - atr * atrMultiplier;
 
         const reasons = [
             `قلم تشان ${direction === 'LONG' ? 'صاعد' : 'هابط'}`,

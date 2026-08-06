@@ -98,6 +98,7 @@ export const getAnalysisActionKeyboard = (symbol: string, type: 'scalp' | 'swing
 
     const callbackData = `ex_${type === 'scalp' ? 'sc' : 'sw'}_${s}_${d}_${e}_${t1}_${sl}_${t2}`;
     const copyData = `cp_${type === 'scalp' ? 'sc' : 'sw'}_${s}_${d}_${e}_${t1}_${sl}_${t2}`;
+    const aiData = `ai_an_${type === 'scalp' ? 'sc' : 'sw'}_${s}_${version}`;
     const btData = `bt_${type === 'scalp' ? 'sc' : 'sw'}_${s}_${version}`;
     const dtData = `dt_${type === 'scalp' ? 'sc' : 'sw'}_${s}_${d}_${version}`; // Details with Direction & Version
     const eduData = `ed_${type === 'scalp' ? 'sc' : 'sw'}_${s}_${version}`; // Educational Guide
@@ -107,6 +108,7 @@ export const getAnalysisActionKeyboard = (symbol: string, type: 'scalp' | 'swing
         inline_keyboard: [
             [{ text: `تنفيذ صفقة ${type === 'scalp' ? 'Scalp ⚡' : 'Swing 🌊'}`, callback_data: callbackData }],
             [{ text: 'نسخ إشارة الصفقة 📋', callback_data: copyData }],
+            [{ text: '🧠 التحليل بالذكاء الاصطناعي', callback_data: aiData }],
             [
                 { text: '🔍 التقرير التفصيلي', callback_data: dtData },
                 { text: '🎓 دليل المؤشرات', callback_data: eduData }

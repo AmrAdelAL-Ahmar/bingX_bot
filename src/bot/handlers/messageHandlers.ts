@@ -876,7 +876,18 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
             });
 
             if (user) {
-                await ctx.reply(result.reportText, { parse_mode: 'Markdown', reply_markup: getMainMenuKeyboard(user) });
+                const sShort = symbol.split('/')[0];
+                await ctx.reply(result.reportText, { 
+                    parse_mode: 'Markdown', 
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '🧠 تحليل نتائج الصفقات بالذكاء', callback_data: `ai_bt_hits_${sShort}_${version}_${mode}_${days}` }]
+                        ]
+                    }
+                });
+                await ctx.reply('يمكنك العودة للقائمة الرئيسية أو تحليل صفقات الاختبار فما فوق.', {
+                    reply_markup: getMainMenuKeyboard(user)
+                });
             } else {
                 await ctx.reply(result.reportText, { parse_mode: 'Markdown' });
             }

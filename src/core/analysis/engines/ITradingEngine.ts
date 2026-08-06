@@ -12,6 +12,6 @@ export interface ITradingEngine {
         vwap: number, 
         allTimeframes: Record<string, AnalysisDetails>, 
         mtfOHLCV: Record<string, OHLCV[]>,
-        options: { quickTF: string, longTF: string }
+        options: { quickTF: string, longTF: string, params?: Record<string, any> }
     ): EngineResult;
 }

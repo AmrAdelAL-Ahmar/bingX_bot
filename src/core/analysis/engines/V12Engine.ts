@@ -8,14 +8,14 @@ export class V12Engine implements ITradingEngine {
         vwap: number,
         allTimeframes: Record<string, AnalysisDetails>,
         mtfOHLCV: Record<string, OHLCV[]>,
-        options: { quickTF: string; longTF: string }
+        options: { quickTF: string; longTF: string; params?: Record<string, any> }
     ): EngineResult {
         const matrix = TechnicalAnalyzer.calculateMatrix(allTimeframes);
 
         return {
             matrix,
-            scalp: this.runV12Pipeline(cp, allTimeframes, mtfOHLCV, matrix, 'SCALP'),
-            swing: this.runV12Pipeline(cp, allTimeframes, mtfOHLCV, matrix, 'SWING'),
+            scalp: this.runV12Pipeline(cp, allTimeframes, mtfOHLCV, matrix, 'SCALP', options.params),
+            swing: this.runV12Pipeline(cp, allTimeframes, mtfOHLCV, matrix, 'SWING', options.params),
         };
     }
 
@@ -24,7 +24,8 @@ export class V12Engine implements ITradingEngine {
         allTimeframes: Record<string, AnalysisDetails>,
         mtfOHLCV: Record<string, OHLCV[]>,
         matrix: MatrixResult,
-        mode: 'SCALP' | 'SWING'
+        mode: 'SCALP' | 'SWING',
+        params?: Record<string, any>
     ): TradeRecommendation {
         const macroTF = mode === 'SCALP' ? '1h' : '4h';
         const mesoTF = '15m';
@@ -72,7 +73,8 @@ export class V12Engine implements ITradingEngine {
         let obTop = 0;
         let equilibrium = 0;
 
-        const MIN_IMPULSE = 0.002;
+        const MIN_IMPULSE = params?.minImpulse ?? 0.002;
+        const volumeSpikeMultiplier = params?.volumeSpikeMultiplier ?? 1.0;
         const candles = ohlcvMeso.slice(-30);
 
         for (let i = candles.length - 4; i >= 20; i--) {
@@ -90,7 +92,7 @@ export class V12Engine implements ITradingEngine {
                 const isBearish = c.close < c.open;
                 const nextIsBullish = next.close > next.open;
                 const impulse = next.open > 0 && (next.close - next.open) / next.open > MIN_IMPULSE;
-                const volumeSpike = next.volume >= (meanVol + 1.0 * stdDevVol);
+                const volumeSpike = next.volume >= (meanVol + volumeSpikeMultiplier * stdDevVol);
 
                 if (isBearish && nextIsBullish && impulse && volumeSpike) {
                     obTop = Math.max(c.open, c.close);
@@ -116,7 +118,7 @@ export class V12Engine implements ITradingEngine {
                 const isBullish = c.close > c.open;
                 const nextIsBearish = next.close < next.open;
                 const impulse = next.open > 0 && (next.open - next.close) / next.open > MIN_IMPULSE;
-                const volumeSpike = next.volume >= (meanVol + 1.0 * stdDevVol);
+                const volumeSpike = next.volume >= (meanVol + volumeSpikeMultiplier * stdDevVol);
 
                 if (isBullish && nextIsBearish && impulse && volumeSpike) {
                     obTop = c.high;
@@ -204,14 +206,18 @@ export class V12Engine implements ITradingEngine {
         let sl = cp;
         let tp = cp;
 
+        const atrMultiplier = params?.atrMultiplier ?? 3.6;
+        const atrSlMultiplier = params?.atrSlMultiplier ?? 0.3;
+        const maxSlCap = params?.maxSlCap ?? 0.03;
+
         if (direction === 'LONG') {
-            const slDynamic = fractalSupport - 0.3 * microAtr;
-            sl = Math.max(slDynamic, equilibrium * (1 - 0.03)); // Cap risk at 3%
-            tp = equilibrium + microAtr * 3.6;
+            const slDynamic = fractalSupport - atrSlMultiplier * microAtr;
+            sl = Math.max(slDynamic, equilibrium * (1 - maxSlCap)); // Cap risk
+            tp = equilibrium + microAtr * atrMultiplier;
         } else {
-            const slDynamic = fractalResistance + 0.3 * microAtr;
-            sl = Math.min(slDynamic, equilibrium * (1 + 0.03)); // Cap risk at 3%
-            tp = equilibrium - microAtr * 3.6;
+            const slDynamic = fractalResistance + atrSlMultiplier * microAtr;
+            sl = Math.min(slDynamic, equilibrium * (1 + maxSlCap)); // Cap risk
+            tp = equilibrium - microAtr * atrMultiplier;
         }
 
         return {
