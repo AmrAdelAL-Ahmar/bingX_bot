@@ -41,7 +41,33 @@ export class GeminiService {
     }
 
     /**
-     * Internal helper to make REST calls to Gemini API
+     * Internal helper to make a single REST call to Gemini API (no retry)
+     */
+    private static async callGeminiOnce(
+        url: string,
+        payload: any
+    ): Promise<{ ok: boolean; status: number; data?: any; errorMessage?: string }> {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+            const errData = await response.json().catch(() => ({}));
+            return {
+                ok: false,
+                status: response.status,
+                errorMessage: errData?.error?.message || response.statusText
+            };
+        }
+
+        const data = await response.json();
+        return { ok: true, status: response.status, data };
+    }
+
+    /**
+     * Internal helper to make REST calls to Gemini API with automatic retry on 503/429
      */
     private static async callGemini(prompt: string, systemInstruction?: string): Promise<string> {
         const apiKey = this.getApiKey();
@@ -49,7 +75,7 @@ export class GeminiService {
             throw new Error('⚠️ لم يتم العثور على مفتاح GEMINI_API_KEY في ملف الـ .env. يرجى إضافته لاستخدام الذكاء الاصطناعي.');
         }
 
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${apiKey}`;
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent?key=${apiKey}`;
 
         const payload: any = {
             contents: [{
@@ -68,32 +94,51 @@ export class GeminiService {
             };
         }
 
-        try {
-            const response = await fetch(url, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(payload)
-            });
+        const MAX_RETRIES = 3;
+        const RETRYABLE_STATUSES = [429, 503];
+        let lastError: Error | null = null;
 
-            if (!response.ok) {
-                const errData = await response.json().catch(() => ({}));
-                logger.error('Gemini API request failed:', response.statusText, errData);
-                throw new Error(`Gemini API error: ${response.status} - ${errData?.error?.message || response.statusText}`);
+        for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                const result = await this.callGeminiOnce(url, payload);
+
+                if (result.ok) {
+                    const text = result.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+                    if (!text) {
+                        throw new Error('عذراً، لم يقم نموذج الذكاء الاصطناعي بإرجاع رد صالح.');
+                    }
+                    return text;
+                }
+
+                // Retryable errors: overloaded (503) or rate limit (429)
+                if (RETRYABLE_STATUSES.includes(result.status)) {
+                    const waitMs = Math.pow(2, attempt - 1) * 1000; // 1s, 2s, 4s
+                    logger.warn(
+                        `Gemini API returned ${result.status} (attempt ${attempt}/${MAX_RETRIES}). ` +
+                        `Retrying in ${waitMs / 1000}s... Reason: ${result.errorMessage}`
+                    );
+                    lastError = new Error(`Gemini API error: ${result.status} - ${result.errorMessage}`);
+                    await new Promise(resolve => setTimeout(resolve, waitMs));
+                    continue;
+                }
+
+                // Non-retryable error — throw immediately
+                logger.error(`Gemini API request failed (${result.status}):`, result.errorMessage);
+                throw new Error(`Gemini API error: ${result.status} - ${result.errorMessage}`);
+
+            } catch (error: any) {
+                // Re-throw immediately if it's a non-retryable error we just threw
+                if (!RETRYABLE_STATUSES.some(s => error.message?.includes(String(s)))) {
+                    logger.error('Error in callGemini:', error);
+                    throw error;
+                }
+                lastError = error;
             }
-
-            const data = await response.json();
-            const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-            if (!text) {
-                throw new Error('عذراً، لم يقم نموذج الذكاء الاصطناعي بإرجاع رد صالح.');
-            }
-
-            return text;
-        } catch (error: any) {
-            logger.error('Error in callGemini:', error);
-            throw error;
         }
+
+        // All retries exhausted
+        logger.error(`Gemini API failed after ${MAX_RETRIES} attempts.`);
+        throw lastError ?? new Error('فشل الاتصال بـ Gemini API بعد عدة محاولات. يرجى المحاولة لاحقاً.');
     }
 
     /**
