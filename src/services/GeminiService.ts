@@ -75,7 +75,7 @@ export class GeminiService {
             throw new Error('⚠️ لم يتم العثور على مفتاح GEMINI_API_KEY في ملف الـ .env. يرجى إضافته لاستخدام الذكاء الاصطناعي.');
         }
 
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent?key=${apiKey}`;
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${apiKey}`;
 
         const payload: any = {
             contents: [{
