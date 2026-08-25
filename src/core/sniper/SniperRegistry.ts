@@ -1,4 +1,5 @@
 import { ISniperEngine } from './ISniperEngine';
+import { V1SniperEngine } from './engines/V1SniperEngine';
 import { V7SniperEngine } from './engines/V7SniperEngine';
 import { V8SniperEngine } from './engines/V8SniperEngine';
 import { V9SniperEngine } from './engines/V9SniperEngine';
@@ -34,6 +35,8 @@ export const SNIPER_ENGINES: Record<string, ISniperEngine> = {
     'V8-SCALP': new V8SniperEngine('SCALP'),
     'V7-SWING': new V7SniperEngine('SWING'),
     'V7-SCALP': new V7SniperEngine('SCALP'),
+    'V1-SWING': new V1SniperEngine('SWING'),
+    'V1-SCALP': new V1SniperEngine('SCALP'),
 };
 
 /** قائمة المحركات المتاحة للعرض في Telegram */
