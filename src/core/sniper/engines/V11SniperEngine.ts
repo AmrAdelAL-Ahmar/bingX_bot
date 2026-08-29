@@ -301,21 +301,17 @@ export class V11SniperEngine implements ISniperEngine {
         winRate = Math.min(50 + confidence * 0.48, 96);
 
         // High Precision Verification
-        let v11Passed = false;
-        if (direction !== 'NONE') {
-            const frame = OptimizedEngineSuite.buildMarketFrame(direction, cp, matrix, allTimeframes, ltfKey);
-            v11Passed = OptimizedEngineSuite.runV11(frame);
+        const frame = OptimizedEngineSuite.buildMarketFrame(direction, cp, matrix, allTimeframes, ltfKey);
+        const v11Passed = OptimizedEngineSuite.runV11(frame);
 
-            if (v11Passed) {
-                completed.push(`✅ فلتر الدقة الفائقة V11: مؤكد (Win Rate 90.06%)`);
-            } else {
-                pending.push(`🔸 فلتر الدقة الفائقة V11: شروط التأكيد الإضافية غير مكتملة (Matrix/1H_RSI/4H_RSI/MACD_Hist)`);
-            }
+        if (v11Passed) {
+            completed.push(`✅ فلتر الدقة الفائقة V11: مؤكد (Win Rate 90.06%)`);
+        } else {
+            pending.push(`🔸 فلتر الدقة الفائقة V11: شروط التأكيد الإضافية غير مكتملة (Matrix/1H_RSI/4H_RSI/MACD_Hist)`);
         }
 
         // جاهز للتفعيل الفوري؟
-        const readyToFire = (direction == 'LONG' || direction == 'SHORT') &&
-            confidence >= 70 &&
+        const readyToFire = confidence >= 70 &&
             rrr >= 1.45 &&
             v11Passed &&
             (marketRegime === 'SIDEWAYS_RANGE' || (completed.some(c => c.includes('منطقة الخصم')) || completed.some(c => c.includes('منطقة العلاوة'))));
