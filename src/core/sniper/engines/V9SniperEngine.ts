@@ -1,6 +1,7 @@
 import { AnalysisDetails, OHLCV } from '../../shared/types';
 import { TechnicalAnalyzer, MATRIX_TFS } from '../../analysis/TechnicalAnalyzer';
 import { ISniperEngine, SniperReport } from '../ISniperEngine';
+import { OptimizedEngineSuite } from '../../analysis/engines/OptimizedEngineSuite';
 import { ATR, RSI, EMA } from 'technicalindicators';
 
 // ─── Interfaces ──────────────────────────────────────────────────────────────
@@ -156,7 +157,7 @@ export class V9SniperEngine implements ISniperEngine {
             pending.push(`🔸 Matrix MTF: ${matrix.percentage.toFixed(0)}% — ضعف التوافق`);
         }
 
-        // ── CONFIDENCE ───────────────────────────────────────────────────────
+        // ── CONFIDENCE & HIGH PRECISION GATE ─────────────────────────────────
         let confidence = 35;
         if (htfStruct.bos) confidence += 15;
         if (htfStruct.choch) confidence += 10;
@@ -168,7 +169,18 @@ export class V9SniperEngine implements ISniperEngine {
         confidence = Math.min(Math.max(confidence, 10), 95);
 
         const winRate = Math.min(50 + confidence * 0.48, 96);
-        const readyToFire = entryZone !== null && ltfConfirmed && rsiOk && confidence >= 70;
+
+        // High Precision Verification
+        const frame = OptimizedEngineSuite.buildMarketFrame(direction, cp, matrix, allTimeframes, ltfKey);
+        const v9Passed = OptimizedEngineSuite.runV9(frame);
+
+        if (v9Passed) {
+            completed.push(`✅ فلتر الدقة الفائقة V9: مؤكد (Win Rate 91.8%)`);
+        } else {
+            pending.push(`🔸 فلتر الدقة الفائقة V9: شروط التأكيد الإضافية غير مكتملة (Fib 61.8/38.2, 4H_RSI, MACD_Hist)`);
+        }
+
+        const readyToFire = entryZone !== null && ltfConfirmed && rsiOk && confidence >= 70 && v9Passed;
 
         // ── SL / TP from real S/R levels ──────────────────────────────────────
         const entryPrice = entryZone

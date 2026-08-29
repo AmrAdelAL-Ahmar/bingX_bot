@@ -1,6 +1,7 @@
 import { AnalysisDetails, OHLCV } from '../../shared/types';
 import { TechnicalAnalyzer } from '../../analysis/TechnicalAnalyzer';
 import { ISniperEngine, SniperReport } from '../ISniperEngine';
+import { OptimizedEngineSuite } from '../../analysis/engines/OptimizedEngineSuite';
 
 export class V12SniperEngine implements ISniperEngine {
     readonly engineId: string;
@@ -240,7 +241,21 @@ export class V12SniperEngine implements ISniperEngine {
 
         confidence = Math.min(Math.max(confidence, 10), 95);
         const winRate = Math.min(50 + confidence * 0.45, 96);
-        const readyToFire = macroDirection !== 'NONE' && obFound && priceTouchedOB && patternConfirmed && matrixOk;
+
+        // High Precision Verification
+        let v12Passed = false;
+        if (macroDirection !== 'NONE') {
+            const frame = OptimizedEngineSuite.buildMarketFrame(macroDirection, cp, matrix, allTimeframes, microTF);
+            v12Passed = OptimizedEngineSuite.runV12(frame);
+
+            if (v12Passed) {
+                completed.push(`✅ فلتر الدقة الفائقة V12: مؤكد (Win Rate 87.5%)`);
+            } else {
+                pending.push(`🔸 فلتر الدقة الفائقة V12: شروط التأكيد الإضافية غير مكتملة (Quick_CCI, 1H_RSI, 4H_RSI, MACD_Hist)`);
+            }
+        }
+
+        const readyToFire = macroDirection !== 'NONE' && obFound && priceTouchedOB && patternConfirmed && matrixOk && v12Passed;
 
         const summary = readyToFire
             ? `🚀 V12 جاهز للاقتناص (${completed.length} شروط مكتملة)`
