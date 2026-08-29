@@ -1,6 +1,7 @@
 import { AnalysisDetails, MatrixResult, OHLCV, TradeRecommendation } from '../../shared/types';
 import { ITradingEngine, EngineResult } from './ITradingEngine';
 import { TechnicalAnalyzer } from '../TechnicalAnalyzer';
+import { OptimizedEngineSuite } from './OptimizedEngineSuite';
 
 export class V12Engine implements ITradingEngine {
     analyze(
@@ -14,8 +15,8 @@ export class V12Engine implements ITradingEngine {
 
         return {
             matrix,
-            scalp: this.runV12Pipeline(cp, allTimeframes, mtfOHLCV, matrix, 'SCALP', options.params),
-            swing: this.runV12Pipeline(cp, allTimeframes, mtfOHLCV, matrix, 'SWING', options.params),
+            scalp: this.runV12Pipeline(cp, allTimeframes, mtfOHLCV, matrix, 'SCALP', options.params, options, options.quickTF),
+            swing: this.runV12Pipeline(cp, allTimeframes, mtfOHLCV, matrix, 'SWING', options.params, options, options.longTF),
         };
     }
 
@@ -25,7 +26,9 @@ export class V12Engine implements ITradingEngine {
         mtfOHLCV: Record<string, OHLCV[]>,
         matrix: MatrixResult,
         mode: 'SCALP' | 'SWING',
-        params?: Record<string, any>
+        params?: Record<string, any>,
+        options?: { quickTF: string; longTF: string; params?: Record<string, any> },
+        tf?: string
     ): TradeRecommendation {
         const macroTF = mode === 'SCALP' ? '1h' : '4h';
         const mesoTF = '15m';
@@ -218,6 +221,16 @@ export class V12Engine implements ITradingEngine {
             const slDynamic = fractalResistance + atrSlMultiplier * microAtr;
             sl = Math.min(slDynamic, equilibrium * (1 + maxSlCap)); // Cap risk
             tp = equilibrium - microAtr * atrMultiplier;
+        }
+
+        // High Precision Filter Check
+        const useFilter = options?.params?.highPrecisionFilter !== false;
+        if (useFilter && allTimeframes && (direction === 'LONG' || direction === 'SHORT')) {
+            const frame = OptimizedEngineSuite.buildMarketFrame(direction, cp, matrix, allTimeframes, tf || '5m');
+            const passed = OptimizedEngineSuite.runV12(frame);
+            if (!passed) {
+                return this.cancel(cp, '⚪ ملغاة: لم تتطابق شروط V12 (KAMA + SuperTrend Wave)', mode, score, `Failed V12 Filter. Quick_CCI: ${frame.quickCci?.toFixed(1)}, 1H_RSI: ${frame.rsi1h?.toFixed(1) ?? 'N/A'}, 4H_RSI: ${frame.rsi4h?.toFixed(1) ?? 'N/A'}, Matrix: ${matrix.percentage.toFixed(0)}%`);
+            }
         }
 
         return {

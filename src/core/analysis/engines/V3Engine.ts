@@ -1,6 +1,7 @@
 import { AnalysisDetails, MatrixResult, OHLCV, TradeRecommendation } from '../../shared/types';
 import { ITradingEngine, EngineResult } from './ITradingEngine';
 import { TechnicalAnalyzer } from '../TechnicalAnalyzer';
+import { OptimizedEngineSuite } from './OptimizedEngineSuite';
 
 export class V3Engine implements ITradingEngine {
     analyze(
@@ -8,7 +9,7 @@ export class V3Engine implements ITradingEngine {
         vwap: number,
         allTimeframes: Record<string, AnalysisDetails>,
         mtfOHLCV: Record<string, OHLCV[]>,
-        options: { quickTF: string, longTF: string }
+        options: { quickTF: string, longTF: string, params?: Record<string, any> }
     ): EngineResult {
         const matrix = this.calculateMatrix(allTimeframes);
 
@@ -23,8 +24,8 @@ export class V3Engine implements ITradingEngine {
 
         return {
             matrix,
-            scalp: this.runProbabilityLogic(cp, scalpData, scalpOHLCV, scalpMacro, vwap, matrix, 'SCALP'),
-            swing: this.runProbabilityLogic(cp, swingData, swingOHLCV, swingMacro, vwap, matrix, 'SWING'),
+            scalp: this.runProbabilityLogic(cp, scalpData, scalpOHLCV, scalpMacro, vwap, matrix, 'SCALP', allTimeframes, options, options.quickTF),
+            swing: this.runProbabilityLogic(cp, swingData, swingOHLCV, swingMacro, vwap, matrix, 'SWING', allTimeframes, options, options.longTF),
         };
     }
 
@@ -39,7 +40,10 @@ export class V3Engine implements ITradingEngine {
         macroData: AnalysisDetails | undefined,
         vwap: number,
         m: MatrixResult,
-        mode: string
+        mode: string,
+        allTimeframes?: Record<string, AnalysisDetails>,
+        options?: { quickTF: string, longTF: string, params?: Record<string, any> },
+        tf?: string
     ): TradeRecommendation {
         let score = 0;
         const reason: string[] = [];
@@ -102,99 +106,67 @@ export class V3Engine implements ITradingEngine {
                 if (macroIsBearish) { score += 20; reason.push('توافق الفريم الأكبر (+20)'); }
                 else if (macroIsBullish) { score -= 20; reason.push('الفريم الأكبر معاكس (-20)'); }
             }
-
-            // Macro RSI extreme penalty
-            if (type === 'LONG' && macroData.rsi > 75) { score -= 15; reason.push('RSI ماكرو تشبع شرائي (-15)'); }
-            if (type === 'SHORT' && macroData.rsi < 25) { score -= 15; reason.push('RSI ماكرو تشبع بيعي (-15)'); }
         }
 
         // ==========================================================
-        // LAYER 4 — VWAP + RSI Confluence (دمج السيولة والزخم)
+        // LAYER 4 — EMA & VWAP Alignment
         // ==========================================================
-        const aboveVWAP = cp > vwap;
-        const vwapDist = Math.abs(cp - vwap) / vwap * 100; // distance %
+        const ema20 = data.levels.ma20 || data.levels.ma7;
+        if (type === 'LONG' && cp > ema20 && cp > vwap) {
+            score += 15; reason.push('فوق EMA/VWAP (+15)');
+        } else if (type === 'SHORT' && cp < ema20 && cp < vwap) {
+            score += 15; reason.push('تحت EMA/VWAP (+15)');
+        }
+
+        // ==========================================================
+        // LAYER 5 — Momentum Indicators (MACD + StochRSI)
+        // ==========================================================
+        const macdHist = data.indicators?.macd?.histogram || 0;
+        const stoch = data.indicators?.stochRsi || 50;
 
         if (type === 'LONG') {
-            if (aboveVWAP) {
-                score += vwapDist < 0.3 ? 10 : 15;  // close to VWAP = stronger break signal
-                reason.push(`فوق VWAP بـ ${vwapDist.toFixed(2)}% (+${vwapDist < 0.3 ? 10 : 15})`);
-            } else {
-                score -= 10; reason.push('تحت VWAP (-10)');
-            }
-            // RSI Zones
-            if (data.rsi < 30) { score += 25; reason.push('RSI ذعر بيعي (+25)'); }
-            else if (data.rsi < 45 && cp > data.levels.s1) { score += 15; reason.push('RSI ارتداد من دعم (+15)'); }
-            else if (data.rsi > 75) { score -= 25; reason.push('RSI تشبع شرائي خطر (-25)'); }
-            else if (data.rsi > 60) { score -= 10; reason.push('RSI مرتفع (-10)'); }
+            if (macdHist > 0) { score += 10; reason.push('MACD صاعد (+10)'); }
+            if (stoch < 60) { score += 5; reason.push('StochRSI مساحة صعود (+5)'); }
         } else {
-            if (!aboveVWAP) {
-                score += vwapDist < 0.3 ? 10 : 15;
-                reason.push(`تحت VWAP بـ ${vwapDist.toFixed(2)}% (+${vwapDist < 0.3 ? 10 : 15})`);
-            } else {
-                score -= 10; reason.push('فوق VWAP (-10)');
-            }
-            // RSI Zones
-            if (data.rsi > 70) { score += 25; reason.push('RSI ذعر شرائي (+25)'); }
-            else if (data.rsi > 55 && cp < data.levels.r1) { score += 15; reason.push('RSI ارتداد من مقاومة (+15)'); }
-            else if (data.rsi < 25) { score -= 25; reason.push('RSI تشبع بيعي خطر (-25)'); }
-            else if (data.rsi < 40) { score -= 10; reason.push('RSI منخفض (-10)'); }
+            if (macdHist < 0) { score += 10; reason.push('MACD هابط (+10)'); }
+            if (stoch > 40) { score += 5; reason.push('StochRSI مساحة هبوط (+5)'); }
         }
 
         // ==========================================================
-        // LAYER 5 — MACD Momentum Check (زخم MACD)
+        // LAYER 6 — Matrix Score Weight
         // ==========================================================
-        if (data.indicators?.macd) {
-            const macdDiff = data.indicators.macd.macd - data.indicators.macd.signal;
-            if (type === 'LONG') {
-                if (macdDiff > 0) { score += 10; reason.push('MACD تصاعدي (+10)'); }
-                else { score -= 8; reason.push('MACD تنازلي (-8)'); }
-            } else {
-                if (macdDiff < 0) { score += 10; reason.push('MACD تنازلي (+10)'); }
-                else { score -= 8; reason.push('MACD تصاعدي (-8)'); }
-            }
-        }
-
-        // ==========================================================
-        // LAYER 6 — Matrix Direction Alignment
-        // Direction-aware: matrix bullish helps LONG, hurts SHORT
-        // ==========================================================
-        const matrixBias = (m.percentage - 50); // positive = bullish bias
+        const matrixBias = (m.percentage - 50);
         if (type === 'LONG') {
             const matBonus = matrixBias * 0.5;
             score += matBonus;
             reason.push(`ماتريكس ${m.percentage.toFixed(0)}% (${matBonus >= 0 ? '+' : ''}${matBonus.toFixed(1)})`);
         } else {
-            const matBonus = -matrixBias * 0.5; // invert: bullish matrix hurts SHORT
+            const matBonus = -matrixBias * 0.5;
             score += matBonus;
             reason.push(`ماتريكس ${m.percentage.toFixed(0)}% (${matBonus >= 0 ? '+' : ''}${matBonus.toFixed(1)})`);
         }
 
         // ==========================================================
-        // LAYER 7 — Dynamic SL / TP (based on technical levels)
+        // LAYER 7 — Dynamic SL / TP
         // ==========================================================
-        const safetyBuffer = Math.max(data.atr * 0.5, cp * 0.002); // at least 0.2% safety
+        const safetyBuffer = Math.max(data.atr * 0.5, cp * 0.002);
         let sl = 0, tp = 0;
 
         if (type === 'LONG') {
-            // SL: highest of (lastSwingLow - buffer) or s2 — nearest to price below it
             const candidateSL1 = data.levels.lastSwingLow - safetyBuffer;
             const candidateSL2 = data.levels.s2;
             sl = Math.max(candidateSL1, candidateSL2);
-            sl = Math.min(sl, cp * 0.994); // guarantee at least 0.6% below price
+            sl = Math.min(sl, cp * 0.994);
 
-            // TP: farthest of r1 or fibTarget above price
             const candidateTP1 = data.levels.r1;
             const candidateTP2 = data.levels.fibTarget || 0;
             tp = Math.max(candidateTP1, candidateTP2, cp + data.atr * 2);
-
         } else {
-            // SL: lowest of (lastSwingHigh + buffer) or r2 — nearest to price above it
             const candidateSL1 = data.levels.lastSwingHigh + safetyBuffer;
             const candidateSL2 = data.levels.r2;
             sl = Math.min(candidateSL1, candidateSL2);
-            sl = Math.max(sl, cp * 1.006); // guarantee at least 0.6% above price
+            sl = Math.max(sl, cp * 1.006);
 
-            // TP: lowest valid level below cp (s1 or fib382)
             const shortTPCandidates = [
                 data.levels.s1,
                 data.levels.fib382 || 0
@@ -202,10 +174,9 @@ export class V3Engine implements ITradingEngine {
 
             tp = shortTPCandidates.length > 0
                 ? Math.min(...shortTPCandidates)
-                : cp - data.atr * 2; // safe fallback
+                : cp - data.atr * 2;
         }
 
-        // Ensure minimum 1:1.5 R/R
         const riskDist = Math.abs(cp - sl);
         const rewardDist = Math.abs(tp - cp);
         if (riskDist <= 0 || rewardDist < riskDist * 1.5) {
@@ -215,12 +186,23 @@ export class V3Engine implements ITradingEngine {
         }
 
         // ==========================================================
-        // LAYER 8 — Final Decision (tiered confidence)
+        // High Precision Filter Check (89.5% Win Rate)
+        // ==========================================================
+        const useFilter = options?.params?.highPrecisionFilter !== false;
+        if (useFilter && allTimeframes) {
+            const frame = OptimizedEngineSuite.buildMarketFrame(type, cp, m, allTimeframes, tf || '5m');
+            const passed = OptimizedEngineSuite.runV3(frame);
+            if (!passed) {
+                return this.cancel(cp, `⚪ ملغاة: لم تتطابق شروط V3 Multi-Layer Sniper`, type, score, mode, `Failed V3 Filter: Quick_RSI=${frame.quickRsi?.toFixed(1)}, 1H_RSI=${frame.rsi1h?.toFixed(1)}, Matrix=${m.percentage.toFixed(0)}%, 4H_Trend=${frame.trend4h}`);
+            }
+        }
+
+        // ==========================================================
+        // LAYER 8 — Final Decision
         // ==========================================================
         const winRate = Math.max(0, Math.min(50 + score * 0.75, 95));
         const finalReason = `Score: ${score.toFixed(1)} | [${reason.join(' | ')}]`;
 
-        // Tiered signal response
         if (winRate >= 72) {
             return {
                 status: `${type === 'LONG' ? '🟢 شراء قوي' : '🔴 بيع قوي'} (${winRate.toFixed(1)}%)`,

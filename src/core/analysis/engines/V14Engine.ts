@@ -1,6 +1,7 @@
 import { AnalysisDetails, MatrixResult, OHLCV, TradeRecommendation } from '../../shared/types';
 import { ITradingEngine, EngineResult } from './ITradingEngine';
 import { TechnicalAnalyzer } from '../TechnicalAnalyzer';
+import { OptimizedEngineSuite } from './OptimizedEngineSuite';
 
 export class V14Engine implements ITradingEngine {
     analyze(
@@ -8,14 +9,14 @@ export class V14Engine implements ITradingEngine {
         vwap: number,
         allTimeframes: Record<string, AnalysisDetails>,
         mtfOHLCV: Record<string, OHLCV[]>,
-        options: { quickTF: string; longTF: string }
+        options: { quickTF: string; longTF: string; params?: Record<string, any> }
     ): EngineResult {
         const matrix = TechnicalAnalyzer.calculateMatrix(allTimeframes);
 
         return {
             matrix,
-            scalp: this.runV14Pipeline(cp, allTimeframes, mtfOHLCV, matrix, 'SCALP'),
-            swing: this.runV14Pipeline(cp, allTimeframes, mtfOHLCV, matrix, 'SWING'),
+            scalp: this.runV14Pipeline(cp, allTimeframes, mtfOHLCV, matrix, 'SCALP', options, options.quickTF),
+            swing: this.runV14Pipeline(cp, allTimeframes, mtfOHLCV, matrix, 'SWING', options, options.longTF),
         };
     }
 
@@ -24,7 +25,9 @@ export class V14Engine implements ITradingEngine {
         allTimeframes: Record<string, AnalysisDetails>,
         mtfOHLCV: Record<string, OHLCV[]>,
         matrix: MatrixResult,
-        mode: 'SCALP' | 'SWING'
+        mode: 'SCALP' | 'SWING',
+        options?: { quickTF: string; longTF: string; params?: Record<string, any> },
+        tf?: string
     ): TradeRecommendation {
         const quickTF = mode === 'SWING' ? '15m' : '5m';
         const ohlcv = mtfOHLCV[quickTF] || [];
@@ -111,6 +114,16 @@ export class V14Engine implements ITradingEngine {
         // SL & TP: SL below cloud bottom (long) / above cloud top (short)
         const sl = direction === 'LONG' ? Math.min(cloudBottom, cp - 2 * brickSize) : Math.max(cloudTop, cp + 2 * brickSize);
         const tp = direction === 'LONG' ? cp + dailyAtr * 4.0 : cp - dailyAtr * 4.0;
+
+        // High Precision Filter Check
+        const useFilter = options?.params?.highPrecisionFilter !== false;
+        if (useFilter && allTimeframes) {
+            const frame = OptimizedEngineSuite.buildMarketFrame(direction, cp, matrix, allTimeframes, tf || '5m');
+            const passed = OptimizedEngineSuite.runV14(frame);
+            if (!passed) {
+                return this.cancel(cp, '⚪ ملغاة: لم تتطابق شروط V14 (Renko Brick Trend & Volatility)', mode, score, `Failed V14 Filter. Quick_ATR: ${frame.quickAtr?.toFixed(1)}, Matrix: ${matrix.percentage.toFixed(0)}%, 4H_RSI: ${frame.rsi4h?.toFixed(1) ?? 'N/A'}`);
+            }
+        }
 
         return {
             status: `${direction === 'LONG' ? '🟢 قناص صاعد' : '🔴 قناص هابط'} V14 [${mode}] (${winRate.toFixed(0)}%)`,

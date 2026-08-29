@@ -1,6 +1,7 @@
 import { AnalysisDetails, MatrixResult, OHLCV, TradeRecommendation } from '../../shared/types';
 import { ITradingEngine, EngineResult } from './ITradingEngine';
 import { TechnicalAnalyzer } from '../TechnicalAnalyzer';
+import { OptimizedEngineSuite } from './OptimizedEngineSuite';
 
 interface MacroResult {
     bias: 'LONG' | 'SHORT' | 'NEUTRAL';
@@ -29,14 +30,14 @@ export class V8Engine implements ITradingEngine {
         vwap: number,
         allTimeframes: Record<string, AnalysisDetails>,
         mtfOHLCV: Record<string, OHLCV[]>,
-        options: { quickTF: string; longTF: string }
+        options: { quickTF: string; longTF: string; params?: Record<string, any> }
     ): EngineResult {
         const matrix = TechnicalAnalyzer.calculateMatrix(allTimeframes);
 
         return {
             matrix,
-            scalp: this.runV8Pipeline(cp, vwap, allTimeframes, mtfOHLCV, matrix, 'SCALP'),
-            swing: this.runV8Pipeline(cp, vwap, allTimeframes, mtfOHLCV, matrix, 'SWING'),
+            scalp: this.runV8Pipeline(cp, vwap, allTimeframes, mtfOHLCV, matrix, 'SCALP', options, options.quickTF),
+            swing: this.runV8Pipeline(cp, vwap, allTimeframes, mtfOHLCV, matrix, 'SWING', options, options.longTF),
         };
     }
 
@@ -46,7 +47,9 @@ export class V8Engine implements ITradingEngine {
         allTimeframes: Record<string, AnalysisDetails>,
         mtfOHLCV: Record<string, OHLCV[]>,
         matrix: MatrixResult,
-        mode: 'SCALP' | 'SWING'
+        mode: 'SCALP' | 'SWING',
+        options?: { quickTF: string; longTF: string; params?: Record<string, any> },
+        tf?: string
     ): TradeRecommendation {
         const macroTF = mode === 'SWING' ? '1d' : '1h';
         const mesoTF = mode === 'SWING' ? '1h' : '5m';
@@ -109,6 +112,16 @@ export class V8Engine implements ITradingEngine {
         const sl = this.calcSL(entryPrice, microOHLCV, direction, execData, zone);
         const tp = this.calcTP(entryPrice, mesoOHLCV, direction, execData);
         const tp2 = this.calcTP2(entryPrice, mesoOHLCV, direction, execData);
+
+        // High Precision Filter Check
+        const useFilter = options?.params?.highPrecisionFilter !== false;
+        if (useFilter && allTimeframes) {
+            const frame = OptimizedEngineSuite.buildMarketFrame(direction, cp, matrix, allTimeframes, tf || '5m');
+            const passed = OptimizedEngineSuite.runV8(frame);
+            if (!passed) {
+                return this.cancel(cp, '⚪ ملغاة: لم تتطابق شروط V8 (ICT Liquidity Sweep & Retest)', mode, confidence, `Failed V8 Filter. Matrix: ${matrix.percentage.toFixed(0)}%, 4H_RSI: ${frame.rsi4h?.toFixed(1) ?? 'N/A'}`);
+            }
+        }
 
         // Rejection Check
         const ready = poi !== null && inZone && micro.confirmed && winRate >= 78;

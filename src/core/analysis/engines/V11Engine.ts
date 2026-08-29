@@ -2,6 +2,7 @@ import { AnalysisDetails, MatrixResult, OHLCV, TradeRecommendation } from '../..
 import { ITradingEngine, EngineResult } from './ITradingEngine';
 import { TechnicalAnalyzer } from '../TechnicalAnalyzer';
 import { BollingerBands } from 'technicalindicators';
+import { OptimizedEngineSuite } from './OptimizedEngineSuite';
 
 interface SRLevel {
     price: number;
@@ -24,14 +25,14 @@ export class V11Engine implements ITradingEngine {
         vwap: number,
         allTimeframes: Record<string, AnalysisDetails>,
         mtfOHLCV: Record<string, OHLCV[]>,
-        options: { quickTF: string; longTF: string }
+        options: { quickTF: string; longTF: string; params?: Record<string, any> }
     ): EngineResult {
         const matrix = TechnicalAnalyzer.calculateMatrix(allTimeframes);
 
         return {
             matrix,
-            scalp: this.runV11Pipeline(cp, vwap, allTimeframes, mtfOHLCV, matrix, 'SCALP'),
-            swing: this.runV11Pipeline(cp, vwap, allTimeframes, mtfOHLCV, matrix, 'SWING'),
+            scalp: this.runV11Pipeline(cp, vwap, allTimeframes, mtfOHLCV, matrix, 'SCALP', options, options.quickTF),
+            swing: this.runV11Pipeline(cp, vwap, allTimeframes, mtfOHLCV, matrix, 'SWING', options, options.longTF),
         };
     }
 
@@ -41,7 +42,9 @@ export class V11Engine implements ITradingEngine {
         allTimeframes: Record<string, AnalysisDetails>,
         mtfOHLCV: Record<string, OHLCV[]>,
         matrix: MatrixResult,
-        mode: 'SCALP' | 'SWING'
+        mode: 'SCALP' | 'SWING',
+        options?: { quickTF: string; longTF: string; params?: Record<string, any> },
+        tf?: string
     ): TradeRecommendation {
         // ── 1. تحديد الفريمات (HTF / MTF / LTF) ──
         const htfKey = mode === 'SWING' ? '4h' : '1h';
@@ -314,6 +317,16 @@ export class V11Engine implements ITradingEngine {
             `العائد/المخاطرة RRR: ${rrr.toFixed(2)}:1`,
             `نسبة النجاح المتوقعة: ${winRate.toFixed(0)}%`,
         ].join(' | ');
+
+        // High Precision Filter Check
+        const useFilter = options?.params?.highPrecisionFilter !== false;
+        if (useFilter && allTimeframes && (direction === 'LONG' || direction === 'SHORT')) {
+            const frame = OptimizedEngineSuite.buildMarketFrame(direction, cp, matrix, allTimeframes, tf || '5m');
+            const passed = OptimizedEngineSuite.runV11(frame);
+            if (!passed) {
+                return this.cancel(cp, '⚪ ملغاة: لم تتطابق شروط V11 المتكيفة مع بيئة السوق', mode, confidence, `Failed V11 Filter. 1H_RSI: ${frame.rsi1h?.toFixed(1) ?? 'N/A'}, 4H_RSI: ${frame.rsi4h?.toFixed(1) ?? 'N/A'}, Matrix: ${matrix.percentage.toFixed(0)}%`);
+            }
+        }
 
         const status = readyToFire
             ? `${direction === 'LONG' ? '🟢 قناص صاعد' : '🔴 قناص هابط'} V11 (${winRate.toFixed(0)}%)`

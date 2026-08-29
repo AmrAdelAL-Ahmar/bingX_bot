@@ -1,6 +1,7 @@
 import { AnalysisDetails, MatrixResult, OHLCV, TradeRecommendation } from '../../shared/types';
 import { ITradingEngine, EngineResult } from './ITradingEngine';
 import { TechnicalAnalyzer } from '../TechnicalAnalyzer';
+import { OptimizedEngineSuite } from './OptimizedEngineSuite';
 
 export class V15Engine implements ITradingEngine {
     analyze(
@@ -14,8 +15,8 @@ export class V15Engine implements ITradingEngine {
 
         return {
             matrix,
-            scalp: this.runV15Pipeline(cp, allTimeframes, mtfOHLCV, matrix, 'SCALP', options.params),
-            swing: this.runV15Pipeline(cp, allTimeframes, mtfOHLCV, matrix, 'SWING', options.params),
+            scalp: this.runV15Pipeline(cp, allTimeframes, mtfOHLCV, matrix, 'SCALP', options.params, options, options.quickTF),
+            swing: this.runV15Pipeline(cp, allTimeframes, mtfOHLCV, matrix, 'SWING', options.params, options, options.longTF),
         };
     }
 
@@ -25,7 +26,9 @@ export class V15Engine implements ITradingEngine {
         mtfOHLCV: Record<string, OHLCV[]>,
         matrix: MatrixResult,
         mode: 'SCALP' | 'SWING',
-        params?: Record<string, any>
+        params?: Record<string, any>,
+        options?: { quickTF: string; longTF: string; params?: Record<string, any> },
+        tf?: string
     ): TradeRecommendation {
         const quickTF = mode === 'SWING' ? '15m' : '5m';
         const ohlcv = mtfOHLCV[quickTF] || [];
@@ -164,6 +167,16 @@ export class V15Engine implements ITradingEngine {
             `انحراف RSI (${currentRsi.toFixed(0)})`,
             `تأكيد DXY مؤشر الدولار`
         ];
+
+        // High Precision Filter Check
+        const useFilter = options?.params?.highPrecisionFilter !== false;
+        if (useFilter && allTimeframes && (direction === 'LONG' || direction === 'SHORT')) {
+            const frame = OptimizedEngineSuite.buildMarketFrame(direction, cp, matrix, allTimeframes, tf || '5m');
+            const passed = OptimizedEngineSuite.runV15(frame);
+            if (!passed) {
+                return this.cancel(cp, '⚪ ملغاة: لم تتطابق شروط V15 (Harmonic Bat & Chan Pen)', mode, score, `Failed V15 Filter. Quick_Fib382: ${frame.fib382_quick?.toFixed(2)}, Matrix: ${matrix.percentage.toFixed(0)}%, 4H_RSI: ${frame.rsi4h?.toFixed(1) ?? 'N/A'}`);
+            }
+        }
 
         return {
             status: `${direction === 'LONG' ? '🟢 قناص صاعد' : '🔴 قناص هابط'} V15 [${mode}] (${winRate.toFixed(0)}%)`,

@@ -1,6 +1,7 @@
 import { AnalysisDetails, MatrixResult, OHLCV, TradeRecommendation } from '../../shared/types';
 import { ITradingEngine, EngineResult } from './ITradingEngine';
 import { TechnicalAnalyzer } from '../TechnicalAnalyzer';
+import { OptimizedEngineSuite } from './OptimizedEngineSuite';
 
 interface MacroResult {
     bias: 'LONG' | 'SHORT' | 'NEUTRAL';
@@ -36,14 +37,14 @@ export class V10Engine implements ITradingEngine {
         vwap: number,
         allTimeframes: Record<string, AnalysisDetails>,
         mtfOHLCV: Record<string, OHLCV[]>,
-        options: { quickTF: string; longTF: string }
+        options: { quickTF: string; longTF: string; params?: Record<string, any> }
     ): EngineResult {
         const matrix = TechnicalAnalyzer.calculateMatrix(allTimeframes);
 
         return {
             matrix,
-            scalp: this.runV10Pipeline(cp, vwap, allTimeframes, mtfOHLCV, matrix, 'SCALP'),
-            swing: this.runV10Pipeline(cp, vwap, allTimeframes, mtfOHLCV, matrix, 'SWING'),
+            scalp: this.runV10Pipeline(cp, vwap, allTimeframes, mtfOHLCV, matrix, 'SCALP', options, options.quickTF),
+            swing: this.runV10Pipeline(cp, vwap, allTimeframes, mtfOHLCV, matrix, 'SWING', options, options.longTF),
         };
     }
 
@@ -53,7 +54,9 @@ export class V10Engine implements ITradingEngine {
         allTimeframes: Record<string, AnalysisDetails>,
         mtfOHLCV: Record<string, OHLCV[]>,
         matrix: MatrixResult,
-        mode: 'SCALP' | 'SWING'
+        mode: 'SCALP' | 'SWING',
+        options?: { quickTF: string; longTF: string; params?: Record<string, any> },
+        tf?: string
     ): TradeRecommendation {
 
         // ── 1. LAYER 1: MACRO GATE (Daily & 4H Bias with SuperTrend) ───────────
@@ -106,6 +109,16 @@ export class V10Engine implements ITradingEngine {
                 `⚪ ثقة غير كافية V10 (${winRate.toFixed(0)}%) — الحد الأدنى 80%`,
                 mode, confidence,
                 `[V10 Confidence Gate] ${winRate.toFixed(1)}% < 80%`);
+        }
+
+        // High Precision Filter Check
+        const useFilter = options?.params?.highPrecisionFilter !== false;
+        if (useFilter && allTimeframes) {
+            const frame = OptimizedEngineSuite.buildMarketFrame(direction, cp, matrix, allTimeframes, tf || '5m');
+            const passed = OptimizedEngineSuite.runV10(frame);
+            if (!passed) {
+                return this.cancel(cp, '⚪ ملغاة: لم تتطابق شروط V10 المؤسساتية (POC + Linear Regression)', mode, confidence, `Failed V10 Filter. Matrix: ${matrix.percentage.toFixed(0)}%, 1H_RSI: ${frame.rsi1h?.toFixed(1) ?? 'N/A'}, 4H_RSI: ${frame.rsi4h?.toFixed(1) ?? 'N/A'}`);
+            }
         }
 
         const signalReason = [

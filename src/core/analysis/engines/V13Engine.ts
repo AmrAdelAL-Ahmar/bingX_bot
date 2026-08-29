@@ -1,6 +1,7 @@
 import { AnalysisDetails, MatrixResult, OHLCV, TradeRecommendation } from '../../shared/types';
 import { ITradingEngine, EngineResult } from './ITradingEngine';
 import { TechnicalAnalyzer } from '../TechnicalAnalyzer';
+import { OptimizedEngineSuite } from './OptimizedEngineSuite';
 
 export class V13Engine implements ITradingEngine {
     analyze(
@@ -8,14 +9,14 @@ export class V13Engine implements ITradingEngine {
         vwap: number,
         allTimeframes: Record<string, AnalysisDetails>,
         mtfOHLCV: Record<string, OHLCV[]>,
-        options: { quickTF: string; longTF: string }
+        options: { quickTF: string; longTF: string; params?: Record<string, any> }
     ): EngineResult {
         const matrix = TechnicalAnalyzer.calculateMatrix(allTimeframes);
 
         return {
             matrix,
-            scalp: this.runV13Pipeline(cp, vwap, allTimeframes, mtfOHLCV, matrix, 'SCALP'),
-            swing: this.runV13Pipeline(cp, vwap, allTimeframes, mtfOHLCV, matrix, 'SWING'),
+            scalp: this.runV13Pipeline(cp, vwap, allTimeframes, mtfOHLCV, matrix, 'SCALP', options, options.quickTF),
+            swing: this.runV13Pipeline(cp, vwap, allTimeframes, mtfOHLCV, matrix, 'SWING', options, options.longTF),
         };
     }
 
@@ -25,7 +26,9 @@ export class V13Engine implements ITradingEngine {
         allTimeframes: Record<string, AnalysisDetails>,
         mtfOHLCV: Record<string, OHLCV[]>,
         matrix: MatrixResult,
-        mode: 'SCALP' | 'SWING'
+        mode: 'SCALP' | 'SWING',
+        options?: { quickTF: string; longTF: string; params?: Record<string, any> },
+        tf?: string
     ): TradeRecommendation {
         const quickKey = mode === 'SWING' ? '15m' : '5m';
         const ohlcv = mtfOHLCV[quickKey] || [];
@@ -133,6 +136,16 @@ export class V13Engine implements ITradingEngine {
             `توازن أحجام ${imbalanceRatio.toFixed(1)}x`,
             `مصفوفة الفريمات ${matrix.percentage.toFixed(0)}%`
         ];
+
+        // High Precision Filter Check
+        const useFilter = options?.params?.highPrecisionFilter !== false;
+        if (useFilter && allTimeframes && (direction === 'LONG' || direction === 'SHORT')) {
+            const frame = OptimizedEngineSuite.buildMarketFrame(direction, cp, matrix, allTimeframes, tf || '5m');
+            const passed = OptimizedEngineSuite.runV13(frame);
+            if (!passed) {
+                return this.cancel(cp, '⚪ ملغاة: لم تتطابق شروط V13 (Volume-Weighted Mean Reversion)', mode, score, `Failed V13 Filter. Quick_WilliamsR: ${frame.quickWilliamsR?.toFixed(1)}, 1H_RSI: ${frame.rsi1h?.toFixed(1) ?? 'N/A'}, 4H_RSI: ${frame.rsi4h?.toFixed(1) ?? 'N/A'}`);
+            }
+        }
 
         return {
             status: `${direction === 'LONG' ? '🟢 قناص صاعد' : '🔴 قناص هابط'} V13 [${mode}] (${winRate.toFixed(0)}%)`,

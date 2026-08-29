@@ -1,6 +1,7 @@
 import { AnalysisDetails, MatrixResult, OHLCV, TradeRecommendation } from '../../shared/types';
 import { ITradingEngine, EngineResult } from './ITradingEngine';
 import { TechnicalAnalyzer } from '../TechnicalAnalyzer';
+import { OptimizedEngineSuite } from './OptimizedEngineSuite';
 
 interface SRLevel {
     price: number;
@@ -34,14 +35,14 @@ export class V9Engine implements ITradingEngine {
         vwap: number,
         allTimeframes: Record<string, AnalysisDetails>,
         mtfOHLCV: Record<string, OHLCV[]>,
-        options: { quickTF: string; longTF: string }
+        options: { quickTF: string; longTF: string; params?: Record<string, any> }
     ): EngineResult {
         const matrix = TechnicalAnalyzer.calculateMatrix(allTimeframes);
 
         return {
             matrix,
-            scalp: this.runV9Pipeline(cp, vwap, allTimeframes, mtfOHLCV, matrix, 'SCALP'),
-            swing: this.runV9Pipeline(cp, vwap, allTimeframes, mtfOHLCV, matrix, 'SWING'),
+            scalp: this.runV9Pipeline(cp, vwap, allTimeframes, mtfOHLCV, matrix, 'SCALP', options, options.quickTF),
+            swing: this.runV9Pipeline(cp, vwap, allTimeframes, mtfOHLCV, matrix, 'SWING', options, options.longTF),
         };
     }
 
@@ -51,7 +52,9 @@ export class V9Engine implements ITradingEngine {
         allTimeframes: Record<string, AnalysisDetails>,
         mtfOHLCV: Record<string, OHLCV[]>,
         matrix: MatrixResult,
-        mode: 'SCALP' | 'SWING'
+        mode: 'SCALP' | 'SWING',
+        options?: { quickTF: string; longTF: string; params?: Record<string, any> },
+        tf?: string
     ): TradeRecommendation {
         const htfKey = mode === 'SWING' ? '4h' : '1h';
         const mtfKey = mode === 'SWING' ? '1h' : '15m';
@@ -143,6 +146,16 @@ export class V9Engine implements ITradingEngine {
         const slDist = Math.abs(entryPrice - sl);
         const tpDist = Math.abs(tp - entryPrice);
         const rrr = slDist > 0 ? tpDist / slDist : 0;
+
+        // High Precision Filter Check
+        const useFilter = options?.params?.highPrecisionFilter !== false;
+        if (useFilter && allTimeframes) {
+            const frame = OptimizedEngineSuite.buildMarketFrame(direction, cp, matrix, allTimeframes, tf || '5m');
+            const passed = OptimizedEngineSuite.runV9(frame);
+            if (!passed) {
+                return this.cancel(cp, '⚪ ملغاة: لم تتطابق شروط V9 (Golden Wave & Pullback)', mode, confidence, `Failed V9 Filter. 1H_RSI: ${frame.rsi1h?.toFixed(1) ?? 'N/A'}, 4H_RSI: ${frame.rsi4h?.toFixed(1) ?? 'N/A'}, MACD_Hist: ${frame.quickMacdHist ?? 'N/A'}`);
+            }
+        }
 
         const ready = entryZone !== null && ltfConfirmed && rsiOk && confidence >= 70 && rrr >= 1.5;
 

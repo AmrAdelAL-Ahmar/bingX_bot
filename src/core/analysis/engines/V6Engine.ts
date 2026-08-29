@@ -1,6 +1,7 @@
 import { AnalysisDetails, MatrixResult, OHLCV, TradeRecommendation } from '../../shared/types';
 import { ITradingEngine, EngineResult } from './ITradingEngine';
 import { TechnicalAnalyzer } from '../TechnicalAnalyzer';
+import { OptimizedEngineSuite } from './OptimizedEngineSuite';
 
 export class V6Engine implements ITradingEngine {
     analyze(
@@ -8,7 +9,7 @@ export class V6Engine implements ITradingEngine {
         vwap: number,
         allTimeframes: Record<string, AnalysisDetails>,
         mtfOHLCV: Record<string, OHLCV[]>,
-        options: { quickTF: string, longTF: string }
+        options: { quickTF: string, longTF: string, params?: Record<string, any> }
     ): EngineResult {
         // --- 1. Timeframe Firewall (Isolated Matrices) ---
         const scalpTFs = ['1m', '3m', '5m', '15m', '30m'];
@@ -24,21 +25,49 @@ export class V6Engine implements ITradingEngine {
         const swingOHLCV = mtfOHLCV[options.longTF] || mtfOHLCV['1h'];
 
         return {
-            matrix: scalpMatrix, // Primary view is scalp-oriented
-            scalp: this.analyzeScalp(cp, scalpData, scalpMatrix, scalpOHLCV, vwap),
-            swing: this.analyzeSwing(cp, swingData, swingMatrix, swingOHLCV, vwap)
+            matrix: scalpMatrix,
+            scalp: this.analyzeScalp(cp, scalpData, scalpMatrix, scalpOHLCV, vwap, allTimeframes, options, options.quickTF),
+            swing: this.analyzeSwing(cp, swingData, swingMatrix, swingOHLCV, vwap, allTimeframes, options, options.longTF)
         };
     }
 
-    private analyzeScalp(cp: number, data: AnalysisDetails, m: MatrixResult, ohlcv: OHLCV[], vwap: number): TradeRecommendation {
-        return this.runSniperLogic(cp, data, m, ohlcv, vwap, 'SCALP');
+    private analyzeScalp(
+        cp: number, 
+        data: AnalysisDetails, 
+        m: MatrixResult, 
+        ohlcv: OHLCV[], 
+        vwap: number, 
+        allTimeframes: Record<string, AnalysisDetails>, 
+        options: { quickTF: string, longTF: string, params?: Record<string, any> },
+        tf: string
+    ): TradeRecommendation {
+        return this.runSniperLogic(cp, data, m, ohlcv, vwap, 'SCALP', allTimeframes, options, tf);
     }
 
-    private analyzeSwing(cp: number, data: AnalysisDetails, m: MatrixResult, ohlcv: OHLCV[], vwap: number): TradeRecommendation {
-        return this.runSniperLogic(cp, data, m, ohlcv, vwap, 'SWING');
+    private analyzeSwing(
+        cp: number, 
+        data: AnalysisDetails, 
+        m: MatrixResult, 
+        ohlcv: OHLCV[], 
+        vwap: number, 
+        allTimeframes: Record<string, AnalysisDetails>, 
+        options: { quickTF: string, longTF: string, params?: Record<string, any> },
+        tf: string
+    ): TradeRecommendation {
+        return this.runSniperLogic(cp, data, m, ohlcv, vwap, 'SWING', allTimeframes, options, tf);
     }
 
-    private runSniperLogic(cp: number, data: AnalysisDetails, m: MatrixResult, ohlcv: OHLCV[], vwap: number, mode: 'SCALP' | 'SWING'): TradeRecommendation {
+    private runSniperLogic(
+        cp: number, 
+        data: AnalysisDetails, 
+        m: MatrixResult, 
+        ohlcv: OHLCV[], 
+        vwap: number, 
+        mode: 'SCALP' | 'SWING', 
+        allTimeframes: Record<string, AnalysisDetails>, 
+        options: { quickTF: string, longTF: string, params?: Record<string, any> },
+        tf: string
+    ): TradeRecommendation {
         let score = 0;
         let reason = [];
         const isAboveVWAP = cp > vwap;
@@ -54,36 +83,18 @@ export class V6Engine implements ITradingEngine {
         else if (data.rsi > 65) { score -= 15; reason.push('RSI > 65 (-15)'); }
         else { reason.push('RSI Neutral (0)'); }
 
-        let winRate = Math.min(50 + (Math.abs(score) * 0.6), 96);
+        let winRate = Math.min(50 + (Math.abs(score) * 0.6), 99.2);
         let type: 'LONG' | 'SHORT' | 'NONE' = score >= 0 ? 'LONG' : 'SHORT';
         const slDistance = data.atr * 2.5;
         let rejectionReason = "";
 
-        // --- 2. Price Action & Radar Firewall ---
-        const div = TechnicalAnalyzer.detectDivergence(ohlcv, type);
-
-        if (type === 'SHORT') {
-            // Case A: Strong uptrend - Don't short unless Last Swing Low is broken
-            if (m.percentage >= 55 && cp > data.levels.lastSwingLow) {
+        const useFilter = options.params?.highPrecisionFilter !== false;
+        if (useFilter) {
+            const frame = OptimizedEngineSuite.buildMarketFrame(type, cp, m, allTimeframes, tf);
+            const passed = OptimizedEngineSuite.runV6(frame);
+            if (!passed) {
                 type = 'NONE';
-                rejectionReason = `حماية: لم يتم كسر القاع اللحظي (${data.levels.lastSwingLow.toFixed(2)})`;
-            }
-            // Case B: No confluence of correction (Radar Veto)
-            else if (m.percentage >= 50 && !div.detected) {
-                type = 'NONE';
-                rejectionReason = "حماية: رادار التصحيح لا يدعم الهبوط حالياً";
-            }
-        }
-        else if (type === 'LONG') {
-            // Case C: Strong downtrend - Don't long unless Last Swing High is broken
-            if (m.percentage <= 45 && cp < data.levels.lastSwingHigh) {
-                type = 'NONE';
-                rejectionReason = `حماية: لم يتم اختراق القمة اللحظية (${data.levels.lastSwingHigh.toFixed(2)})`;
-            }
-            // Case D: No confluence of correction (Radar Veto)
-            else if (m.percentage <= 50 && !div.detected) {
-                type = 'NONE';
-                rejectionReason = "حماية: رادار التصحيح لا يدعم الصعود حالياً";
+                rejectionReason = `Failed V6 Firewall Filter. 1H_RSI=${frame.rsi1h ?? 'N/A'}, 4H_RSI=${frame.rsi4h ?? 'N/A'}, MACD_Hist=${frame.quickMacdHist ?? 'N/A'}`;
             }
         }
 
@@ -101,7 +112,7 @@ export class V6Engine implements ITradingEngine {
             ? Math.min(cp - slDistance, data.levels.lastSwingLow - (data.atr * 0.5))
             : Math.max(cp + slDistance, data.levels.lastSwingHigh + (data.atr * 0.5));
 
-        const finalReason = `Score: ${score.toFixed(1)} | Factors: [${reason.join(', ')}] | Radar: ${div.detected ? 'Confirmed' : 'Skipped'} -> ${type}    |Rejected: ${rejectionReason.length > 0 ? rejectionReason : "None"}`;
+        const finalReason = `Score: ${score.toFixed(1)} | Factors: [${reason.join(', ')}] -> ${type}`;
 
         return {
             status: `${type === 'LONG' ? '🟢 احتمالية صعود' : '🔴 احتمالية هبوط'} (${winRate.toFixed(1)}%)`,
@@ -114,3 +125,4 @@ export class V6Engine implements ITradingEngine {
         };
     }
 }
+
