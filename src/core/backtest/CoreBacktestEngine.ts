@@ -17,6 +17,9 @@ import { V13Engine } from '../analysis/engines/V13Engine';
 import { V14Engine } from '../analysis/engines/V14Engine';
 import { V15Engine } from '../analysis/engines/V15Engine';
 import { V16Engine } from '../analysis/engines/V16Engine';
+import { V17Engine } from '../analysis/engines/V17Engine';
+import { V18Engine } from '../analysis/engines/V18Engine';
+import { HarmonicMasterEngine } from '../analysis/engines/HarmonicMasterEngine';
 import { MTFDataBuilder } from '../shared/MTFDataBuilder';
 
 const ENGINES: Record<string, ITradingEngine> = {
@@ -35,7 +38,10 @@ const ENGINES: Record<string, ITradingEngine> = {
     'V13': new V13Engine(),
     'V14': new V14Engine(),
     'V15': new V15Engine(),
-    'V16': new V16Engine()
+    'V16': new V16Engine(),
+    'V17': new V17Engine(),
+    'V18': new V18Engine(),
+    'HARMONIC': new HarmonicMasterEngine()
 };
 
 export interface BacktestOptions {
@@ -483,6 +489,9 @@ export class CoreBacktestEngine {
         const roi = ((totalCapital - initialCapital) / initialCapital) * 100;
         const netProfit = totalCapital - initialCapital;
 
+        // Monte Carlo Stress Testing (1,000 runs)
+        const mc = CoreBacktestEngine.runMonteCarloSimulation(generatedTrades, initialCapital, 1000);
+
         const modeText = options.mode === 'SCALP' ? 'سكالبينج ⚡️' : 'سوينج 🌊';
         const reportText = `
 📊 **تقرير الاختبار الرجعي الشامل مع محاكاة رأس المال** 📊
@@ -505,6 +514,12 @@ export class CoreBacktestEngine {
 الرافعة المالية المفترضة: **${defaultLeverage}x**
 وضع الهامش: **${marginMode === 'CROSS' ? 'متبادل (Cross)' : 'معزول (Isolated)'}**
 
+🎲 **اختبارات الضغط العشوائي (Monte Carlo 1,000 Iterations):**
+- أقصى تراجع محتمل بنسبة ثقة 95%: **${mc.worstDrawdown95}%**
+- أقصى تراجع محتمل في السيناريو المتطرف 99%: **${mc.worstDrawdown99}%**
+- احتمالية حدوث تراجع حرج (>25%): **${mc.ruinProbability}%**
+- رأس المال الوسيط المتوقع: **${mc.medianFinalCapital} USDT**
+
 🔢 **إحصائيات الصفقات:**
 إجمالي الإشارات المنفذة: **${stats.total}**
 تم تجاهلها (رصيد غير كافٍ): **${skippedTrades}**
@@ -518,9 +533,78 @@ export class CoreBacktestEngine {
 🕒 **صفقات مفتوحة:** **${stats.open}**
 🎯 **نسبة نجاح الصفقات المغلقة:** **${winRate.toFixed(1)}%**
 ━━━━━━━━━━━━━━
-💡 *تم الاختبار عبر محاكاة الزمن خطوة بخطوة مع تخصيص واقعي لرأس المال وتتبع دقيق للمارجن المحجوز لضمان واقعية النتائج.*
+💡 *تم الاختبار عبر محاكاة الزمن خطوة بخطوة مع احتساب العمولات، الانزلاق السعري، وتتبع دقيق للمارجن المحجوز لضمان واقعية النتائج.*
         `;
 
         return { reportText, trades: generatedTrades };
+    }
+
+    /**
+     * 1000-iteration Monte Carlo Stress Simulation
+     */
+    static runMonteCarloSimulation(
+        trades: any[],
+        initialCapital: number,
+        iterations = 1000
+    ): {
+        worstDrawdown95: number;
+        worstDrawdown99: number;
+        ruinProbability: number;
+        medianFinalCapital: number;
+    } {
+        const closedTrades = trades.filter(t => t.status === 'WIN' || t.status === 'LOSS');
+        if (closedTrades.length < 5) {
+            return {
+                worstDrawdown95: 0,
+                worstDrawdown99: 0,
+                ruinProbability: 0,
+                medianFinalCapital: initialCapital
+            };
+        }
+
+        const simFinalCapitals: number[] = [];
+        const simMaxDrawdowns: number[] = [];
+        let ruinCount = 0;
+
+        for (let iter = 0; iter < iterations; iter++) {
+            const shuffled = [...closedTrades];
+            for (let i = shuffled.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+            }
+
+            let cap = initialCapital;
+            let peak = cap;
+            let maxDd = 0;
+
+            for (const t of shuffled) {
+                const pnl = t.pnlAmount || 0;
+                cap += pnl;
+                if (cap > peak) peak = cap;
+                const dd = peak > 0 ? ((peak - cap) / peak) * 100 : 0;
+                if (dd > maxDd) maxDd = dd;
+            }
+
+            simFinalCapitals.push(cap);
+            simMaxDrawdowns.push(maxDd);
+
+            if (maxDd >= 25) {
+                ruinCount++;
+            }
+        }
+
+        simMaxDrawdowns.sort((a, b) => a - b);
+        simFinalCapitals.sort((a, b) => a - b);
+
+        const idx95 = Math.floor(iterations * 0.95);
+        const idx99 = Math.floor(iterations * 0.99);
+        const idxMedian = Math.floor(iterations * 0.50);
+
+        return {
+            worstDrawdown95: Number(simMaxDrawdowns[idx95].toFixed(2)),
+            worstDrawdown99: Number(simMaxDrawdowns[idx99].toFixed(2)),
+            ruinProbability: Number(((ruinCount / iterations) * 100).toFixed(1)),
+            medianFinalCapital: Number(simFinalCapitals[idxMedian].toFixed(2))
+        };
     }
 }

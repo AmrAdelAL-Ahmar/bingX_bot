@@ -3,6 +3,8 @@ import { ParsedSignal } from './SignalParser';
 import Trade, { ITrade } from '../models/Trade';
 import User from '../models/User';
 import logger from '../utils/logger';
+import { CircuitBreakerService } from './CircuitBreakerService';
+import { CorrelationGuardService } from './CorrelationGuardService';
 
 // Helper function to calculate dynamic Take Profit splits mathematically based on RRR and ATR
 async function calculateDynamicTpsSplits(
@@ -92,17 +94,33 @@ export interface TradeResult {
 
 export class TradeManager {
     private bingx: BingXService;
+    private static activeExecutionLocks: Set<string> = new Set();
 
     constructor(BingXService: BingXService) {
         this.bingx = BingXService;
     }
 
     async executeSignal(signal: ParsedSignal, userId: string, sourceChatId?: string): Promise<TradeResult | undefined> {
+        const lockKey = `${userId}:${signal.symbol}`;
+        if (TradeManager.activeExecutionLocks.has(lockKey)) {
+            logger.warn(`[Concurrency Guard] Order processing already active for ${signal.symbol}. Skipping duplicate entry.`);
+            return;
+        }
+        TradeManager.activeExecutionLocks.add(lockKey);
+
         try {
             const user = await User.findById(userId);
             if (!user || !user.isActive) {
                 logger.warn(`User ${userId} not found or inactive`);
                 return;
+            }
+
+            // 0. Institutional Circuit Breaker Guard (24h Daily Drawdown Protection)
+            const cbStatus = await CircuitBreakerService.checkStatus(user.telegramId, this.bingx);
+            if (cbStatus.isTripped) {
+                const tripMsg = `🚨 [قاطع الدائرة الكهربائية مفعل] ${cbStatus.tripReason}. تم حظر فتح صفقات جديدة حتى: ${cbStatus.cooldownUntil?.toLocaleTimeString()}`;
+                logger.error(tripMsg);
+                throw new Error(tripMsg);
             }
 
             // 1. Calculate Position Size
@@ -247,6 +265,14 @@ export class TradeManager {
                     }
                 } catch (drawdownErr) {
                     logger.error('Error calculating 24h Drawdown Shield:', drawdownErr);
+                }
+
+                // 2.3 Institutional Correlation & Portfolio Heat Guard
+                const corrResult = await CorrelationGuardService.validateTrade(signal.symbol, signal.direction, finalRiskPercentage, this.bingx);
+                if (!corrResult.allowed) {
+                    const corrMsg = `🚨 [حظر الارتباط ومخاطر المحفظة] ${corrResult.reason}`;
+                    logger.warn(corrMsg);
+                    throw new Error(corrMsg);
                 }
 
                 // 3. Leverage Calculation
@@ -600,6 +626,8 @@ export class TradeManager {
         } catch (error) {
             logger.error('Error executing trade:', error);
             throw error;
+        } finally {
+            TradeManager.activeExecutionLocks.delete(lockKey);
         }
     }
 

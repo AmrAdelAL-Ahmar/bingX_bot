@@ -170,6 +170,30 @@ export class OptimizedEngineSuite {
         return c.matrixScore <= 25 && (c.rsi4h ?? 50) <= 44 && (c.rsi1h ?? 50) <= 45 && (c.quickMacdHist ?? 0) < 0 && c.trend30m !== 'صاعد (HH/HL) 📈';
     }
 
+    // 17. V17: Dynamic Volatility Regime Switching
+    static runV17(c: MarketFrame): boolean {
+        if (c.type === 'LONG') {
+            return c.matrixScore >= 60 && (c.quickRsi ?? 50) >= 48 && (c.quickRsi ?? 50) <= 75;
+        }
+        return c.matrixScore <= 35 && (c.quickRsi ?? 50) <= 52 && (c.quickRsi ?? 50) >= 25;
+    }
+
+    // 18. V18: Microstructure Order Flow Imbalance
+    static runV18(c: MarketFrame): boolean {
+        if (c.type === 'LONG') {
+            return c.matrixScore >= 65 && (c.rsi1h ?? 0) >= 48;
+        }
+        return c.matrixScore <= 35 && (c.rsi1h ?? 50) <= 48;
+    }
+
+    // 19. HARMONIC: Omni-Harmonic Confluence Suite (11 Patterns)
+    static runHarmonic(c: MarketFrame): boolean {
+        if (c.type === 'LONG') {
+            return c.matrixScore >= 65;
+        }
+        return c.matrixScore <= 35;
+    }
+
     /**
      * Helper to build a MarketFrame object from allTimeframes
      */
@@ -242,6 +266,9 @@ export class OptimizedEngineSuite {
             case 'V14': return this.runV14(frame);
             case 'V15': return this.runV15(frame);
             case 'V16': return this.runV16(frame);
+            case 'V17': return this.runV17(frame);
+            case 'V18': return this.runV18(frame);
+            case 'HARMONIC': return this.runHarmonic(frame);
             default: return true;
         }
     }

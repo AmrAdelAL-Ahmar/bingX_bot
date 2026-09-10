@@ -164,6 +164,48 @@ export class PositionMonitor {
                             }
                         }
 
+                        // --- Dynamic Trailing Stop Logic (Chandelier / ATR Trailing) ---
+                        if (trade.isBreakEvenSet) {
+                            try {
+                                const approxAtr = currentPrice * 0.008; // 0.8% volatility estimate
+                                let shouldUpdateTrailing = false;
+                                let newTrailingSl = trade.currentTrailingSl || entry;
+
+                                if (trade.direction === 'LONG') {
+                                    const candidateSl = currentPrice - (2.0 * approxAtr);
+                                    if (candidateSl > (trade.currentTrailingSl || entry) * 1.003) {
+                                        newTrailingSl = candidateSl;
+                                        shouldUpdateTrailing = true;
+                                    }
+                                } else {
+                                    const candidateSl = currentPrice + (2.0 * approxAtr);
+                                    if (candidateSl < (trade.currentTrailingSl || entry) * 0.997) {
+                                        newTrailingSl = candidateSl;
+                                        shouldUpdateTrailing = true;
+                                    }
+                                }
+
+                                if (shouldUpdateTrailing) {
+                                    const precisionSl = await this.bingx.priceToPrecision(symbol, newTrailingSl);
+                                    await this.bingx.setStopLoss(symbol, precisionSl, trade.direction);
+                                    trade.currentTrailingSl = precisionSl;
+                                    trade.isTrailingActive = true;
+                                    trade.logs.push(`Dynamic Trailing SL moved to ${precisionSl}`);
+                                    await trade.save();
+                                    logger.info(`[Dynamic Trailing] Trailing SL updated for ${trade.symbol} to ${precisionSl}`);
+
+                                    if (telegramId) {
+                                        const trailMsg = `📈🔒 <b>تحديث الوقف المتحرك (Dynamic Trailing Stop)</b>\n` +
+                                            `الرمز: <b>${trade.symbol}</b> (${trade.direction})\n` +
+                                            `تم رفع وقف الخسارة تلقائياً لتأمين الأرباح إلى: <b>${precisionSl}</b>`;
+                                        await this.notifier(telegramId, trailMsg);
+                                    }
+                                }
+                            } catch (trailErr) {
+                                logger.warn(`[Dynamic Trailing] Could not adjust trailing stop for ${trade.symbol}:`, trailErr);
+                            }
+                        }
+
                         // --- SL WARNING (5% capital loss threshold) ---
                         if (telegramId && user?.slWarningEnabled && !trade.slWarningSent) {
                             const pnl = matchingPos.unrealizedPnl !== undefined

@@ -27,6 +27,10 @@ export interface ITrade extends Document {
     correctionAlertEnabled?: boolean;
     correctionWarningSent?: boolean;
     engineId?: string;
+    currentTrailingSl?: number;
+    isTrailingActive?: boolean;
+    realizedPnl?: number;
+    closedAt?: Date;
 }
 
 const TradeSchema: Schema = new Schema({
@@ -48,6 +52,10 @@ const TradeSchema: Schema = new Schema({
     leverage: { type: Number, default: 10 },
     pnl: { type: Number, default: 0 },
     isBreakEvenSet: { type: Boolean, default: false },
+    currentTrailingSl: { type: Number },
+    isTrailingActive: { type: Boolean, default: false },
+    realizedPnl: { type: Number },
+    closedAt: { type: Date },
     binanceOrderId: { type: String },
     bingxOrderId: { type: String },
     entryTime: { type: Date, default: Date.now },

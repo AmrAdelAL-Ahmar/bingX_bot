@@ -353,4 +353,85 @@ ${JSON.stringify(simplifiedTrades, null, 2)}
         const responseText = await this.callGemini(prompt, ALGO_GUIDELINES);
         return this.parseJsonResponse<AiOptimizationResult>(responseText);
     }
+
+    /**
+     * AI Fallback Signal Parser: parses unstructured or multilingual trade messages into structured JSON
+     */
+    static async parseSignalWithAI(message: string): Promise<any> {
+        const prompt = `
+أنت محلل إشارات تداول عالي الدقة (AI Signal Parser).
+قم بتحليل نص التوصية التالي واستخرج بيانات الصفقة بدقة بصيغة JSON حصراً:
+
+النص المراد تحليله:
+"""
+${message}
+"""
+
+القواعد:
+1. الرمز Symbol: حوله إلى صيغة المنصة القياسية مثل "BTC-USDT" أو "BTC/USDT:USDT" أو "BTC".
+2. الاتجاه Direction: LONG أو SHORT (شراء = LONG، بيع = SHORT).
+3. نوع الإشارة Type: TRADE أو CLOSE.
+4. الدخول Entry: مصفوفة أرقام [123.45].
+5. الأهداف Targets: مصفوفة أرقام للأهداف [tp1, tp2...].
+6. الوقف StopLoss: رقم مفرد.
+7. الرافعة Leverage: رقم إن وجد أو 10 كافتراضي.
+
+أرجع النتيجة بصيغة JSON فقط:
+{
+  "type": "TRADE",
+  "symbol": "BTC-USDT",
+  "direction": "LONG",
+  "entry": [65000],
+  "targets": [67000, 69000],
+  "stopLoss": 63000,
+  "leverage": 10
+}
+`;
+        try {
+            const responseText = await this.callGemini(prompt, 'You are an accurate JSON extractor for financial signals.');
+            return this.parseJsonResponse<any>(responseText);
+        } catch (e) {
+            logger.error('AI Signal Parser failed:', e);
+            return null;
+        }
+    }
+
+    /**
+     * AI Post-Mortem Advisor: analyzes closed trade performance and reasons for win/loss
+     */
+    static async analyzeTradePostMortem(tradeData: {
+        symbol: string;
+        direction: string;
+        entryPrice: number;
+        exitPrice: number;
+        pnlPercent: number;
+        outcome: 'PROFIT' | 'LOSS' | 'BREAKEVEN';
+        engineId?: string;
+        exitReason?: string;
+    }): Promise<string> {
+        const prompt = `
+أنت كبير مستشاري التداول الكمي (Quant Trading Post-Mortem Advisor).
+قم بمراجعة تشخيصية شاملة لصفقة مغلقة للتو وتقديم خلاصة مهنية ودروس مستفادة للمتداول:
+
+بيانات الصفقة:
+- الرمز: ${tradeData.symbol}
+- الاتجاه: ${tradeData.direction}
+- سعر الدخول: ${tradeData.entryPrice}
+- سعر الخروج: ${tradeData.exitPrice}
+- النتيجة: ${tradeData.outcome} (${tradeData.pnlPercent.toFixed(2)}%)
+- المحرك المستخدم: ${tradeData.engineId || 'غير محدد'}
+- سبب الإغلاق: ${tradeData.exitReason || 'ضرب الهدف / الوقف'}
+
+المطلوب باللغة العربية بأسلوب احترافي مقتضب:
+1. 🔍 **تشخيص الأداء**: هل كانت نقطة الدخول ملائمة لظروف السوق؟
+2. ⚠️ **سبب النتيجة**: لماذا حققت الصفقة هدفها أو ضربت الوقف (تقلب لحظي، انعكاس اتجاه، أو كسر هيكل)؟
+3. 💡 **الدرس المستفاد**: نصيحة عملية واحدة لتطوير الصفقات القادمة.
+`;
+        try {
+            return await this.callGemini(prompt, ALGO_GUIDELINES);
+        } catch (e) {
+            logger.warn('AI Post-Mortem generation failed:', e);
+            return 'تعذر توليد التقرير التحليلي التلقائي من نموذج الذكاء الاصطناعي.';
+        }
+    }
 }

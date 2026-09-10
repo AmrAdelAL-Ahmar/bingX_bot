@@ -15,6 +15,9 @@ import { V13Engine } from './engines/V13Engine';
 import { V14Engine } from './engines/V14Engine';
 import { V15Engine } from './engines/V15Engine';
 import { V16Engine } from './engines/V16Engine';
+import { V17Engine } from './engines/V17Engine';
+import { V18Engine } from './engines/V18Engine';
+import { HarmonicMasterEngine } from './engines/HarmonicMasterEngine';
 import { TechnicalAnalyzer, MATRIX_TFS } from './TechnicalAnalyzer';
 import { OHLCV, AnalysisDetails, AnalysisResult } from '../shared/types';
 
@@ -34,15 +37,23 @@ const ENGINES: Record<string, ITradingEngine> = {
     'V13': new V13Engine(),
     'V14': new V14Engine(),
     'V15': new V15Engine(),
-    'V16': new V16Engine()
+    'V16': new V16Engine(),
+    'V17': new V17Engine(),
+    'V18': new V18Engine(),
+    'HARMONIC': new HarmonicMasterEngine()
 };
+
+export type SupportedEngineVersion = 
+    | 'V1' | 'V2' | 'V3' | 'V4' | 'V5' | 'V6' | 'V7' | 'V8' 
+    | 'V9' | 'V10' | 'V11' | 'V12' | 'V13' | 'V14' | 'V15' | 'V16'
+    | 'V17' | 'V18' | 'HARMONIC';
 
 export class CoreAnalysisService {
     static analyze(
         symbol: string,
         pricePrecision: number,
         mtfOHLCV: Record<string, OHLCV[]>,
-        version: 'V1' | 'V2' | 'V3' | 'V4' | 'V5' | 'V6' | 'V7' | 'V8' | 'V9' | 'V10' | 'V11' | 'V12' | 'V13' | 'V14' | 'V15' | 'V16' = 'V1',
+        version: SupportedEngineVersion = 'V1',
         options: { quickTF: string, longTF: string, limit: number, antiRepainting?: boolean }
     ): AnalysisResult {
         const { quickTF, longTF, limit, antiRepainting } = options;
