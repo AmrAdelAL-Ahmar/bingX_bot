@@ -347,5 +347,148 @@ export const registerTradingHandlers = (bot: Telegraf, BingXService: BingXServic
         }
     });
 
+    // ── Button Listeners for Reply Keyboard ──
+    bot.hears('🚨 زر الطوارئ (Panic)', async (ctx) => {
+        ctx.replyWithHTML(
+            `⚠️ <b>هل أنت متأكد من رغبتك في تنفيذ أمر الطوارئ الفوري (Panic Stop)؟</b>\n\n` +
+            `سيتم إغلاق كافة الصفقات المفتوحة فوراً بسعر السوق وإلغاء أوامر الحماية المعلقة على BingX!`,
+            {
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: '🚨 نعم، نفّذ إغلاق الطوارئ فوراً!', callback_data: 'CONFIRM_PANIC_STOP' }],
+                        [{ text: 'إلغاء ❌', callback_data: 'CANCEL_PANIC' }]
+                    ]
+                }
+            }
+        );
+    });
+
+    bot.action('CONFIRM_PANIC_STOP', async (ctx) => {
+        if (!ctx.from) return;
+        const user = await User.findOne({ telegramId: ctx.from.id.toString() });
+        if (!user) return;
+        await ctx.answerCbQuery('جاري تنفيذ إغلاق الطوارئ...');
+        const tradeManager = new TradeManager(BingXService);
+        const closedCount = await tradeManager.closeAllPositions(user._id.toString());
+        await Trade.updateMany(
+            { userId: user._id, currentStatus: { $in: ['OPEN', 'TP1_HIT', 'TP2_HIT'] } },
+            { $set: { currentStatus: 'CLOSED_MANUAL', closeTime: new Date() } }
+        );
+        ctx.editMessageText(`🛑 <b>تم إغلاق ${closedCount} مركزاً وإيقاف الطوارئ بنجاح!</b>`, { parse_mode: 'HTML' });
+    });
+
+    bot.action('CANCEL_PANIC', async (ctx) => {
+        await ctx.answerCbQuery('تم الإلغاء');
+        ctx.editMessageText('✅ تم إلغاء أمر الطوارئ. الحساب يعمل بشكل طبيعي.');
+    });
+
+    bot.hears('🛡️ قاطع الدائرة وحرارة المحفظة', async (ctx) => {
+        if (!ctx.from) return;
+        const status = await CircuitBreakerService.checkStatus(ctx.from.id.toString(), BingXService);
+        let msg = `🛡️ <b>حالة قاطع الدائرة وحماية المحفظة (Circuit Breaker)</b>\n━━━━━━━━━━━━━━━━━━\n`;
+        msg += `الحالة: ${status.isTripped ? '🚨 <b>مفعل (محظور مؤقتاً)</b>' : '🟢 <b>طبيعي (التداول متاح)</b>'}\n`;
+        msg += `التراجع اليومي المحسوب: <b>${status.dailyDrawdownPct}%</b> (الحد الأقصى: ${status.thresholdPct}%)\n`;
+        msg += `الخسائر المحققة لآخر 24 ساعة: <b>$${status.realizedLoss24h.toFixed(2)}</b>\n`;
+        msg += `الربح/الخسارة العائمة: <b>$${status.unrealizedPnL.toFixed(2)}</b>\n`;
+
+        if (status.isTripped && status.cooldownUntil) {
+            msg += `\n⏳ فترة التهدئة الإجبارية تنتهي في: <b>${status.cooldownUntil.toLocaleTimeString()}</b>\n`;
+            msg += `السبب: <i>${status.tripReason}</i>\n`;
+        }
+
+        ctx.replyWithHTML(msg, {
+            reply_markup: {
+                inline_keyboard: [
+                    status.isTripped ? [{ text: '🔄 إعادة ضبط القاطع يدوياً', callback_data: 'RESET_CIRCUIT_BREAKER' }] : [],
+                    [{ text: '🌡️ فحص حرارة المحفظة ومخاطر الارتباط', callback_data: 'VIEW_HEAT' }]
+                ].filter(r => r.length > 0)
+            }
+        });
+    });
+
+    bot.action('VIEW_HEAT', async (ctx) => {
+        await ctx.answerCbQuery();
+        const positions = await BingXService.getPositions();
+        const activePos = positions.filter((p: any) => parseFloat(p.contracts) > 0);
+        let totalHeat = activePos.length * 2.0;
+        let msg = `🌡️ <b>مقياس حرارة المحفظة والارتباط:</b>\nالمراكز المفتوحة: ${activePos.length} | الحرارة: ${totalHeat.toFixed(1)}% / ${CorrelationGuardService.MAX_PORTFOLIO_HEAT_PCT}%\nسقف الارتباط المسموح: ${(CorrelationGuardService.MAX_ALLOWED_CORRELATION * 100)}%`;
+        ctx.replyWithHTML(msg);
+    });
+
+    bot.hears('📐 فاحص الهارمونيك اللحظي', async (ctx) => {
+        ctx.replyWithHTML('📐 <b>فاحص نماذج الهارمونيك الـ 11 ومناطق الـ PRZ</b>\nاختر عملة للفحص الفوري أو اكتب: <code>/harmonic BTC-USDT</code>', {
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: '🎯 فحص BTC-USDT', callback_data: 'SCAN_H_BTC' }, { text: '🎯 فحص ETH-USDT', callback_data: 'SCAN_H_ETH' }],
+                    [{ text: '🎯 فحص SOL-USDT', callback_data: 'SCAN_H_SOL' }, { text: '🎯 فحص BNB-USDT', callback_data: 'SCAN_H_BNB' }]
+                ]
+            }
+        });
+    });
+
+    const triggerHarmonicScan = async (ctx: any, symbol: string) => {
+        await ctx.answerCbQuery(`جاري فحص ${symbol}...`);
+        const candles = await BingXService.fetchOHLCV(symbol, '1h', 60);
+        if (!candles || candles.length < 25) {
+            ctx.reply(`تعذر جلب بيانات شموع كافية لعملة ${symbol}.`);
+            return;
+        }
+        const currentPrice = candles[candles.length - 1].close;
+        const swings = DynamicZigZag.findSwings(candles, 1.8, 2);
+        const matches = HarmonicPatternDetector.detectPatterns(swings, currentPrice);
+
+        if (matches.length === 0) {
+            ctx.replyWithHTML(`📐 <b>نتائج فاحص الهارمونيك (${symbol})</b>\nالسعر الحالي: $${currentPrice}\nلا توجد نماذج توافقية مكتملة حالياً.`);
+            return;
+        }
+        const best = matches[0];
+        let msg = `🎯 <b>اكتشاف نموذج هارمونيك توافقي!</b>\n━━━━━━━━━━━━━━━━━━\n`;
+        msg += `الرمز: <b>${symbol}</b> (${best.direction === 'BULLISH' ? 'صاعد 🟢' : 'هابط 🔴'})\n`;
+        msg += `النموذج: <b>${best.pattern}</b> | الدقة: <b>${best.score.toFixed(0)}%</b>\n`;
+        msg += `الحالة: <b>${best.status === 'IN_PRZ' ? 'داخل منطقة الانعكاس PRZ ⚡' : 'قيد التكوين ⏳'}</b>\n`;
+        msg += `منطقة الانعكاس PRZ: <b>[${best.prz.min.toFixed(4)} - ${best.prz.max.toFixed(4)}]</b>\n`;
+        msg += `وقف الخسارة: <b>${best.stopLoss.toFixed(4)}</b> | RRR: <b>1:${best.riskRewardRatio}</b>\n`;
+        ctx.replyWithHTML(msg);
+    };
+
+    bot.action('SCAN_H_BTC', (ctx) => triggerHarmonicScan(ctx, 'BTC-USDT'));
+    bot.action('SCAN_H_ETH', (ctx) => triggerHarmonicScan(ctx, 'ETH-USDT'));
+    bot.action('SCAN_H_SOL', (ctx) => triggerHarmonicScan(ctx, 'SOL-USDT'));
+    bot.action('SCAN_H_BNB', (ctx) => triggerHarmonicScan(ctx, 'BNB-USDT'));
+
+    bot.hears('🤖 منسق المحركات الموحد', async (ctx) => {
+        ctx.replyWithHTML('🤖 <b>استطلاع رأي المحركات الـ 19 مجتمعة وإصدار قرار إجماع</b>\nاختر عملة للاستطلاع الفوري أو اكتب: <code>/engines BTC-USDT</code>', {
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: '⚡ استطلاع إجماع BTC', callback_data: 'ENG_BTC' }, { text: '⚡ استطلاع إجماع ETH', callback_data: 'ENG_ETH' }]
+                ]
+            }
+        });
+    });
+
+    const triggerOrchestrator = async (ctx: any, symbol: string) => {
+        await ctx.answerCbQuery(`جاري استطلاع المحركات لـ ${symbol}...`);
+        const candles5m = await BingXService.fetchOHLCV(symbol, '5m', 60);
+        const candles1h = await BingXService.fetchOHLCV(symbol, '1h', 60);
+        const candles1d = await BingXService.fetchOHLCV(symbol, '1d', 30);
+        const precision = await BingXService.getPricePrecision(symbol);
+
+        const mtf = { '5m': candles5m, '1h': candles1h, '1d': candles1d };
+        const orchestrated = EngineOrchestrator.orchestrate(symbol, precision, mtf, 'CONSENSUS');
+
+        let msg = `🤖 <b>منسق المحركات الشاملة (${symbol})</b>\n━━━━━━━━━━━━━━━━━━\n`;
+        msg += `نظام السوق (V17): <b>${orchestrated.regime}</b>\n`;
+        msg += `القرار الموحد: <b>${orchestrated.action === 'LONG' ? 'شراء 🟢' : orchestrated.action === 'SHORT' ? 'بيع 🔴' : 'انتظار / توازن ⚖️'}</b>\n`;
+        msg += `نسبة الثقة المجمعة: <b>${orchestrated.confidence}%</b>\n\n`;
+        const buyVotes = orchestrated.votes.filter(v => v.decision === 'LONG').map(v => v.engineId).join(', ');
+        const sellVotes = orchestrated.votes.filter(v => v.decision === 'SHORT').map(v => v.engineId).join(', ');
+        msg += `• شراء (${orchestrated.votes.filter(v => v.decision === 'LONG').length}): ${buyVotes || 'لا يوجد'}\n`;
+        msg += `• بيع (${orchestrated.votes.filter(v => v.decision === 'SHORT').length}): ${sellVotes || 'لا يوجد'}\n`;
+        ctx.replyWithHTML(msg);
+    };
+
+    bot.action('ENG_BTC', (ctx) => triggerOrchestrator(ctx, 'BTC-USDT'));
+    bot.action('ENG_ETH', (ctx) => triggerOrchestrator(ctx, 'ETH-USDT'));
+
 };
 

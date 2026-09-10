@@ -351,7 +351,7 @@ export const registerAnalysisHandlers = (bot: Telegraf, tradeManager: TradeManag
     });
 
     // --- SMART ANALYSIS FLOW ---
-    bot.hears('📊 التحليل الذكي (V1-V16)', async (ctx) => {
+    bot.hears(['📊 التحليل الذكي (V1-V16)', '📊 التحليل الكمي (V1-V18 + الهارمونيك)'], async (ctx) => {
         try {
             return ctx.reply('الرجاء اختيار إصدار خوارزمية التحليل التي تود استخدامها:', {
                 reply_markup: getAlgoVersionKeyboard()
@@ -402,7 +402,10 @@ export const registerAnalysisHandlers = (bot: Telegraf, tradeManager: TradeManag
         { text: 'الخوارزمية V13 (مصائد السيولة وايكوف) 🪤', version: 'V13' },
         { text: 'الخوارزمية V14 (رينكو السحابية التكيفية) ☁️', version: 'V14' },
         { text: 'الخوارزمية V15 (تشان الهارمونية الكمية) 🌌', version: 'V15' },
-        { text: 'الخوارزمية V16 (مصفوفة الزمان والمكان الهجينة) 🏹', version: 'V16' }
+        { text: 'الخوارزمية V16 (مصفوفة الزمان والمكان الهجينة) 🏹', version: 'V16' },
+        { text: 'الخوارزمية V17 (نظام السوق الديناميكي) 🌐', version: 'V17' },
+        { text: 'الخوارزمية V18 (تدفق السيولة وعمق الأوامر) 📊', version: 'V18' },
+        { text: 'منظومة الهارمونيك الكاملة (11 نموذجاً) 🎯', version: 'HARMONIC' }
     ];
 
     for (const algo of algos) {
@@ -415,6 +418,14 @@ export const registerAnalysisHandlers = (bot: Telegraf, tradeManager: TradeManag
             }
         });
     }
+
+    bot.hears('منسق المحركات الشاملة (الإجماع) 🤖', async (ctx) => {
+        try {
+            await showPickerForAnalysis(ctx, 'HARMONIC' as any, bingxService, false);
+        } catch (error) {
+            logger.error('Error in hears منسق المحركات:', error);
+        }
+    });
 
     // --- ANALYSIS SETTINGS FLOW ---
     bot.hears('⚙️ إعدادات المحلل الذكي', async (ctx) => {
