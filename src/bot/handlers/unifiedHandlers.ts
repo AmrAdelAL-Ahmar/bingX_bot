@@ -7,9 +7,16 @@ import { BingXService } from '../../services/BingXService';
 import { TradeManager } from '../../services/TradeManager';
 import { getMainMenuKeyboard } from '../keyboards/baseKeyboards';
 
-const ALL_ANALYSIS_ENGINES = ['V1', 'V2', 'V3', 'V4', 'V5', 'V6', 'V7', 'V8', 'V9', 'V10', 'V11', 'V12', 'V13', 'V14', 'V15', 'V16'];
+const ALL_ANALYSIS_ENGINES = [
+    'V1', 'V2', 'V3', 'V4', 'V5', 'V6', 'V7', 'V8',
+    'V9', 'V10', 'V11', 'V12', 'V13', 'V14', 'V15', 'V16',
+    'V17', 'V18', 'HARMONIC'
+];
 
 const ALL_SNIPER_ENGINES = [
+    'HARMONIC-SWING', 'HARMONIC-SCALP',
+    'V18-SWING', 'V18-SCALP',
+    'V17-SWING', 'V17-SCALP',
     'V16-SWING', 'V16-SCALP',
     'V15-SWING', 'V15-SCALP',
     'V14-SWING', 'V14-SCALP',
@@ -19,7 +26,8 @@ const ALL_SNIPER_ENGINES = [
     'V10-SWING', 'V10-SCALP',
     'V9-SWING', 'V9-SCALP',
     'V8-SWING', 'V8-SCALP',
-    'V7-SWING', 'V7-SCALP'
+    'V7-SWING', 'V7-SCALP',
+    'V1-SWING', 'V1-SCALP'
 ];
 
 export function getAnalysisSelectionKeyboard(sessionId: string, selected: string[]) {

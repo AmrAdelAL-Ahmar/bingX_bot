@@ -9,8 +9,11 @@ import { SniperReport } from '../core/sniper/ISniperEngine';
 import { AnalysisFormatter } from '../core/analysis/AnalysisFormatter';
 
 const ANALYSIS_TRUST_SCORES: Record<string, number> = {
+    'HARMONIC': 90,
     'V16': 98,
     'V15': 97,
+    'V18': 90,
+    'V17': 80,
     'V11': 95,
     'V10': 93,
     'V12': 90,
@@ -24,7 +27,7 @@ const ANALYSIS_TRUST_SCORES: Record<string, number> = {
     'V5': 80,
     'V2': 75,
     'V4': 70,
-    'V1': 60
+    'V1': 90
 };
 
 const ANALYSIS_ARABIC_NAMES: Record<string, string> = {
@@ -43,12 +46,18 @@ const ANALYSIS_ARABIC_NAMES: Record<string, string> = {
     'V13': 'الخوارزمية V13 (مصائد وايكوف) 🪤',
     'V14': 'الخوارزمية V14 (رينكو السحابية التكيفية) ☁️',
     'V15': 'الخوارزمية V15 (تشان الهارمونية الكمية) 🌌',
-    'V16': 'الخوارزمية V16 (مصفوفة الزمان والمكان الهجينة) 🏹'
+    'V16': 'الخوارزمية V16 (مصفوفة الزمان والمكان الهجينة) 🏹',
+    'V17': 'الخوارزمية V17 (نظام السوق الديناميكي) 🌐',
+    'V18': 'الخوارزمية V18 (تدفق السيولة وعمق الأوامر) 📊',
+    'HARMONIC': 'منظومة الهارمونيك الكاملة (11 نموذجاً) 🎯'
 };
 
 const SNIPER_TRUST_SCORES: Record<string, number> = {
+    'HARMONIC': 99,
     'V16': 98,
     'V15': 97,
+    'V18': 96,
+    'V17': 95,
     'V11': 95,
     'V10': 93,
     'V12': 90,
@@ -56,11 +65,12 @@ const SNIPER_TRUST_SCORES: Record<string, number> = {
     'V14': 88,
     'V9': 87,
     'V8': 85,
-    'V7': 85
+    'V7': 85,
+    'V1': 80
 };
 
 export class UnifiedScannerService {
-    constructor(private bingxService: BingXService) {}
+    constructor(private bingxService: BingXService) { }
 
     private getSniperTrust(engineId: string): number {
         const base = engineId.split('-')[0];
@@ -223,7 +233,7 @@ export class UnifiedScannerService {
 
                 const pricePrecision = await this.bingxService.getPricePrecision(symbol);
                 const currentPrice = allData['5m']?.slice(-1)[0]?.close
-                    || allData['15m']?.slice(-1)[0]?.close 
+                    || allData['15m']?.slice(-1)[0]?.close
                     || 0;
 
                 // Run selected engines in memory
