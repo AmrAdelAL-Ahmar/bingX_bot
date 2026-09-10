@@ -183,6 +183,21 @@ export class BingXService {
         }
     }
 
+    private getCandlesPerDay(timeframe: string): number {
+        switch (timeframe) {
+            case '1m': return 1440;
+            case '3m': return 480;
+            case '5m': return 288;
+            case '15m': return 96;
+            case '30m': return 48;
+            case '1h': return 24;
+            case '2h': return 12;
+            case '4h': return 6;
+            case '1d': return 1;
+            default: return 24;
+        }
+    }
+
     async fetchDeepHistoricalData(symbol: string, timeframe: string, days: number = 7) {
         const key = `deep:${symbol}:${timeframe}:${days}`;
         const now = Date.now();
@@ -194,13 +209,41 @@ export class BingXService {
         try {
             await this.exchange.loadMarkets();
             const targetSymbol = this.resolveSymbol(symbol);
+            const candlesPerDay = this.getCandlesPerDay(timeframe);
+            const estimatedCandles = Math.ceil(days * candlesPerDay);
+
+            logger.info(`Fetching historical data for ${targetSymbol} (${timeframe}) for ${days} days (~${estimatedCandles} candles)...`);
+
+            // Optimization: If estimated candles <= 500, fetch in a SINGLE request without 'since' pagination!
+            // This prevents BingX error 109415 (invalid startTime range) and rate-limit bans (109429)
+            if (estimatedCandles <= 500) {
+                const limit = Math.max(10, Math.min(500, estimatedCandles + 10));
+                const ohlcv = await this.exchange.fetchOHLCV(targetSymbol, timeframe, undefined, limit);
+                if (ohlcv && ohlcv.length > 0) {
+                    const mapped = ohlcv.map((candle: any) => ({
+                        timestamp: candle[0],
+                        open: candle[1],
+                        high: candle[2],
+                        low: candle[3],
+                        close: candle[4],
+                        volume: candle[5]
+                    })).sort((a: any, b: any) => a.timestamp - b.timestamp);
+
+                    logger.info(`Successfully fetched ${mapped.length} candles in single call for ${targetSymbol} (${timeframe})`);
+                    this.candleCache.set(key, { timestamp: now, data: mapped });
+                    return mapped;
+                }
+            }
+
+            // For deeper requests (> 500 candles), use pagination with safe delays
             let since = now - (days * 24 * 60 * 60 * 1000);
             const allCandles: any[] = [];
-            const limit = 500; // Safe limit for CCXT/BingX usually
+            const limit = 500;
+            let pageCount = 0;
+            const maxPages = 15;
 
-            logger.info(`Fetching deep historical data for ${targetSymbol} (${timeframe}) for the last ${days} days...`);
-
-            while (since < now) {
+            while (since < now && pageCount < maxPages) {
+                pageCount++;
                 const ohlcv = await this.exchange.fetchOHLCV(targetSymbol, timeframe, since, limit);
                 if (!ohlcv || ohlcv.length === 0) break;
 
@@ -214,35 +257,58 @@ export class BingXService {
                 }));
 
                 allCandles.push(...mapped);
-
                 const lastCandleTime = ohlcv[ohlcv.length - 1][0];
 
-                // If the last candle time is not progressing, break to avoid infinite loop
-                if (lastCandleTime <= since) {
-                    break;
-                }
+                if (lastCandleTime <= since) break;
+                since = lastCandleTime + 1;
 
-                since = lastCandleTime + 1; // move to next ms
-
-                // Small delay to avoid rate limits
-                await new Promise(resolve => setTimeout(resolve, 200));
+                // Polite delay between paginated requests to prevent 109429 rate limit
+                await new Promise(resolve => setTimeout(resolve, 350));
             }
 
-            // CCXT might return overlapping or duplicate candles if we fetch exactly by timestamp, so let's deduplicate
             const uniqueCandles = Array.from(new Map(allCandles.map(item => [item.timestamp, item])).values());
-
-            // Sort to ensure chronological order
             uniqueCandles.sort((a, b) => a.timestamp - b.timestamp);
 
             logger.info(`Successfully fetched ${uniqueCandles.length} candles for ${targetSymbol} (${timeframe})`);
             this.candleCache.set(key, { timestamp: now, data: uniqueCandles });
             return uniqueCandles;
 
-        } catch (error) {
-            logger.error(`Error fetching deep OHLCV for ${symbol} (${timeframe}): `, error);
+        } catch (error: any) {
+            logger.warn(`Error fetching deep OHLCV for ${symbol} (${timeframe}): ${error.message}. Attempting fallback...`);
+
+            // Fallback 1: Return any cached data
+            const fallbackCached = this.candleCache.get(key);
+            if (fallbackCached && fallbackCached.data && fallbackCached.data.length > 0) {
+                logger.info(`[Fallback Cache] Returning ${fallbackCached.data.length} cached candles for ${symbol} (${timeframe})`);
+                return fallbackCached.data;
+            }
+
+            // Fallback 2: Fetch latest 200 candles directly without 'since'
+            try {
+                const targetSymbol = this.resolveSymbol(symbol);
+                const ohlcv = await this.exchange.fetchOHLCV(targetSymbol, timeframe, undefined, 200);
+                if (ohlcv && ohlcv.length > 0) {
+                    const mapped = ohlcv.map((candle: any) => ({
+                        timestamp: candle[0],
+                        open: candle[1],
+                        high: candle[2],
+                        low: candle[3],
+                        close: candle[4],
+                        volume: candle[5]
+                    })).sort((a: any, b: any) => a.timestamp - b.timestamp);
+
+                    logger.info(`[Fallback Direct] Succeeded with ${mapped.length} candles for ${symbol} (${timeframe})`);
+                    this.candleCache.set(key, { timestamp: now, data: mapped });
+                    return mapped;
+                }
+            } catch (fallbackErr: any) {
+                logger.error(`[Fallback Direct Failed] for ${symbol} (${timeframe}):`, fallbackErr.message);
+            }
+
             throw error;
         }
     }
+
 
     /*
      * Place an order

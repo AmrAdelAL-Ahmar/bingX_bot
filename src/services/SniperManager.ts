@@ -133,7 +133,7 @@ export class SniperManager {
             const tfsToFetch = [...new Set([...MATRIX_TFS, ...engine.requiredTFs])];
             const allData: Record<string, OHLCV[]> = {};
             for (const tf of tfsToFetch) {
-                const daysNeeded = tf === '1d' ? 210 : tf === '4h' ? 40 : tf === '1h' ? 12 : 3;
+                const daysNeeded = tf === '1d' ? 210 : tf === '4h' ? 40 : tf === '1h' ? 12 : tf === '30m' ? 3 : tf === '15m' ? 2 : tf === '5m' ? 1 : 0.25;
                 allData[tf] = await this.bingx.fetchDeepHistoricalData(symbol, tf, daysNeeded);
             }
 
@@ -155,7 +155,7 @@ export class SniperManager {
             const tfsToFetch = [...new Set([...MATRIX_TFS, ...engine.requiredTFs])];
             const allData: Record<string, OHLCV[]> = {};
             for (const tf of tfsToFetch) {
-                const daysNeeded = tf === '1d' ? 210 : tf === '4h' ? 40 : tf === '1h' ? 12 : 3;
+                const daysNeeded = tf === '1d' ? 210 : tf === '4h' ? 40 : tf === '1h' ? 12 : tf === '30m' ? 3 : tf === '15m' ? 2 : tf === '5m' ? 1 : 0.25;
                 allData[tf] = await this.bingx.fetchDeepHistoricalData(symbol, tf, daysNeeded);
             }
 

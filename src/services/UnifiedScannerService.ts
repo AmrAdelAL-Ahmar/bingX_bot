@@ -227,7 +227,8 @@ export class UnifiedScannerService {
                 // Fetch deep historical data for all timeframes
                 const allData: Record<string, OHLCV[]> = {};
                 for (const tf of allRequiredTFs) {
-                    const daysNeeded = tf === '1d' ? 210 : tf === '4h' ? 40 : tf === '1h' ? 12 : 3;
+                    // Optimized lookbacks: 150-250 candles per TF is ideal for indicators without hammering the exchange
+                    const daysNeeded = tf === '1d' ? 210 : tf === '4h' ? 40 : tf === '1h' ? 12 : tf === '30m' ? 3 : tf === '15m' ? 2 : tf === '5m' ? 1 : 0.25;
                     allData[tf] = await this.bingxService.fetchDeepHistoricalData(symbol, tf, daysNeeded);
                 }
 
