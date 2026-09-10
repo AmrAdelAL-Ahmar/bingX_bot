@@ -25,6 +25,7 @@ import { registerPickerHandlers } from './bot/handlers/pickerHandlers';
 import { registerUnifiedHandlers } from './bot/handlers/unifiedHandlers';
 import { registerAiHandlers } from './bot/handlers/aiHandlers';
 import { SniperManager } from './services/SniperManager';
+import { MacroCalendarService } from './services/MacroCalendarService';
 
 dotenv.config();
 
@@ -93,6 +94,20 @@ const start = async () => {
     // Start SniperManager
     sniperManager.start();
     logger.info('🎯 Sniper Manager Started');
+
+    // Sync Real Macro Economic Events from Global Live Feed
+    MacroCalendarService.syncRealEvents().then(res => {
+        logger.info(`[MacroCalendar] Initial real calendar sync finished: ${res.count} events loaded.`);
+    }).catch(err => {
+        logger.warn(`[MacroCalendar] Initial real calendar sync warning: ${err.message}`);
+    });
+
+    // Schedule automatic sync every 4 hours
+    setInterval(() => {
+        MacroCalendarService.syncRealEvents().catch(err => {
+            logger.warn(`[MacroCalendar] Periodic sync error: ${err.message}`);
+        });
+    }, 4 * 60 * 60 * 1000);
 
     bot.launch().then(() => {
         logger.info('Telegram Bot Started Successfully');

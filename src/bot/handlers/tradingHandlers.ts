@@ -348,22 +348,31 @@ export const registerTradingHandlers = (bot: Telegraf, BingXService: BingXServic
         }
     });
 
+    // Helper function to build macro keyboard
+    const getMacroInlineKeyboard = () => ({
+        inline_keyboard: [
+            [
+                { text: '🧠 تقرير وتحليل الذكاء الاصطناعي للأخبار', callback_data: 'VIEW_MACRO_AI_BRIEFING' }
+            ],
+            [
+                { 
+                    text: MacroCalendarService.isFilterEnabled ? '🔴 تعطيل فلتر الأخبار' : '🟢 تفعيل فلتر الأخبار', 
+                    callback_data: 'TOGGLE_MACRO_FILTER' 
+                },
+                { text: '📡 جلب الأخبار الحية', callback_data: 'SYNC_MACRO_LIVE' }
+            ],
+            [
+                { text: '🔄 تحديث الجدول', callback_data: 'REFRESH_MACRO_FILTER' }
+            ]
+        ]
+    });
+
     // 🌐 Macro Calendar News Filter: /macro
     bot.command('macro', async (ctx) => {
         try {
             const report = MacroCalendarService.getFormattedReport();
             ctx.replyWithHTML(report, {
-                reply_markup: {
-                    inline_keyboard: [
-                        [
-                            { 
-                                text: MacroCalendarService.isFilterEnabled ? '🔴 تعطيل فلتر الأخبار' : '🟢 تفعيل فلتر الأخبار', 
-                                callback_data: 'TOGGLE_MACRO_FILTER' 
-                            },
-                            { text: '🔄 تحديث', callback_data: 'REFRESH_MACRO_FILTER' }
-                        ]
-                    ]
-                }
+                reply_markup: getMacroInlineKeyboard()
             });
         } catch (e: any) {
             ctx.reply(`حدث خطأ: ${e.message}`);
@@ -377,17 +386,7 @@ export const registerTradingHandlers = (bot: Telegraf, BingXService: BingXServic
             const report = MacroCalendarService.getFormattedReport();
             await ctx.editMessageText(report, {
                 parse_mode: 'HTML',
-                reply_markup: {
-                    inline_keyboard: [
-                        [
-                            { 
-                                text: newState ? '🔴 تعطيل فلتر الأخبار' : '🟢 تفعيل فلتر الأخبار', 
-                                callback_data: 'TOGGLE_MACRO_FILTER' 
-                            },
-                            { text: '🔄 تحديث', callback_data: 'REFRESH_MACRO_FILTER' }
-                        ]
-                    ]
-                }
+                reply_markup: getMacroInlineKeyboard()
             }).catch((err: any) => {
                 if (!err.message?.includes('message is not modified')) {
                     logger.warn('Failed to edit macro message:', err.message);
@@ -404,17 +403,7 @@ export const registerTradingHandlers = (bot: Telegraf, BingXService: BingXServic
             const report = MacroCalendarService.getFormattedReport();
             await ctx.editMessageText(report, {
                 parse_mode: 'HTML',
-                reply_markup: {
-                    inline_keyboard: [
-                        [
-                            { 
-                                text: MacroCalendarService.isFilterEnabled ? '🔴 تعطيل فلتر الأخبار' : '🟢 تفعيل فلتر الأخبار', 
-                                callback_data: 'TOGGLE_MACRO_FILTER' 
-                            },
-                            { text: '🔄 تحديث', callback_data: 'REFRESH_MACRO_FILTER' }
-                        ]
-                    ]
-                }
+                reply_markup: getMacroInlineKeyboard()
             }).catch((err: any) => {
                 if (!err.message?.includes('message is not modified')) {
                     logger.warn('Failed to edit macro message:', err.message);
@@ -422,6 +411,86 @@ export const registerTradingHandlers = (bot: Telegraf, BingXService: BingXServic
             });
         } catch (e: any) {
             logger.error('Error in REFRESH_MACRO_FILTER:', e);
+        }
+    });
+
+    bot.action('SYNC_MACRO_LIVE', async (ctx) => {
+        try {
+            await ctx.answerCbQuery('⏳ جاري جلب الأخبار الحية من التقويم الاقتصادي العالمي...').catch(() => {});
+            const syncResult = await MacroCalendarService.syncRealEvents();
+            const alertMsg = syncResult.updated 
+                ? `✅ تم بنجاح جلب ${syncResult.count} حدثاً اقتصادياً حقيقياً!`
+                : `ℹ️ تم الفحص. الجدول محدث بالكامل (${syncResult.count} حدثاً).`;
+            await ctx.reply(alertMsg);
+
+            const report = MacroCalendarService.getFormattedReport();
+            await ctx.replyWithHTML(report, {
+                reply_markup: getMacroInlineKeyboard()
+            });
+        } catch (e: any) {
+            logger.error('Error in SYNC_MACRO_LIVE:', e);
+            ctx.reply(`تعذر جلب الأخبار: ${e.message}`);
+        }
+    });
+
+    // 🧠 AI Supervision Briefing Action
+    bot.action('VIEW_MACRO_AI_BRIEFING', async (ctx) => {
+        try {
+            await ctx.answerCbQuery('🧠 جاري إعداد تقرير الخبير الاقتصادي بالذكاء الاصطناعي...').catch(() => {});
+            const waitMsg = await ctx.reply('⏳ <b>جاري تحليل الأخبار الحقيقية وتقدير أثرها على سيولة البيتكوين بواسطة الذكاء الاصطناعي...</b>', { parse_mode: 'HTML' });
+            
+            const briefing = await MacroCalendarService.getAiSupervisionBriefing(false);
+            
+            await ctx.deleteMessage(waitMsg.message_id).catch(() => {});
+            await ctx.replyWithHTML(
+                `🧠 <b>تقرير المشرف الاقتصادي الذكي (AI Macro Supervisor)</b>\n━━━━━━━━━━━━━━━━━━━━━\n\n${briefing}`,
+                {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '🔄 إعادة التحليل وتحديث الاستشارة', callback_data: 'REFRESH_MACRO_AI' }],
+                            [{ text: '🔙 العودة لجدول الأخبار', callback_data: 'REFRESH_MACRO_FILTER' }]
+                        ]
+                    }
+                }
+            ).catch(async () => {
+                // Fallback to plain text if HTML parsing has issues
+                await ctx.reply(
+                    `🧠 تقرير المشرف الاقتصادي الذكي (AI Macro Supervisor)\n━━━━━━━━━━━━━━━━━━━━━\n\n${briefing}`,
+                    {
+                        reply_markup: {
+                            inline_keyboard: [
+                                [{ text: '🔄 إعادة التحليل وتحديث الاستشارة', callback_data: 'REFRESH_MACRO_AI' }],
+                                [{ text: '🔙 العودة لجدول الأخبار', callback_data: 'REFRESH_MACRO_FILTER' }]
+                            ]
+                        }
+                    }
+                );
+            });
+        } catch (e: any) {
+            logger.error('Error in VIEW_MACRO_AI_BRIEFING:', e);
+            ctx.reply(`تعذر إعداد تقرير الذكاء الاصطناعي: ${e.message}`);
+        }
+    });
+
+    bot.action('REFRESH_MACRO_AI', async (ctx) => {
+        try {
+            await ctx.answerCbQuery('🧠 جاري تحديث الاستشارة الفورية بالذكاء الاصطناعي...').catch(() => {});
+            const briefing = await MacroCalendarService.getAiSupervisionBriefing(true);
+            await ctx.replyWithHTML(
+                `🧠 <b>التقرير المحدث للمشرف الاقتصادي الذكي (AI Macro Supervisor)</b>\n━━━━━━━━━━━━━━━━━━━━━\n\n${briefing}`,
+                {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '🔙 العودة لجدول الأخبار', callback_data: 'REFRESH_MACRO_FILTER' }]
+                        ]
+                    }
+                }
+            ).catch(async () => {
+                await ctx.reply(`🧠 التقرير المحدث للمشرف الاقتصادي الذكي:\n\n${briefing}`);
+            });
+        } catch (e: any) {
+            logger.error('Error in REFRESH_MACRO_AI:', e);
+            ctx.reply(`تعذر تحديث تقرير الذكاء الاصطناعي: ${e.message}`);
         }
     });
 
@@ -497,35 +566,15 @@ export const registerTradingHandlers = (bot: Telegraf, BingXService: BingXServic
     bot.hears('🌐 فلتر أخبار الاقتصاد الكلي', async (ctx) => {
         const report = MacroCalendarService.getFormattedReport();
         ctx.replyWithHTML(report, {
-            reply_markup: {
-                inline_keyboard: [
-                    [
-                        { 
-                            text: MacroCalendarService.isFilterEnabled ? '🔴 تعطيل فلتر الأخبار' : '🟢 تفعيل فلتر الأخبار', 
-                            callback_data: 'TOGGLE_MACRO_FILTER' 
-                        },
-                        { text: '🔄 تحديث', callback_data: 'REFRESH_MACRO_FILTER' }
-                    ]
-                ]
-            }
+            reply_markup: getMacroInlineKeyboard()
         });
     });
 
     bot.action('VIEW_MACRO_REPORT', async (ctx) => {
-        await ctx.answerCbQuery();
+        await ctx.answerCbQuery().catch(() => {});
         const report = MacroCalendarService.getFormattedReport();
         ctx.replyWithHTML(report, {
-            reply_markup: {
-                inline_keyboard: [
-                    [
-                        { 
-                            text: MacroCalendarService.isFilterEnabled ? '🔴 تعطيل فلتر الأخبار' : '🟢 تفعيل فلتر الأخبار', 
-                            callback_data: 'TOGGLE_MACRO_FILTER' 
-                        },
-                        { text: '🔄 تحديث', callback_data: 'REFRESH_MACRO_FILTER' }
-                    ]
-                ]
-            }
+            reply_markup: getMacroInlineKeyboard()
         });
     });
 
