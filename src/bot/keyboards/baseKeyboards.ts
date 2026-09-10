@@ -26,6 +26,9 @@ export const getMainMenuKeyboard = (user: any) => {
             ],
             [
                 { text: '🛡️ قاطع الدائرة وحرارة المحفظة' },
+                { text: '🌐 فلتر أخبار الاقتصاد الكلي' }
+            ],
+            [
                 { text: '🚨 زر الطوارئ (Panic)' }
             ],
             [

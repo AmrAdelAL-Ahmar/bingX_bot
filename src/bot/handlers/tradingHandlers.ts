@@ -9,6 +9,7 @@ import { CircuitBreakerService } from '../../services/CircuitBreakerService';
 import { CorrelationGuardService } from '../../services/CorrelationGuardService';
 import { DynamicZigZag, HarmonicPatternDetector } from '../../core/shared/harmonic';
 import { EngineOrchestrator } from '../../core/analysis/EngineOrchestrator';
+import { MacroCalendarService } from '../../services/MacroCalendarService';
 
 export const registerTradingHandlers = (bot: Telegraf, BingXService: BingXService) => {
 
@@ -347,6 +348,67 @@ export const registerTradingHandlers = (bot: Telegraf, BingXService: BingXServic
         }
     });
 
+    // 🌐 Macro Calendar News Filter: /macro
+    bot.command('macro', async (ctx) => {
+        try {
+            const report = MacroCalendarService.getFormattedReport();
+            ctx.replyWithHTML(report, {
+                reply_markup: {
+                    inline_keyboard: [
+                        [
+                            { 
+                                text: MacroCalendarService.isFilterEnabled ? '🔴 تعطيل فلتر الأخبار' : '🟢 تفعيل فلتر الأخبار', 
+                                callback_data: 'TOGGLE_MACRO_FILTER' 
+                            },
+                            { text: '🔄 تحديث', callback_data: 'REFRESH_MACRO_FILTER' }
+                        ]
+                    ]
+                }
+            });
+        } catch (e: any) {
+            ctx.reply(`حدث خطأ: ${e.message}`);
+        }
+    });
+
+    bot.action('TOGGLE_MACRO_FILTER', async (ctx) => {
+        const newState = MacroCalendarService.toggleFilter();
+        await ctx.answerCbQuery(newState ? 'تم تفعيل فلتر الأخبار بنجاح!' : 'تم تعطيل فلتر الأخبار!');
+        const report = MacroCalendarService.getFormattedReport();
+        ctx.editMessageText(report, {
+            parse_mode: 'HTML',
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { 
+                            text: newState ? '🔴 تعطيل فلتر الأخبار' : '🟢 تفعيل فلتر الأخبار', 
+                            callback_data: 'TOGGLE_MACRO_FILTER' 
+                        },
+                        { text: '🔄 تحديث', callback_data: 'REFRESH_MACRO_FILTER' }
+                    ]
+                ]
+            }
+        });
+    });
+
+    bot.action('REFRESH_MACRO_FILTER', async (ctx) => {
+        await ctx.answerCbQuery('تم التحديث');
+        const report = MacroCalendarService.getFormattedReport();
+        ctx.editMessageText(report, {
+            parse_mode: 'HTML',
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { 
+                            text: MacroCalendarService.isFilterEnabled ? '🔴 تعطيل فلتر الأخبار' : '🟢 تفعيل فلتر الأخبار', 
+                            callback_data: 'TOGGLE_MACRO_FILTER' 
+                        },
+                        { text: '🔄 تحديث', callback_data: 'REFRESH_MACRO_FILTER' }
+                    ]
+                ]
+            }
+        });
+    });
+
     // ── Button Listeners for Reply Keyboard ──
     bot.hears('🚨 زر الطوارئ (Panic)', async (ctx) => {
         ctx.replyWithHTML(
@@ -400,7 +462,8 @@ export const registerTradingHandlers = (bot: Telegraf, BingXService: BingXServic
             reply_markup: {
                 inline_keyboard: [
                     status.isTripped ? [{ text: '🔄 إعادة ضبط القاطع يدوياً', callback_data: 'RESET_CIRCUIT_BREAKER' }] : [],
-                    [{ text: '🌡️ فحص حرارة المحفظة ومخاطر الارتباط', callback_data: 'VIEW_HEAT' }]
+                    [{ text: '🌡️ فحص حرارة المحفظة ومخاطر الارتباط', callback_data: 'VIEW_HEAT' }],
+                    [{ text: '🌐 فلتر أخبار الاقتصاد الكلي (Macro News)', callback_data: 'VIEW_MACRO_REPORT' }]
                 ].filter(r => r.length > 0)
             }
         });
@@ -413,6 +476,41 @@ export const registerTradingHandlers = (bot: Telegraf, BingXService: BingXServic
         let totalHeat = activePos.length * 2.0;
         let msg = `🌡️ <b>مقياس حرارة المحفظة والارتباط:</b>\nالمراكز المفتوحة: ${activePos.length} | الحرارة: ${totalHeat.toFixed(1)}% / ${CorrelationGuardService.MAX_PORTFOLIO_HEAT_PCT}%\nسقف الارتباط المسموح: ${(CorrelationGuardService.MAX_ALLOWED_CORRELATION * 100)}%`;
         ctx.replyWithHTML(msg);
+    });
+
+    bot.hears('🌐 فلتر أخبار الاقتصاد الكلي', async (ctx) => {
+        const report = MacroCalendarService.getFormattedReport();
+        ctx.replyWithHTML(report, {
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { 
+                            text: MacroCalendarService.isFilterEnabled ? '🔴 تعطيل فلتر الأخبار' : '🟢 تفعيل فلتر الأخبار', 
+                            callback_data: 'TOGGLE_MACRO_FILTER' 
+                        },
+                        { text: '🔄 تحديث', callback_data: 'REFRESH_MACRO_FILTER' }
+                    ]
+                ]
+            }
+        });
+    });
+
+    bot.action('VIEW_MACRO_REPORT', async (ctx) => {
+        await ctx.answerCbQuery();
+        const report = MacroCalendarService.getFormattedReport();
+        ctx.replyWithHTML(report, {
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { 
+                            text: MacroCalendarService.isFilterEnabled ? '🔴 تعطيل فلتر الأخبار' : '🟢 تفعيل فلتر الأخبار', 
+                            callback_data: 'TOGGLE_MACRO_FILTER' 
+                        },
+                        { text: '🔄 تحديث', callback_data: 'REFRESH_MACRO_FILTER' }
+                    ]
+                ]
+            }
+        });
     });
 
     bot.hears('📐 فاحص الهارمونيك اللحظي', async (ctx) => {

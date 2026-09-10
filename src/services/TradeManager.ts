@@ -5,6 +5,7 @@ import User from '../models/User';
 import logger from '../utils/logger';
 import { CircuitBreakerService } from './CircuitBreakerService';
 import { CorrelationGuardService } from './CorrelationGuardService';
+import { MacroCalendarService } from './MacroCalendarService';
 
 // Helper function to calculate dynamic Take Profit splits mathematically based on RRR and ATR
 async function calculateDynamicTpsSplits(
@@ -121,6 +122,14 @@ export class TradeManager {
                 const tripMsg = `🚨 [قاطع الدائرة الكهربائية مفعل] ${cbStatus.tripReason}. تم حظر فتح صفقات جديدة حتى: ${cbStatus.cooldownUntil?.toLocaleTimeString()}`;
                 logger.error(tripMsg);
                 throw new Error(tripMsg);
+            }
+
+            // 0.1 Institutional Macro Economic News Filter (FOMC / CPI / NFP Blackout)
+            const macroCheck = MacroCalendarService.isBlackout();
+            if (macroCheck.isBlackoutActive) {
+                const macroMsg = `🚨 [حظر أخبار الاقتصاد الكلي] ${macroCheck.reason}`;
+                logger.warn(macroMsg);
+                throw new Error(macroMsg);
             }
 
             // 1. Calculate Position Size
