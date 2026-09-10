@@ -371,42 +371,58 @@ export const registerTradingHandlers = (bot: Telegraf, BingXService: BingXServic
     });
 
     bot.action('TOGGLE_MACRO_FILTER', async (ctx) => {
-        const newState = MacroCalendarService.toggleFilter();
-        await ctx.answerCbQuery(newState ? 'تم تفعيل فلتر الأخبار بنجاح!' : 'تم تعطيل فلتر الأخبار!');
-        const report = MacroCalendarService.getFormattedReport();
-        ctx.editMessageText(report, {
-            parse_mode: 'HTML',
-            reply_markup: {
-                inline_keyboard: [
-                    [
-                        { 
-                            text: newState ? '🔴 تعطيل فلتر الأخبار' : '🟢 تفعيل فلتر الأخبار', 
-                            callback_data: 'TOGGLE_MACRO_FILTER' 
-                        },
-                        { text: '🔄 تحديث', callback_data: 'REFRESH_MACRO_FILTER' }
+        try {
+            const newState = MacroCalendarService.toggleFilter();
+            await ctx.answerCbQuery(newState ? 'تم تفعيل فلتر الأخبار بنجاح!' : 'تم تعطيل فلتر الأخبار!').catch(() => {});
+            const report = MacroCalendarService.getFormattedReport();
+            await ctx.editMessageText(report, {
+                parse_mode: 'HTML',
+                reply_markup: {
+                    inline_keyboard: [
+                        [
+                            { 
+                                text: newState ? '🔴 تعطيل فلتر الأخبار' : '🟢 تفعيل فلتر الأخبار', 
+                                callback_data: 'TOGGLE_MACRO_FILTER' 
+                            },
+                            { text: '🔄 تحديث', callback_data: 'REFRESH_MACRO_FILTER' }
+                        ]
                     ]
-                ]
-            }
-        });
+                }
+            }).catch((err: any) => {
+                if (!err.message?.includes('message is not modified')) {
+                    logger.warn('Failed to edit macro message:', err.message);
+                }
+            });
+        } catch (e: any) {
+            logger.error('Error in TOGGLE_MACRO_FILTER:', e);
+        }
     });
 
     bot.action('REFRESH_MACRO_FILTER', async (ctx) => {
-        await ctx.answerCbQuery('تم التحديث');
-        const report = MacroCalendarService.getFormattedReport();
-        ctx.editMessageText(report, {
-            parse_mode: 'HTML',
-            reply_markup: {
-                inline_keyboard: [
-                    [
-                        { 
-                            text: MacroCalendarService.isFilterEnabled ? '🔴 تعطيل فلتر الأخبار' : '🟢 تفعيل فلتر الأخبار', 
-                            callback_data: 'TOGGLE_MACRO_FILTER' 
-                        },
-                        { text: '🔄 تحديث', callback_data: 'REFRESH_MACRO_FILTER' }
+        try {
+            await ctx.answerCbQuery('تم التحديث').catch(() => {});
+            const report = MacroCalendarService.getFormattedReport();
+            await ctx.editMessageText(report, {
+                parse_mode: 'HTML',
+                reply_markup: {
+                    inline_keyboard: [
+                        [
+                            { 
+                                text: MacroCalendarService.isFilterEnabled ? '🔴 تعطيل فلتر الأخبار' : '🟢 تفعيل فلتر الأخبار', 
+                                callback_data: 'TOGGLE_MACRO_FILTER' 
+                            },
+                            { text: '🔄 تحديث', callback_data: 'REFRESH_MACRO_FILTER' }
+                        ]
                     ]
-                ]
-            }
-        });
+                }
+            }).catch((err: any) => {
+                if (!err.message?.includes('message is not modified')) {
+                    logger.warn('Failed to edit macro message:', err.message);
+                }
+            });
+        } catch (e: any) {
+            logger.error('Error in REFRESH_MACRO_FILTER:', e);
+        }
     });
 
     // ── Button Listeners for Reply Keyboard ──

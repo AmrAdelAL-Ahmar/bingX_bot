@@ -77,12 +77,12 @@ export const registerAnalysisHandlers = (bot: Telegraf, tradeManager: TradeManag
                 stopLoss: parseFloat(sl)
             };
 
-            ctx.answerCbQuery('⏳ جاري تنفيذ الصفقة...');
+            ctx.answerCbQuery('⏳ جاري تنفيذ الصفقة...').catch(() => {});
             await tradeManager.executeSignal(signal as any, user._id.toString(), ctx.chat!.id.toString());
 
         } catch (error: any) {
             logger.error('Error in execute trade action:', error);
-            await ctx.answerCbQuery(`❌ فشل التنفيذ: ${error.message}`);
+            await ctx.answerCbQuery(`❌ فشل التنفيذ: ${error.message}`).catch(() => {});
         }
     });
 
@@ -92,7 +92,7 @@ export const registerAnalysisHandlers = (bot: Telegraf, tradeManager: TradeManag
             const [s, version] = rest.split('_');
             const symbol = `${s}/USDT:USDT`;
 
-            await ctx.answerCbQuery(`⏳ جاري تشغيل الاختبار الرجعي (${version || 'V6'})...`);
+            await ctx.answerCbQuery(`⏳ جاري تشغيل الاختبار الرجعي (${version || 'V6'})...`).catch(() => {});
             await ctx.reply(`🔍 جاري تحليل البيانات التاريخية لـ ${symbol}... قد يستغرق ذلك بضع ثوانٍ.`);
 
             const telegramId = ctx.from?.id.toString();

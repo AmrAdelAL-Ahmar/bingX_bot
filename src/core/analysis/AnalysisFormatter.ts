@@ -17,14 +17,14 @@ export class AnalysisFormatter {
             `💵 السعر الحالي: **$${res.currentPrice.toFixed(p)}** | **${v}**\n` +
             `━━━━━━━━━━━━━━\n`;
 
-        if (sniper.isStochSynced) r += `🔥 **[إشارة قنص ذهبية: قاع مزدوج متزامن]** 🔥\n`;
-        if (sniper.isFullBreakout) r += `🚀 **[انفجار سعري وشيك: المصفوفة مكتملة]** 🚀\n`;
-        if (sniper.isAboveGolden) r += `✨ **[فوق المستوى الذهبي 0.618]** ✨\n`;
+        if (sniper.isStochSynced) r += `🔥 **«إشارة قنص ذهبية: قاع مزدوج متزامن»** 🔥\n`;
+        if (sniper.isFullBreakout) r += `🚀 **«انفجار سعري وشيك: المصفوفة مكتملة»** 🚀\n`;
+        if (sniper.isAboveGolden) r += `✨ **«فوق المستوى الذهبي 0.618»** ✨\n`;
         if (sniper.isStochSynced || sniper.isFullBreakout) r += `━━━━━━━━━━━━━━\n`;
 
         // SCALP SECTION
         const sIcon = scalp.winRate >= 80 ? '🔥' : scalp.winRate >= 65 ? '✅' : '⚠️';
-        r += `⚡ **[تحليل السكالبينج - ${options.quickTF}]**\n` +
+        r += `⚡ **«تحليل السكالبينج - ${options.quickTF}»**\n` +
             `• النتيجة: ${scalp.status} ${sIcon}\n`;
         if (scalp.rejectionReason) r += `• سبب الرفض: 🛡️ **${scalp.rejectionReason}**\n`;
         r += `• التوصية: **${scalp.type}** | Win: **${scalp.winRate.toFixed(0)}%**\n` +
@@ -34,7 +34,7 @@ export class AnalysisFormatter {
 
         // SWING SECTION
         const wIcon = swing.winRate >= 80 ? '🔥' : swing.winRate >= 65 ? '✅' : '⚠️';
-        r += `🌊 **[تحليل السوينج - ${options.longTF}]**\n` +
+        r += `🌊 **«تحليل السوينج - ${options.longTF}»**\n` +
             `• النتيجة: ${swing.status} ${wIcon}\n`;
         if (swing.rejectionReason) r += `• سبب الرفض: 🛡️ **${swing.rejectionReason}**\n`;
         r += `• التوصية: **${swing.type}** | Win: **${swing.winRate.toFixed(0)}%**\n` +

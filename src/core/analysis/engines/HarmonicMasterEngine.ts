@@ -47,8 +47,8 @@ export class HarmonicMasterEngine implements ITradingEngine {
             const isBullish = activeMatch.direction === 'BULLISH';
             const bonus = activeMatch.status === 'CONFIRMED' ? 25 : 15;
             matrixScore = isBullish ? Math.min(98, 70 + bonus) : Math.max(2, 30 - bonus);
-            decision = `${isBullish ? '🟢 شراء توافقي قوي (LONG)' : '🔴 بيع توافقي قوي (SHORT)'} [نموذج ${activeMatch.pattern}]`;
-            details = `نموذج ${activeMatch.pattern} (${activeMatch.direction}) - الحالة: ${activeMatch.status} - RRR: 1:${activeMatch.riskRewardRatio} - PRZ: [${activeMatch.prz.min.toFixed(4)} - ${activeMatch.prz.max.toFixed(4)}]`;
+            decision = `${isBullish ? '🟢 شراء توافقي قوي (LONG)' : '🔴 بيع توافقي قوي (SHORT)'} (نموذج ${activeMatch.pattern})`;
+            details = `نموذج ${activeMatch.pattern} (${activeMatch.direction}) - الحالة: ${activeMatch.status} - RRR: 1:${activeMatch.riskRewardRatio} - PRZ: (${activeMatch.prz.min.toFixed(4)} - ${activeMatch.prz.max.toFixed(4)})`;
         }
 
         const matrix: MatrixResult = {

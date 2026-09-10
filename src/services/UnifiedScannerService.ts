@@ -279,7 +279,14 @@ export class UnifiedScannerService {
                 report += `━━━━━━━━━━━━━━\n`;
                 report += `🏆 **ترشيح أفضل محركات القنص (الترتيب حسب الجاهزية والدقة):**\n\n`;
 
-                engineResults.forEach((er, idx) => {
+                // Split into top active/ready engines and idle/neutral engines
+                const activeEngines = engineResults.filter(er => er.sniperReport.direction !== 'NONE' || er.sniperReport.readyToFire);
+                const idleEngines = engineResults.filter(er => er.sniperReport.direction === 'NONE' && !er.sniperReport.readyToFire);
+
+                // Show top active engines (up to 8 engines max to prevent message overflow)
+                const featuredEngines = (activeEngines.length > 0 ? activeEngines : engineResults).slice(0, 8);
+
+                featuredEngines.forEach((er, idx) => {
                     const rep: SniperReport = er.sniperReport;
                     const engine = getSniperEngine(er.engineId);
                     const baseTrust = this.getSniperTrust(er.engineId);
@@ -301,6 +308,22 @@ export class UnifiedScannerService {
                     report += `   • الشروط المكتملة: **${rep.completedConditions.length}/${rep.completedConditions.length + rep.pendingConditions.length}**\n`;
                     report += `━━━━━━━━━━━━━━\n`;
                 });
+
+                // Compact summary for remaining idle/monitoring engines
+                const remainingEngines = engineResults.filter(er => !featuredEngines.some(fe => fe.engineId === er.engineId));
+                if (remainingEngines.length > 0) {
+                    report += `\n💤 **محركات قيد المراقبة والانتظار (${remainingEngines.length} محركاً):**\n`;
+                    const idleList = remainingEngines.map(er => {
+                        const engine = getSniperEngine(er.engineId);
+                        const name = engine?.displayName?.replace(/قناص|المؤسساتي|الشامل/g, '').trim() || er.engineId;
+                        return `• ${name}: ⏳ منتظر (${er.sniperReport.completedConditions.length}/${er.sniperReport.completedConditions.length + er.sniperReport.pendingConditions.length})`;
+                    }).slice(0, 10).join('\n');
+                    report += `${idleList}\n`;
+                    if (remainingEngines.length > 10) {
+                        report += `• ... وباقي المحركات محايدة بانتظار تشكل السيولة.\n`;
+                    }
+                    report += `━━━━━━━━━━━━━━\n`;
+                }
 
                 results.push({
                     symbol,

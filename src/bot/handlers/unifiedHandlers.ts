@@ -372,19 +372,8 @@ export function registerUnifiedHandlers(bot: Telegraf, tradeManager: TradeManage
                         reportText: result.reportText
                     });
 
-                    const inline_keyboard: any[][] = [];
+                    // Cache all engine reports
                     result.engines.forEach((er: any) => {
-                        const hasSignal = er.sniperReport.direction !== 'NONE';
-                        const symbolShort = result.symbol.split('/')[0];
-                        const row = [
-                            { text: `🔍 تفاصيل ${er.engineId}`, callback_data: `uni_det_${sessionId}_${symbolShort}_${er.engineId}` }
-                        ];
-                        if (hasSignal) {
-                            row.push({ text: `📝 نسخ ${er.engineId}`, callback_data: `uni_cp_${sessionId}_${symbolShort}_${er.engineId}` });
-                            row.push({ text: `⚡ تنفيذ ${er.engineId}`, callback_data: `uni_ex_${sessionId}_${symbolShort}_${er.engineId}` });
-                        }
-                        inline_keyboard.push(row);
-
                         cacheUpdates.push({
                             symbol: result.symbol,
                             engineId: er.engineId,
@@ -400,11 +389,36 @@ export function registerUnifiedHandlers(bot: Telegraf, tradeManager: TradeManage
                         });
                     });
 
-                    // Send unified sniper report
-                    await ctx.reply(result.reportText, {
-                        parse_mode: 'Markdown',
-                        reply_markup: { inline_keyboard }
+                    // Build smart keyboard for top active engines (up to 8 rows) to keep UI clean and avoid payload limits
+                    const inline_keyboard: any[][] = [];
+                    const activeEngines = result.engines.filter((er: any) => er.sniperReport.direction !== 'NONE' || er.sniperReport.readyToFire);
+                    const keyboardEngines = (activeEngines.length > 0 ? activeEngines : result.engines).slice(0, 8);
+
+                    keyboardEngines.forEach((er: any) => {
+                        const hasSignal = er.sniperReport.direction !== 'NONE';
+                        const symbolShort = result.symbol.split('/')[0];
+                        const row = [
+                            { text: `🔍 تفاصيل ${er.engineId}`, callback_data: `uni_det_${sessionId}_${symbolShort}_${er.engineId}` }
+                        ];
+                        if (hasSignal) {
+                            row.push({ text: `📝 نسخ`, callback_data: `uni_cp_${sessionId}_${symbolShort}_${er.engineId}` });
+                            row.push({ text: `⚡ تنفيذ`, callback_data: `uni_ex_${sessionId}_${symbolShort}_${er.engineId}` });
+                        }
+                        inline_keyboard.push(row);
                     });
+
+                    // Send unified sniper report safely (with markdown error fallback)
+                    try {
+                        await ctx.reply(result.reportText, {
+                            parse_mode: 'Markdown',
+                            reply_markup: { inline_keyboard }
+                        });
+                    } catch (sendErr: any) {
+                        logger.warn('Markdown parse failed, sending without parse_mode:', sendErr.message);
+                        await ctx.reply(result.reportText, {
+                            reply_markup: { inline_keyboard }
+                        });
+                    }
                 }
             }
 
@@ -428,24 +442,36 @@ export function registerUnifiedHandlers(bot: Telegraf, tradeManager: TradeManage
             const engineId = ctx.match[3];
 
             const session = await UnifiedSession.findById(sessionId);
-            if (!session) return ctx.answerCbQuery('⚠️ الجلسة منتهية.');
+            if (!session) return ctx.answerCbQuery('⚠️ الجلسة منتهية.').catch(() => {});
 
             const result = session.cachedResults?.find(r => r.symbol.startsWith(symbolShort) && r.engineId === engineId);
-            if (!result) return ctx.answerCbQuery('⚠️ لم يتم العثور على التفاصيل المخزنة.');
+            if (!result) return ctx.answerCbQuery('⚠️ لم يتم العثور على التفاصيل المخزنة.').catch(() => {});
 
             await ctx.answerCbQuery().catch(() => {});
 
-            // Show standalone details page
-            await ctx.editMessageText(result.reportText, {
-                parse_mode: 'Markdown',
-                reply_markup: {
-                    inline_keyboard: [
-                        [
-                            { text: '🔙 رجوع للتقرير الموحد', callback_data: `uni_back_rep_${sessionId}_${symbolShort}` }
-                        ]
+            const replyMarkup = {
+                inline_keyboard: [
+                    [
+                        { text: '🔙 رجوع للتقرير الموحد', callback_data: `uni_back_rep_${sessionId}_${symbolShort}` }
                     ]
+                ]
+            };
+
+            // Show standalone details page with safe entity parsing fallback
+            try {
+                await ctx.editMessageText(result.reportText, {
+                    parse_mode: 'Markdown',
+                    reply_markup: replyMarkup
+                });
+            } catch (err: any) {
+                if (err.message?.includes('can\'t parse entities') || err.message?.includes('Bad Request')) {
+                    await ctx.editMessageText(result.reportText, {
+                        reply_markup: replyMarkup
+                    }).catch(() => {});
+                } else if (!err.message?.includes('message is not modified')) {
+                    logger.warn('Failed to edit details message:', err.message);
                 }
-            });
+            }
         } catch (e) {
             logger.error('View details action error:', e);
         }
@@ -459,31 +485,43 @@ export function registerUnifiedHandlers(bot: Telegraf, tradeManager: TradeManage
             const symbolShort = ctx.match[2];
 
             const session = await UnifiedSession.findById(sessionId);
-            if (!session) return ctx.answerCbQuery('⚠️ الجلسة منتهية.');
+            if (!session) return ctx.answerCbQuery('⚠️ الجلسة منتهية.').catch(() => {});
 
             const summaryEntry = session.cachedResults?.find(r => r.symbol.startsWith(symbolShort) && r.engineId === 'SUMMARY');
-            if (!summaryEntry) return ctx.answerCbQuery('⚠️ لم يتم العثور على التقرير الموحد.');
+            if (!summaryEntry) return ctx.answerCbQuery('⚠️ لم يتم العثور على التقرير الموحد.').catch(() => {});
 
-            // Reconstruct keyboard
+            // Reconstruct keyboard for active engines
             const inline_keyboard: any[][] = [];
             const symbolEntries = session.cachedResults?.filter(r => r.symbol.startsWith(symbolShort) && r.engineId !== 'SUMMARY') || [];
+            const activeEntries = symbolEntries.filter(r => r.signal && r.signal.direction !== 'NONE');
+            const displayEntries = (activeEntries.length > 0 ? activeEntries : symbolEntries).slice(0, 8);
 
-            symbolEntries.forEach(r => {
+            displayEntries.forEach(r => {
                 const hasSignal = r.signal && r.signal.direction !== 'NONE';
                 const row = [
                     { text: `🔍 تفاصيل ${r.engineId}`, callback_data: `uni_det_${sessionId}_${symbolShort}_${r.engineId}` }
                 ];
                 if (hasSignal) {
-                    row.push({ text: `📝 نسخ ${r.engineId}`, callback_data: `uni_cp_${sessionId}_${symbolShort}_${r.engineId}` });
-                    row.push({ text: `⚡ تنفيذ ${r.engineId}`, callback_data: `uni_ex_${sessionId}_${symbolShort}_${r.engineId}` });
+                    row.push({ text: `📝 نسخ`, callback_data: `uni_cp_${sessionId}_${symbolShort}_${r.engineId}` });
+                    row.push({ text: `⚡ تنفيذ`, callback_data: `uni_ex_${sessionId}_${symbolShort}_${r.engineId}` });
                 }
                 inline_keyboard.push(row);
             });
 
-            await ctx.editMessageText(summaryEntry.reportText, {
-                parse_mode: 'Markdown',
-                reply_markup: { inline_keyboard }
-            });
+            try {
+                await ctx.editMessageText(summaryEntry.reportText, {
+                    parse_mode: 'Markdown',
+                    reply_markup: { inline_keyboard }
+                });
+            } catch (err: any) {
+                if (err.message?.includes('can\'t parse entities')) {
+                    await ctx.editMessageText(summaryEntry.reportText, {
+                        reply_markup: { inline_keyboard }
+                    }).catch(() => {});
+                } else if (!err.message?.includes('message is not modified')) {
+                    logger.warn('Failed to edit back-to-summary message:', err.message);
+                }
+            }
             await ctx.answerCbQuery().catch(() => {});
         } catch (e) {
             logger.error('Re-render unified report error:', e);
