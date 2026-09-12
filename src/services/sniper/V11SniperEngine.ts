@@ -109,9 +109,9 @@ export class V11SniperEngine implements ISniperEngine {
         }
 
         completed.push(`ℹ️ النمط المكتشف: **${marketRegime === 'ELLIOTT_WAVE_3' ? '🌊 موجة إليوت 3 اندفاعية' :
-                marketRegime === 'LIQUIDITY_RUN' ? '⚡ سحب سيولة (Liquidity Run)' :
-                    marketRegime === 'SIDEWAYS_RANGE' ? '↔️ سوق عرضي متذبذب (Sideways)' :
-                        '📈 اتجاه اعتيادي (Standard Trend)'
+            marketRegime === 'LIQUIDITY_RUN' ? '⚡ سحب سيولة (Liquidity Run)' :
+                marketRegime === 'SIDEWAYS_RANGE' ? '↔️ سوق عرضي متذبذب (Sideways)' :
+                    '📈 اتجاه اعتيادي (Standard Trend)'
             }**`);
 
         // ── 4. تنفيذ شروط التداول بناءً على النمط والـ Rule-Based Switching ──────
@@ -300,7 +300,7 @@ export class V11SniperEngine implements ISniperEngine {
         winRate = Math.min(50 + confidence * 0.48, 96);
 
         // جاهز للتفعيل الفوري؟
-        const readyToFire = (direction == 'LONG' || direction == 'SHORT') &&
+        const readyToFire = (direction == 'LONG' || direction == 'SHORT' || direction == 'NONE') &&
             confidence >= 70 &&
             rrr >= 1.45 &&
             (marketRegime === 'SIDEWAYS_RANGE' || (completed.some(c => c.includes('منطقة الخصم')) || completed.some(c => c.includes('منطقة العلاوة'))));
