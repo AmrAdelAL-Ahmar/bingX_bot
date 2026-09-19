@@ -10,6 +10,7 @@ export interface MacroEvent {
     dateString: string;
     forecast?: string;
     previous?: string;
+    actual?: string;
     source?: 'LIVE_REAL_FEED' | 'AI_GENERATED' | 'SEED';
 }
 
@@ -143,6 +144,7 @@ export class MacroCalendarService {
                         dateString: new Date(timeMs).toLocaleString('ar-EG', { timeZone: 'UTC' }) + ' UTC',
                         forecast: item.forecast || undefined,
                         previous: item.previous || undefined,
+                        actual: item.actual || undefined,
                         source: 'LIVE_REAL_FEED'
                     });
                 }
@@ -248,6 +250,40 @@ export class MacroCalendarService {
     }
 
     /**
+     * Provides concise, institutional macroeconomic scenario analysis for an event
+     */
+    static getScenarioInsight(event: MacroEvent): string {
+        const title = event.title.toLowerCase();
+
+        // 1. Inflation & Price Indexes (CPI, Core CPI, PPI, PCE)
+        if (/cpi|pce|ppi|inflation/i.test(title)) {
+            return `💡 السيناريو: إذا جاءت القيمة أعلى من المتوقع 🟢 للدولار | 🔴 سلبي للكريبتو (تشديد الفائدة). إذا جاءت أدنى 🔴 للدولار | 🟢 إيجابي للكريبتو والبيتكوين.`;
+        }
+
+        // 2. Interest Rates & Federal Reserve (FOMC, Fed Rate, Powell)
+        if (/fomc|fed|powell|interest rate|funds rate/i.test(title)) {
+            return `💡 السيناريو: تثبيت أو خفض الفائدة / لهجة تيسيرية 🟢 صعود قوي للكريبتو. رفع الفائدة / تشديد نقدي صارم 🔴 هبوط للأسواق وهروب للدولار.`;
+        }
+
+        // 3. Unemployment Rate
+        if (/unemployment rate/i.test(title)) {
+            return `💡 السيناريو: ارتفاع نسبة البطالة (أعلى من المتوقع) 🔴 ضعف للدولار | 🟢 إيجابي للكريبتو (يُعجل بالخفض). انخفاضها 🟢 قوة للدولار.`;
+        }
+
+        // 4. Employment & Jobs (NFP, Non-Farm Payrolls, ADP)
+        if (/payrolls|nfp|employment change|adp/i.test(title)) {
+            return `💡 السيناريو: وظائف أكثر من المتوقع 🟢 قوة للدولار | 🔴 ضغط هابط على الكريبتو (اقتصاد ساخن). وظائف أقل 🔴 للدولار | 🟢 انتعاش للكريبتو.`;
+        }
+
+        // 5. Economic Growth (GDP, Retail Sales, ISM PMI)
+        if (/gdp|retail sales|ism|pmi/i.test(title)) {
+            return `💡 السيناريو: بيانات أعلى من المتوقع 🟢 تدل على متانة الاقتصاد وقوة للدولار | بيانات أضعف تدعم التيسير النقدي وانتعاش الأصول الخطرة.`;
+        }
+
+        return `💡 السيناريو: مراقبة الفارق بين الفعلي والمتوقع؛ الأرقام المفاجئة تحدث تقلبات وانزلاقاً سعرياً حاداً.`;
+    }
+
+    /**
      * Format a rich summary report for Telegram or UI
      */
     static getFormattedReport(): string {
@@ -270,11 +306,12 @@ export class MacroCalendarService {
             report += `\n⚠️ <b>سبب الحظر النشط:</b>\n<i>${status.reason}</i>\n`;
         }
 
-        report += `\n📅 <b>أهم البيانات والأخبار الاقتصادية المرتقبة:</b>\n`;
+        report += `\n📅 <b>البيانات والأخبار الاقتصادية المجدولة لهذا الأسبوع (${upcoming.length} حدثاً):</b>\n`;
         if (upcoming.length === 0) {
             report += `<i>لا توجد أحداث كبرى مجدولة حالياً لهذا الأسبوع.</i>\n`;
         } else {
-            upcoming.slice(0, 5).forEach((ev, idx) => {
+            // Display up to 15 events so the user sees the full week's schedule
+            upcoming.slice(0, 15).forEach((ev, idx) => {
                 const diffMin = (ev.timestamp - now) / (60 * 1000);
                 let timeStr = '';
                 if (diffMin < 0) {
@@ -295,6 +332,10 @@ export class MacroCalendarService {
                 if (ev.forecast || ev.previous) {
                     report += `   ▫️ المتوقع: <code>${ev.forecast || '-'}</code> | السابق: <code>${ev.previous || '-'}</code>\n`;
                 }
+                if (ev.actual) {
+                    report += `   ▫️ ⚡ <b>النتيجة الفعلية (Actual):</b> <code>${ev.actual}</code>\n`;
+                }
+                report += `   ▫️ ${this.getScenarioInsight(ev)}\n`;
                 report += `\n`;
             });
         }

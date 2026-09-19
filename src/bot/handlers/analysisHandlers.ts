@@ -149,8 +149,12 @@ export const registerAnalysisHandlers = (bot: Telegraf, tradeManager: TradeManag
                 antiRepainting: user?.analysisSettings?.antiRepaintingEnabled
             });
 
-            const details = analysisService.generateDetailedReport(res, type === 'sc' ? 'scalp' : 'swing');
-            await ctx.reply(details, { parse_mode: 'Markdown' });
+            const details = analysisService.generateDetailedReport(res, type === 'sc' ? 'scalp' : 'swing', v);
+            try {
+                await ctx.reply(details, { parse_mode: 'Markdown' });
+            } catch (mdErr) {
+                await ctx.reply(details);
+            }
 
         } catch (error) {
             logger.error('Error in details action:', error);
@@ -175,7 +179,11 @@ export const registerAnalysisHandlers = (bot: Telegraf, tradeManager: TradeManag
             });
 
             const guide = analysisService.generateEducationalGuide(res, type === 'sc' ? 'scalp' : 'swing');
-            await ctx.reply(guide, { parse_mode: 'Markdown' });
+            try {
+                await ctx.reply(guide, { parse_mode: 'Markdown' });
+            } catch (mdErr) {
+                await ctx.reply(guide);
+            }
         } catch (error) {
             logger.error('Error in educational guide action:', error);
             await ctx.reply('❌ فشل جلب الدليل التعليمي.');

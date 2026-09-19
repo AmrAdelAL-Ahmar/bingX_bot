@@ -60,14 +60,43 @@ export class AnalysisFormatter {
             `▶️STOP LOSE(الاستوب)\n${sl.toFixed(p)}`;
     }
 
-    static generateDetailedReport(res: AnalysisResult, type: 'scalp' | 'swing'): string {
+    static generateDetailedReport(res: AnalysisResult, type: 'scalp' | 'swing', version?: string): string {
         const data = type === 'scalp' ? res.scalp : res.swing;
         const tf = type === 'scalp' ? res.options.quickTF : res.options.longTF;
+        const v = version || 'V6';
         const sentiments = this.calculateSentiments(res.currentPrice, data.indicators, data.levels, res.matrix, data.structure, res.isAboveVWAP, tf, data.rsi);
 
-        let report = `🔍 **التقرير التقني لـ ${res.symbol} (${type === 'scalp' ? 'Scalp ⚡' : 'Swing 🌊'})**\n\n`;
+        let report = `🔍 **التقرير التقني لـ ${res.symbol} (${type === 'scalp' ? 'Scalp ⚡' : 'Swing 🌊'}) - [${v}]**\n\n`;
         report += `💵 السعر الحالي: \`$${res.currentPrice.toFixed(res.pricePrecision)}\`\n`;
         report += `⚙️ الفريم المحلل: \`${tf}\`\n\n`;
+
+        // Dedicated section for HARMONIC
+        if (v === 'HARMONIC' || data.status?.includes('HARMONIC') || res.matrix?.decision?.includes('توافقي')) {
+            report += `📐 **تفاصيل منظومة الهارمونيك:**\n`;
+            report += `• حالة النموذج: **${(data.status || '').replace(/_/g, ' ')}**\n`;
+            report += `• التقييم التوافقي: **${res.matrix.decision}**\n`;
+            report += `• تفاصيل الـ PRZ: ${res.matrix.details}\n`;
+            if (data.signalReason) report += `• سبب الإشارة: \`${data.signalReason}\`\n`;
+            report += `━━━━━━━━━━━━━━\n\n`;
+        }
+
+        // Dedicated section for V17 (Market Regime)
+        if (v === 'V17' || data.status?.includes('V17') || res.matrix?.details?.includes('Regime')) {
+            report += `🌐 **تفاصيل نظام السوق (V17 Market Regime):**\n`;
+            report += `• حالة السوق: **${(data.status || '').replace(/_/g, ' ')}**\n`;
+            report += `• تقرير النظام: **${res.matrix.decision}**\n`;
+            report += `• تفاصيل المحركات الموصى بها: ${res.matrix.details}\n`;
+            report += `━━━━━━━━━━━━━━\n\n`;
+        }
+
+        // Dedicated section for V18 (Order Book & Flow)
+        if (v === 'V18' || data.status?.includes('V18') || res.matrix?.details?.includes('Imbalance') || res.matrix?.details?.includes('L2')) {
+            report += `📊 **تفاصيل تدفق السيولة وعمق الأوامر (V18 Order Book):**\n`;
+            report += `• حالة التدفق: **${(data.status || '').replace(/_/g, ' ')}**\n`;
+            report += `• ضغط السيولة: **${res.matrix.decision}**\n`;
+            report += `• مؤشر التباين L2: ${res.matrix.details}\n`;
+            report += `━━━━━━━━━━━━━━\n\n`;
+        }
 
         report += `📊 **تحليل الزخم والمؤشرات:**\n`;
         sentiments.forEach(s => {
@@ -260,6 +289,9 @@ export class AnalysisFormatter {
     }
 
     static getAlgorithmExplanation(v: string): string {
+        if (v === 'V18') return "📊 **V18 Order Book & Flow Imbalance Sniper:** محرك تدفق السيولة وعمق الأوامر L2. يحلل التباين بين أحجام طلبات الشراء والبيع (Bid/Ask Imbalance)، ويكشف الجدران السعرية الكبرى وضغط السيولة اللحظي للتمركز مع كبار صناع السوق.";
+        if (v === 'V17') return "🌐 **V17 Dynamic Market Regime Sniper:** محرك نظام السوق الديناميكي والتكيفي. يقوم بتصنيف بيئة السوق إلى (اتجاه صاعد، اتجاه هابط، تذبذب أفقي، أو انكماش سيولة حاد Squeeze) ويرشح أفضل المحركات المتوافقة مع النظام السائد.";
+        if (v === 'HARMONIC') return "📐 **منظومة الهارمونيك الكاملة (11 نموذجاً):** المحرك التوافقي الرقمي الشامل. يرصد نماذج الهارمونيك بدقة نسب فيبوناتشي (Gartley, Bat, Butterfly, Crab, Deep Crab, Shark, Cypher, Nen Star, 5-0, Three Drives, Alternate Bat) مع تحديد مناطق الانعكاس المحتملة (PRZ) والأهداف المتدرجة.";
         if (v === 'V16') return "🏹 **V16 Master Hybrid Matrix Sniper:** المحرك الهجين المتكامل والمطور إنتاجياً. يدمج بين مدارس وايكوف التجميعية (Wyckoff Accumulation) من خلال فحص فترات الانضغاط السعري واختراقات الصناديق بدعم من ميل سيولة OBV والانحدار الخطي، والتحقق الهيكلي من زوايا جان الهندسية (Gann Wheel 180°/360°)، وتوقيتات التلاقي الكوني والفلكي مع دورات هيرست الزمنية وأطوار القمر الكبرى (أقمار جديدة، كاملة، أو ربعية) لتحديد اللحظة والمنطقة المثالية لانفجار السعر بدقة متناهية.";
         if (v === 'V12') return "📊 **V12 Order Flow & CVD Sniper:** محرك تدفق السيولة المتقدم. يقوم بتحليل أحجام التداول التراكمية (CVD) ورصد الانحرافات في الدلتا لكشف نفاد قوى البائعين/المشترين، مما يتيح استباق الحركات السعرية الكبرى والتنفيذ بالتزامن مع دخول السيولة المؤسساتية الحقيقية.";
         if (v === 'V13') return "🪤 **V13 Wyckoff & Liquidity Sweep Sniper:** محرك تتبع مصائد السيولة وهيكلية وايكوف. يركز على رصد عمليات سحب السيولة بالذيول (Springs & Upthrusts) وتجاوز مناطق وقف الخسارة قبل انعكاس السعر، مع فحص مستويات SOS/SOW لتنفيذ صفقات آمنة ونسبة عائد لمخاطرة RRR مرتفعة جداً.";

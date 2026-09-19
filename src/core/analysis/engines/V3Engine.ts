@@ -65,7 +65,7 @@ export class V3Engine implements ITradingEngine {
         else if (isBOS) type = cp > vwap ? 'LONG' : 'SHORT';
 
         if (type === 'NEUTRAL') {
-            return this.cancel(cp, '⚪ محايد (هيكل غير واضح)', 'NEUTRAL', 0, mode);
+            return this.cancel(cp, '⚪ محايد (هيكل غير واضح)', 'NEUTRAL', 0, mode, '', 0, 0, data.atr);
         }
 
         // Structural bonus
@@ -78,7 +78,7 @@ export class V3Engine implements ITradingEngine {
         // ==========================================================
         const div = TechnicalAnalyzer.detectDivergence(ohlcv, type);
         if (div.detected) {
-            return this.cancel(cp, `⚠️ ملغاة: ${div.description}`, type, score, mode);
+            return this.cancel(cp, `⚠️ ملغاة: ${div.description}`, type, score, mode, '', 0, 0, data.atr);
         }
 
         // ==========================================================
@@ -86,10 +86,10 @@ export class V3Engine implements ITradingEngine {
         // RSI < 25 = تشبع بيعي حاد → السوق متهيئ للارتداد → إلغاء SHORT فوراً
         // RSI > 75 = تشبع شرائي حاد → السوق متهيئ للتصحيح → إلغاء LONG فوراً
         if (type === 'SHORT' && data.rsi < 25) {
-            return this.cancel(cp, `❌ محظور: RSI تشبع بيعي (${data.rsi.toFixed(1)}) - خطر انعكاس مرتفع`, type, score, mode);
+            return this.cancel(cp, `❌ محظور: RSI تشبع بيعي (${data.rsi.toFixed(1)}) - خطر انعكاس مرتفع`, type, score, mode, '', 0, 0, data.atr);
         }
         if (type === 'LONG' && data.rsi > 75) {
-            return this.cancel(cp, `❌ محظور: RSI تشبع شرائي (${data.rsi.toFixed(1)}) - خطر انعكاس مرتفع`, type, score, mode);
+            return this.cancel(cp, `❌ محظور: RSI تشبع شرائي (${data.rsi.toFixed(1)}) - خطر انعكاس مرتفع`, type, score, mode, '', 0, 0, data.atr);
         }
 
         // ==========================================================
@@ -193,7 +193,17 @@ export class V3Engine implements ITradingEngine {
             const frame = OptimizedEngineSuite.buildMarketFrame(type, cp, m, allTimeframes, tf || '5m');
             const passed = OptimizedEngineSuite.runV3(frame);
             if (!passed) {
-                return this.cancel(cp, `⚪ ملغاة: لم تتطابق شروط V3 Multi-Layer Sniper`, type, score, mode, `Failed V3 Filter: Quick_RSI=${frame.quickRsi?.toFixed(1)}, 1H_RSI=${frame.rsi1h?.toFixed(1)}, Matrix=${m.percentage.toFixed(0)}%, 4H_Trend=${frame.trend4h}`);
+                return this.cancel(
+                    cp,
+                    `⚪ ملغاة: لم تتطابق شروط V3 Multi-Layer Sniper`,
+                    type,
+                    score,
+                    mode,
+                    `Failed V3 Filter: Quick_RSI=${frame.quickRsi?.toFixed(1)}, 1H_RSI=${frame.rsi1h?.toFixed(1)}, Matrix=${m.percentage.toFixed(0)}%, 4H_Trend=${frame.trend4h}`,
+                    sl,
+                    tp,
+                    data.atr
+                );
             }
         }
 
@@ -223,21 +233,29 @@ export class V3Engine implements ITradingEngine {
             };
         } else {
             // Weak signal — still show real SL/TP for reference
-            return this.cancel(cp, `⚪ إشارة ضعيفة (${winRate.toFixed(1)}%)`, type, score, mode, finalReason, sl, tp);
+            return this.cancel(cp, `⚪ إشارة ضعيفة (${winRate.toFixed(1)}%)`, type, score, mode, finalReason, sl, tp, data.atr);
         }
     }
 
     private cancel(
         cp: number, statusText: string, type: string,
         score: number, mode: string,
-        reason = '', sl = 0, tp = 0
+        reason = '', sl = 0, tp = 0, atr = 0
     ): TradeRecommendation {
+        const effectiveAtr = atr > 0 ? atr : (cp * 0.01);
+        const resolvedSl = (sl > 0 && Math.abs(sl - cp) > 0.0001)
+            ? sl
+            : (type === 'SHORT' ? Number((cp + effectiveAtr * 1.5).toFixed(4)) : Number((cp - effectiveAtr * 1.5).toFixed(4)));
+        const resolvedTp = (tp > 0 && Math.abs(tp - cp) > 0.0001)
+            ? tp
+            : (type === 'SHORT' ? Number((cp - effectiveAtr * 2.5).toFixed(4)) : Number((cp + effectiveAtr * 2.5).toFixed(4)));
+
         return {
             status: statusText,
             type: type as any,
             entry: cp,
-            tp: tp || cp,
-            sl: sl || cp,
+            tp: resolvedTp,
+            sl: resolvedSl,
             timeEstimate: mode === 'SCALP' ? 20 : 90,
             winRate: 0, reverseProb: 0,
             confidenceScore: score,

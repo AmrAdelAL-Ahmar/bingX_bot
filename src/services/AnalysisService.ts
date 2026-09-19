@@ -133,8 +133,8 @@ export class AnalysisService {
         return TechnicalAnalyzer.calculateCorrectionFibLevels(ohlcv, direction);
     }
 
-    generateDetailedReport(res: AnalysisResult, type: 'scalp' | 'swing'): string {
-        return AnalysisFormatter.generateDetailedReport(res, type);
+    generateDetailedReport(res: AnalysisResult, type: 'scalp' | 'swing', version?: string): string {
+        return AnalysisFormatter.generateDetailedReport(res, type, version);
     }
 
     generateEducationalGuide(res: AnalysisResult, type: 'scalp' | 'swing'): string {
