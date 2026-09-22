@@ -73,9 +73,9 @@ export class CircuitBreakerService {
         let totalBalance = 1000; // default conservative assumption
         if (bingx) {
             try {
-                const bal = await bingx.getBalance();
-                if (bal && bal.equity > 0) {
-                    totalBalance = bal.equity;
+                const totalEquity = await bingx.getTotalEquity();
+                if (totalEquity && totalEquity > 0) {
+                    totalBalance = totalEquity;
                 }
                 const positions = await bingx.getPositions();
                 for (const pos of positions) {
@@ -83,8 +83,8 @@ export class CircuitBreakerService {
                         (pos.info && pos.info.unrealizedProfit ? parseFloat(pos.info.unrealizedProfit) : 0);
                     unrealizedPnL += pnl;
                 }
-            } catch (e) {
-                logger.warn(`[CircuitBreaker] Could not fetch live BingX balance for ${telegramId}:`, e);
+            } catch (e: any) {
+                logger.warn(`[CircuitBreaker] Notice: Could not sync live BingX equity for ${telegramId}: ${e.message}`);
             }
         }
 

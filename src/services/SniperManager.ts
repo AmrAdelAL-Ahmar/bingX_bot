@@ -61,7 +61,10 @@ export class SniperManager {
                     )
                 )
             );
-        } catch (err) {
+        } catch (err: any) {
+            if (err.message && (err.message.includes('ENOTFOUND') || err.message.includes('topology'))) {
+                return; // Offline / waiting for network reconnection
+            }
             logger.error('SniperManager runCycle error:', err);
         }
     }

@@ -18,7 +18,24 @@ export class BingXService {
             },
             enableRateLimit: true,
         });
-        this.exchange.loadMarkets().catch((err: any) => logger.error('Failed to load markets:', err));
+        this.syncTimeAndMarkets().catch((err: any) => logger.warn(`[BingXService] Initial sync notice: ${err.message}`));
+    }
+
+    private timeSyncPromise: Promise<void> | null = null;
+
+    public async syncTimeAndMarkets(force = false): Promise<void> {
+        if (!this.timeSyncPromise || force) {
+            this.timeSyncPromise = (async () => {
+                try {
+                    await this.exchange.loadTimeDifference();
+                    await this.exchange.loadMarkets();
+                    logger.info(`✅ BingX time offset (${this.exchange.timeDifference || 0}ms) & markets synchronized.`);
+                } catch (err: any) {
+                    logger.warn(`[BingXService] Time/market sync notice: ${err.message}`);
+                }
+            })();
+        }
+        return this.timeSyncPromise;
     }
 
     /**
@@ -43,6 +60,13 @@ export class BingXService {
 
         if (match) return match;
         return symbol; // fallback
+    }
+
+    public async isSymbolSupported(symbol: string): Promise<boolean> {
+        await this.exchange.loadMarkets();
+        if (!this.exchange.markets || Object.keys(this.exchange.markets).length === 0) return true;
+        const target = this.resolveSymbol(symbol);
+        return Boolean(this.exchange.markets[target]);
     }
 
     async setLeverage(symbol: string, leverage: number, side: 'LONG' | 'SHORT' = 'LONG') {
@@ -123,11 +147,20 @@ export class BingXService {
 
     async getBalance() {
         try {
+            await this.syncTimeAndMarkets();
             const balance = await this.exchange.fetchBalance({ type: 'swap' });
-            // Strictly use 'free' (available) balance. Default to 0 if undefined.
-            // Do NOT fallback to 'total' because 'free' might be 0 (falsy) but valid.
             return balance.free['USDT'] !== undefined ? balance.free['USDT'] : 0;
-        } catch (error) {
+        } catch (error: any) {
+            if (error.message && (error.message.includes('109400') || error.message.includes('timestamp'))) {
+                logger.warn('[BingXService] Timestamp drift detected in getBalance, resyncing time offset...');
+                try {
+                    await this.syncTimeAndMarkets(true);
+                    const retryBalance = await this.exchange.fetchBalance({ type: 'swap' });
+                    return retryBalance.free['USDT'] !== undefined ? retryBalance.free['USDT'] : 0;
+                } catch (retryErr: any) {
+                    logger.error('[BingXService] Retry failed in getBalance after time sync:', retryErr.message);
+                }
+            }
             logger.error('Error fetching balance:', error);
             throw error;
         }
@@ -135,9 +168,20 @@ export class BingXService {
 
     async getTotalEquity() {
         try {
+            await this.syncTimeAndMarkets();
             const balance = await this.exchange.fetchBalance({ type: 'swap' });
             return balance.total['USDT'] !== undefined ? balance.total['USDT'] : (balance.free['USDT'] || 0);
-        } catch (error) {
+        } catch (error: any) {
+            if (error.message && (error.message.includes('109400') || error.message.includes('timestamp'))) {
+                logger.warn('[BingXService] Timestamp drift detected in getTotalEquity, resyncing time offset...');
+                try {
+                    await this.syncTimeAndMarkets(true);
+                    const retryBalance = await this.exchange.fetchBalance({ type: 'swap' });
+                    return retryBalance.total['USDT'] !== undefined ? retryBalance.total['USDT'] : (retryBalance.free['USDT'] || 0);
+                } catch (retryErr: any) {
+                    logger.error('[BingXService] Retry failed in getTotalEquity after time sync:', retryErr.message);
+                }
+            }
             logger.error('Error fetching total equity:', error);
             return 0;
         }
@@ -166,6 +210,10 @@ export class BingXService {
         try {
             await this.exchange.loadMarkets();
             const targetSymbol = this.resolveSymbol(symbol);
+            if (this.exchange.markets && Object.keys(this.exchange.markets).length > 0 && !this.exchange.markets[targetSymbol]) {
+                logger.warn(`[BingXService] Symbol ${symbol} (resolved: ${targetSymbol}) is not found in loaded BingX markets.`);
+                return [];
+            }
             const ohlcv = await this.exchange.fetchOHLCV(targetSymbol, timeframe, undefined, limit);
             const result = ohlcv.map((candle: any) => ({
                 timestamp: candle[0],
@@ -310,7 +358,7 @@ export class BingXService {
     }
 
 
-    /*
+    /**
      * Place an order
      * @param symbol e.g., 'BTC/USDT:USDT'
      * @param type 'market' or 'limit'
@@ -335,12 +383,23 @@ export class BingXService {
 
     async getPositions(symbol?: string) {
         try {
-            await this.exchange.loadMarkets();
+            await this.syncTimeAndMarkets();
             const targetSymbol = symbol ? this.resolveSymbol(symbol) : undefined;
             const symbols = targetSymbol ? [targetSymbol] : undefined;
             const positions = await this.exchange.fetchPositions(symbols);
             return positions;
-        } catch (error) {
+        } catch (error: any) {
+            if (error.message && (error.message.includes('109400') || error.message.includes('timestamp'))) {
+                logger.warn('[BingXService] Timestamp drift detected in getPositions, resyncing time offset...');
+                try {
+                    await this.syncTimeAndMarkets(true);
+                    const targetSymbol = symbol ? this.resolveSymbol(symbol) : undefined;
+                    const symbols = targetSymbol ? [targetSymbol] : undefined;
+                    return await this.exchange.fetchPositions(symbols);
+                } catch (retryErr: any) {
+                    logger.error('[BingXService] Retry failed in getPositions after time sync:', retryErr.message);
+                }
+            }
             logger.error(`Error fetching positions for ${symbol || 'all'}: `, error);
             throw error;
         }

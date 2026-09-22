@@ -47,8 +47,11 @@ export class PositionMonitor {
 
     async checkPositions() {
         try {
-            // Include PENDING trades to check for limit fills
-            const allTrackedTrades = await Trade.find({ currentStatus: { $in: ['PENDING', 'OPEN', 'TP1_HIT', 'TP2_HIT'] } });
+            // Include PENDING trades to check for limit fills (Live exchange positions only! Paper trades are handled by PaperTradingEngine)
+            const allTrackedTrades = await Trade.find({
+                isPaperTrade: { $ne: true },
+                currentStatus: { $in: ['PENDING', 'OPEN', 'TP1_HIT', 'TP2_HIT'] }
+            });
             if (allTrackedTrades.length === 0) return;
 
             // Separate pending from open
@@ -384,7 +387,10 @@ export class PositionMonitor {
                 }
             }
 
-        } catch (error) {
+        } catch (error: any) {
+            if (error.message && (error.message.includes('ENOTFOUND') || error.message.includes('topology'))) {
+                return; // Offline / waiting for network reconnection
+            }
             logger.error('Error in PositionMonitor:', error);
         }
     }

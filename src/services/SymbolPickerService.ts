@@ -9,11 +9,11 @@ import { CcxtPickerEngine } from '../core/picker/CcxtPickerEngine';
 export const SCAN_SYMBOLS = [
     'BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX',
     'DOT', 'LINK', 'LTC', 'UNI', 'ATOM', 'FIL', 'APT',
-    'ARB', 'OP', 'INJ', 'SUI', 'TRX', 'NEAR', 'FTM', 'SAND',
+    'ARB', 'OP', 'INJ', 'SUI', 'TRX', 'NEAR', 'PEPE', 'SAND',
     'MANA', 'AAVE', 'SNX', 'CRV', 'COMP', '1INCH', 'ZIL',
-    'ALGO', 'VET', 'THETA', 'GRT', 'ICP', 'EOS', 'CHZ',
+    'ALGO', 'VET', 'THETA', 'GRT', 'ICP', 'RENDER', 'CHZ',
     'ENJ', 'GALA', 'AXS', 'ROSE', 'HBAR', 'EGLD', 'FLOW',
-    'MATIC', 'IMX', 'RUNE', 'STX', 'KAVA', 'WLD'
+    'POL', 'IMX', 'RUNE', 'STX', 'KAVA', 'WLD', 'FET', 'TAO'
 ];
 
 // ─── SymbolPickerService ─────────────────────────────────────────────────────
@@ -132,6 +132,11 @@ export class SymbolPickerService {
     private async scanSingleSymbol(shortName: string): Promise<PickerResult | null> {
         const symbol = `${shortName}/USDT:USDT`;
         try {
+            const isSupported = await this.bingx.isSymbolSupported(symbol);
+            if (!isSupported) {
+                return null;
+            }
+
             // جلب بيانات الأطر الزمنية المطلوبة بشكل متوازٍ
             const [ohlcv15m, ohlcv1h, ohlcv4h, ticker] = await Promise.all([
                 this.bingx.fetchOHLCV(symbol, '15m', 100).catch(() => []),

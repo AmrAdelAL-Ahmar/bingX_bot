@@ -31,6 +31,10 @@ export interface ITrade extends Document {
     isTrailingActive?: boolean;
     realizedPnl?: number;
     closedAt?: Date;
+    isPaperTrade?: boolean;
+    commissionPaid?: number;
+    aiJustification?: string;
+    exitPrice?: number;
 }
 
 const TradeSchema: Schema = new Schema({
@@ -56,6 +60,10 @@ const TradeSchema: Schema = new Schema({
     isTrailingActive: { type: Boolean, default: false },
     realizedPnl: { type: Number },
     closedAt: { type: Date },
+    isPaperTrade: { type: Boolean, default: false },
+    commissionPaid: { type: Number, default: 0 },
+    aiJustification: { type: String },
+    exitPrice: { type: Number },
     binanceOrderId: { type: String },
     bingxOrderId: { type: String },
     entryTime: { type: Date, default: Date.now },

@@ -8,6 +8,10 @@ export const getMainMenuInlineKeyboard = (activeTradesCount: number, activeWatch
     return {
         inline_keyboard: [
             [
+                { text: '🚀 منظومة التداول الذاتي V2 (Auto)', callback_data: 'menu_autonomous' },
+                { text: '🎮 المحفظة الافتراضية (Paper)', callback_data: 'aut_view_paper_stats' }
+            ],
+            [
                 { text: '💰 رصيدي ومحفظتي', callback_data: 'menu_balance' },
                 { text: `💼 صفقاتي المفتوحة (${activeTradesCount})`, callback_data: 'menu_positions' }
             ],

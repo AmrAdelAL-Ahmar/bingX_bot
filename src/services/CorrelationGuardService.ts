@@ -1,5 +1,6 @@
 import logger from '../utils/logger';
 import { BingXService } from './BingXService';
+import Trade from '../models/Trade';
 
 export interface CorrelationCheckResult {
     allowed: boolean;
@@ -58,11 +59,32 @@ export class CorrelationGuardService {
         candidateSymbol: string,
         candidateDirection: 'LONG' | 'SHORT',
         candidateRiskPct: number,
-        bingx: BingXService
+        bingx: BingXService,
+        isPaperMode: boolean = false
     ): Promise<CorrelationCheckResult> {
         try {
-            const openPositions = await bingx.getPositions();
-            if (!openPositions || openPositions.length === 0) {
+            let positionsToCheck: { symbol: string; side: string }[] = [];
+
+            if (isPaperMode) {
+                const activePaperTrades = await Trade.find({
+                    isPaperTrade: true,
+                    currentStatus: { $in: ['OPEN', 'TP1_HIT', 'TP2_HIT'] }
+                });
+                positionsToCheck = activePaperTrades.map(t => ({
+                    symbol: t.symbol,
+                    side: t.direction
+                }));
+            } else {
+                const openPositions = await bingx.getPositions();
+                positionsToCheck = (openPositions || [])
+                    .filter((p: any) => parseFloat(p.contracts) > 0)
+                    .map((p: any) => ({
+                        symbol: p.symbol,
+                        side: (p.side || '').toUpperCase()
+                    }));
+            }
+
+            if (positionsToCheck.length === 0) {
                 return {
                     allowed: true,
                     currentPortfolioHeat: candidateRiskPct,
@@ -71,13 +93,7 @@ export class CorrelationGuardService {
             }
 
             // 1. Calculate current portfolio heat
-            // Heat is approximated by total margin / equity * estimated position stop distance
-            let currentHeat = 0;
-            for (const pos of openPositions) {
-                if (parseFloat(pos.contracts) > 0) {
-                    currentHeat += 2.0;
-                }
-            }
+            let currentHeat = positionsToCheck.length * 2.0;
 
             if (currentHeat + candidateRiskPct > this.MAX_PORTFOLIO_HEAT_PCT) {
                 const msg = `🚨 تم تجاوز سقف حرارة المحفظة الإجمالي: (${(currentHeat + candidateRiskPct).toFixed(1)}% > ${this.MAX_PORTFOLIO_HEAT_PCT}%). يرجى انتظار إغلاق بعض الصفقات.`;
@@ -91,11 +107,9 @@ export class CorrelationGuardService {
             }
 
             // 2. Correlation Guard: Check against existing open positions in same direction
-            const sameSidePositions = openPositions.filter((p: any) => {
-                if (parseFloat(p.contracts) === 0) return false;
-                const side = (p.side || '').toUpperCase();
-                return (candidateDirection === 'LONG' && side.includes('LONG')) ||
-                       (candidateDirection === 'SHORT' && side.includes('SHORT'));
+            const sameSidePositions = positionsToCheck.filter(p => {
+                return (candidateDirection === 'LONG' && p.side.includes('LONG')) ||
+                       (candidateDirection === 'SHORT' && p.side.includes('SHORT'));
             });
 
             if (sameSidePositions.length > 0) {

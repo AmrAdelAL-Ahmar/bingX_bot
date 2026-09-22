@@ -24,8 +24,10 @@ import { registerAnalysisHandlers } from './bot/handlers/analysisHandlers';
 import { registerPickerHandlers } from './bot/handlers/pickerHandlers';
 import { registerUnifiedHandlers } from './bot/handlers/unifiedHandlers';
 import { registerAiHandlers } from './bot/handlers/aiHandlers';
+import { registerAutonomousHandlers } from './bot/handlers/autonomousHandlers';
 import { SniperManager } from './services/SniperManager';
 import { MacroCalendarService } from './services/MacroCalendarService';
+import { AutonomousOrchestrator } from './services/AutonomousOrchestrator';
 
 dotenv.config();
 
@@ -50,6 +52,15 @@ const sniperManager = new SniperManager(bingXService, async (telegramId, msg, ex
         await (bot.telegram.sendMessage as any)(telegramId, msg, extra || { parse_mode: 'Markdown' });
     } catch (error: any) {
         logger.error(`SniperManager notifier error: ${error.message}`);
+    }
+});
+
+// Initialize AutonomousOrchestrator Engine V2
+const autonomousOrchestrator = new AutonomousOrchestrator(bingXService, tradeManager, async (telegramId, msg, extra) => {
+    try {
+        await (bot.telegram.sendMessage as any)(telegramId, msg, extra || { parse_mode: 'HTML' });
+    } catch (error: any) {
+        logger.error(`Autonomous notifier error: ${error.message}`);
     }
 });
 
@@ -79,6 +90,7 @@ registerAnalysisHandlers(bot, tradeManager);
 registerUnifiedHandlers(bot, tradeManager);
 registerMessageHandlers(bot, tradeManager);
 registerAiHandlers(bot, tradeManager);
+registerAutonomousHandlers(bot, autonomousOrchestrator, tradeManager, bingXService);
 
 const start = async () => {
     await connectDB();
@@ -94,6 +106,10 @@ const start = async () => {
     // Start SniperManager
     sniperManager.start();
     logger.info('🎯 Sniper Manager Started');
+
+    // Start Autonomous Orchestrator V2
+    autonomousOrchestrator.start();
+    logger.info('🚀 Autonomous Orchestrator V2 Engine Started');
 
     // Sync Real Macro Economic Events from Global Live Feed
     MacroCalendarService.syncRealEvents().then(res => {
@@ -119,10 +135,12 @@ const start = async () => {
     // Enable graceful stop
     process.once('SIGINT', () => {
         positionMonitor.stop();
+        autonomousOrchestrator.stop();
         bot.stop('SIGINT');
     });
     process.once('SIGTERM', () => {
         positionMonitor.stop();
+        autonomousOrchestrator.stop();
         bot.stop('SIGTERM');
     });
 };

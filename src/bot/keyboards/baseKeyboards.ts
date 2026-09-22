@@ -5,6 +5,10 @@ export const getMainMenuKeyboard = (user: any) => {
     return {
         keyboard: [
             [
+                { text: '🚀 منظومة التداول الذاتي V2 (Auto/Paper)' },
+                { text: '🎮 المحفظة الافتراضية (Paper Hub)' }
+            ],
+            [
                 { text: '💰 رصيدي وملخص الأرباح' },
                 { text: '💼 صفقاتي المفتوحة' }
             ],

@@ -36,8 +36,14 @@ export interface AiOptimizationResult {
 }
 
 export class GeminiService {
+    private static rateLimitCooldownUntil: number = 0;
+
     private static getApiKey(): string {
         return process.env.GEMINI_API_KEY || '';
+    }
+
+    private static getModelName(): string {
+        return process.env.GEMINI_MODEL || 'gemini-2.5-flash';
     }
 
     /**
@@ -67,15 +73,21 @@ export class GeminiService {
     }
 
     /**
-     * Internal helper to make REST calls to Gemini API with automatic retry on 503/429
+     * Internal helper to make REST calls to Gemini API with automatic retry on 503 and cooldown on 429
      */
     private static async callGemini(prompt: string, systemInstruction?: string): Promise<string> {
+        if (Date.now() < this.rateLimitCooldownUntil) {
+            const waitSec = Math.ceil((this.rateLimitCooldownUntil - Date.now()) / 1000);
+            throw new Error(`429 - فترة تهدئة الـ AI نشطة (${waitSec} ثانية متبقية).`);
+        }
+
         const apiKey = this.getApiKey();
         if (!apiKey) {
             throw new Error('⚠️ لم يتم العثور على مفتاح GEMINI_API_KEY في ملف الـ .env. يرجى إضافته لاستخدام الذكاء الاصطناعي.');
         }
 
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${apiKey}`;
+        const model = this.getModelName();
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
         const payload: any = {
             contents: [{
@@ -95,7 +107,6 @@ export class GeminiService {
         }
 
         const MAX_RETRIES = 3;
-        const RETRYABLE_STATUSES = [429, 503];
         let lastError: Error | null = null;
 
         for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
@@ -110,14 +121,30 @@ export class GeminiService {
                     return text;
                 }
 
-                // Retryable errors: overloaded (503) or rate limit (429)
-                if (RETRYABLE_STATUSES.includes(result.status)) {
+                // Rate limit (429): Quota exhausted. Enter cooldown immediately without futile short retries
+                if (result.status === 429) {
+                    let waitSec = 60;
+                    const match = result.errorMessage?.match(/retry in ([\d\.]+)s/i);
+                    if (match && match[1]) {
+                        waitSec = Math.ceil(parseFloat(match[1])) + 2;
+                    }
+                    this.rateLimitCooldownUntil = Date.now() + (waitSec * 1000);
+                    logger.warn(
+                        `[GeminiService] ⚠️ حد طلبات Gemini المجاني مكتمل (429 Rate Limit). ` +
+                        `تفعيل التهدئة التلقائية لمدة ${waitSec} ثانية. ` +
+                        `سيتم الاعتماد على التوافق الرياضي فوراً وبدون تأخير.`
+                    );
+                    throw new Error(`Gemini API error: 429 - Quota exceeded. Cooldown active for ${waitSec}s.`);
+                }
+
+                // Temporary overload (503): Retry with exponential backoff
+                if (result.status === 503) {
                     const waitMs = Math.pow(2, attempt - 1) * 1000; // 1s, 2s, 4s
                     logger.warn(
-                        `Gemini API returned ${result.status} (attempt ${attempt}/${MAX_RETRIES}). ` +
+                        `Gemini API returned 503 (attempt ${attempt}/${MAX_RETRIES}). ` +
                         `Retrying in ${waitMs / 1000}s... Reason: ${result.errorMessage}`
                     );
-                    lastError = new Error(`Gemini API error: ${result.status} - ${result.errorMessage}`);
+                    lastError = new Error(`Gemini API error: 503 - ${result.errorMessage}`);
                     await new Promise(resolve => setTimeout(resolve, waitMs));
                     continue;
                 }
@@ -127,8 +154,10 @@ export class GeminiService {
                 throw new Error(`Gemini API error: ${result.status} - ${result.errorMessage}`);
 
             } catch (error: any) {
-                // Re-throw immediately if it's a non-retryable error we just threw
-                if (!RETRYABLE_STATUSES.some(s => error.message?.includes(String(s)))) {
+                if (error.message?.includes('429')) {
+                    throw error;
+                }
+                if (!error.message?.includes('503')) {
                     logger.error('Error in callGemini:', error);
                     throw error;
                 }
@@ -146,8 +175,19 @@ export class GeminiService {
      */
     private static parseJsonResponse<T>(text: string): T {
         try {
-            // Remove markdown wrappers if any
-            let clean = text.replace(/```json/i, '').replace(/```/g, '').trim();
+            let clean = text.trim();
+            // 1. Try markdown code block extraction
+            const codeBlockMatch = clean.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+            if (codeBlockMatch && codeBlockMatch[1]) {
+                clean = codeBlockMatch[1].trim();
+            } else {
+                // 2. Extract first '{' to last '}'
+                const firstBrace = clean.indexOf('{');
+                const lastBrace = clean.lastIndexOf('}');
+                if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+                    clean = clean.substring(firstBrace, lastBrace + 1);
+                }
+            }
             return JSON.parse(clean) as T;
         } catch (err) {
             logger.error('Failed to parse JSON response from Gemini:', text);
@@ -458,6 +498,97 @@ ${eventsJson}
         } catch (e: any) {
             logger.error('AI Macro Analysis failed:', e);
             return `⚠️ تعذر الحصول على تحليل الذكاء الاصطناعي للأخبار الاقتصادية: ${e.message}`;
+        }
+    }
+
+    /**
+     * Supreme Quantitative Audit: audits the complete Institutional Market Dossier (S/R, Fibonacci, V1-V18, Snipers)
+     */
+    static async auditQuantitativeDossier(dossier: any): Promise<{
+        approved: boolean;
+        vetoReason?: string;
+        finalDirection: 'LONG' | 'SHORT' | 'NONE';
+        confidence: number;
+        recommendedEntry: number;
+        recommendedSL: number;
+        recommendedTPs: number[];
+        auditJustification: string;
+    }> {
+        // If cooldown is active, return quantitative consensus immediately (0ms delay)
+        if (Date.now() < this.rateLimitCooldownUntil) {
+            const remainingSec = Math.ceil((this.rateLimitCooldownUntil - Date.now()) / 1000);
+            logger.info(`[GeminiService] ⏳ فترة تهدئة الـ AI نشطة (${remainingSec}s متبقية). اعتماد فوري للتوافق الرياضي (${dossier.confluenceMetrics.overallScore}%).`);
+            return {
+                approved: dossier.confluenceMetrics.overallScore >= 75 && dossier.confluenceMetrics.recommendedDirection !== 'NONE',
+                finalDirection: dossier.confluenceMetrics.recommendedDirection,
+                confidence: dossier.confluenceMetrics.overallScore,
+                recommendedEntry: dossier.confluenceMetrics.suggestedEntry,
+                recommendedSL: dossier.confluenceMetrics.suggestedSL,
+                recommendedTPs: dossier.confluenceMetrics.suggestedTPs,
+                auditJustification: `تمت المصادقة التلقائية بالاعتماد على التوافق الرياضي المباشر (${dossier.confluenceMetrics.overallScore}%) خلال فترة تهدئة الـ AI.`
+            };
+        }
+
+        const prompt = `
+أنت رئيس لجنة الاستثمار والمخاطر الكمية بصندوق تحوط رقمي مؤسساتي (Chief Quantitative Auditor & Investment Committee).
+أمامك ملف الاستخبارات الكمي الشامل (Institutional Market Dossier) لصفقة مرشحة للعملة: ${dossier.symbol}:
+
+السعر الحالي: $${dossier.currentPrice} | خط الـ VWAP المؤسساتي: $${dossier.vwap} (السعر ${dossier.isAboveVWAP ? 'فوق' : 'تحت'} الـ VWAP)
+
+1. معيار المحرك الأساسي V1:
+الاتجاه: ${dossier.v1Benchmark.direction} | قوة التوافق: ${dossier.v1Benchmark.matrixScore}% | القرار: ${dossier.v1Benchmark.decision}
+
+2. مستويات الدعم والمقاومة الكبرى (S/R Levels):
+R3: ${dossier.supportResistance.r3} | R2: ${dossier.supportResistance.r2} | R1: ${dossier.supportResistance.r1}
+Pivot: ${dossier.supportResistance.pivot}
+S1: ${dossier.supportResistance.s1} | S2: ${dossier.supportResistance.s2} | S3: ${dossier.supportResistance.s3}
+
+3. مناطق فيبوناتشي الاستراتيجية:
+الجيب الذهبي (0.618 Fib): $${dossier.fibonacci.fib618}
+الخصم المؤسساتي (0.786 Fib): $${dossier.fibonacci.fib786}
+الأهداف الامتدادية: 1.272 ($${dossier.fibonacci.fibTarget1272}) | 1.618 ($${dossier.fibonacci.fibTarget1618})
+
+4. نتائج محركات التحليل الـ 18:
+${JSON.stringify(dossier.enginesSummary.map((e: any) => `${e.engineId}: ${e.direction} (Confidence: ${e.confidence}%) - Reason: ${e.reason}`).slice(0, 10), null, 2)}
+
+5. مصفوفة زنادات القنص (Snipers):
+${JSON.stringify(dossier.snipersSummary, null, 2)}
+
+6. مقترحات حكم التوافق الرياضي:
+الاتجاه الموصى به: ${dossier.confluenceMetrics.recommendedDirection} | قوة التوافق: ${dossier.confluenceMetrics.overallScore}%
+الدخول المقترح: $${dossier.confluenceMetrics.suggestedEntry}
+الستوب المقترح: $${dossier.confluenceMetrics.suggestedSL}
+الأهداف: ${JSON.stringify(dossier.confluenceMetrics.suggestedTPs)} | نسبة RRR: ${dossier.confluenceMetrics.riskRewardRatio}
+
+المطلوب تدقيق هذه الصفقة أمنياً وفنياً والمصادقة عليها أو رفضها (Veto).
+يجب أن ترجع استجابتك بصيغة JSON حصراً بالهيكل التالي:
+{
+  "approved": true أو false (ارفض إذا كان السعر يرتطم بجدار مقاومة صلب أو تضارب صارخ مع VWAP أو مصيدة سيولة),
+  "vetoReason": "سبب الرفض إن وجد وإلا اتركها فارغة",
+  "finalDirection": "LONG" | "SHORT" | "NONE",
+  "confidence": نسبة مئوية من 0 إلى 100,
+  "recommendedEntry": رقم سعر الدخول,
+  "recommendedSL": رقم وقف الخسارة,
+  "recommendedTPs": [رقم الهدف الأول, رقم الهدف الثاني, رقم الهدف الثالث],
+  "auditJustification": "تقرير باللغة العربية يشرح سبب المصادقة مع تحليل مستويات الدعم والمقاومة وفيبوناتشي وتوافق المحركات"
+}
+`;
+
+        try {
+            const res = await this.callGemini(prompt, ALGO_GUIDELINES);
+            return this.parseJsonResponse(res);
+        } catch (e: any) {
+            logger.warn(`[GeminiService] Dossier audit failed or timed out: ${e.message}. Falling back to quantitative consensus.`);
+            // Safe mathematical fallback if AI is momentarily unreachable
+            return {
+                approved: dossier.confluenceMetrics.overallScore >= 75 && dossier.confluenceMetrics.recommendedDirection !== 'NONE',
+                finalDirection: dossier.confluenceMetrics.recommendedDirection,
+                confidence: dossier.confluenceMetrics.overallScore,
+                recommendedEntry: dossier.confluenceMetrics.suggestedEntry,
+                recommendedSL: dossier.confluenceMetrics.suggestedSL,
+                recommendedTPs: dossier.confluenceMetrics.suggestedTPs,
+                auditJustification: `تمت المصادقة التلقائية بالاعتماد على التوافق الرياضي المباشر (${dossier.confluenceMetrics.overallScore}%) لتعذر الاتصال بلجنة الذكاء الاصطناعي.`
+            };
         }
     }
 }
