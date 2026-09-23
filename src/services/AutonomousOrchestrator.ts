@@ -309,6 +309,13 @@ export class AutonomousOrchestrator {
         }
 
         // ── 3. Execution Routing based on Active Mode ───────────────────────
+        const alignedEngines = dossier.enginesSummary
+            .filter(e => e.direction === finalDirection)
+            .sort((a, b) => b.confidence - a.confidence);
+        const primaryEngine = alignedEngines.length > 0 ? alignedEngines[0].engineId : 'AUTONOMOUS_V2';
+        const engineTags = alignedEngines.map(e => e.engineId).join(', ');
+        const fullJustification = `${justification} (المحركات: ${engineTags})`;
+
         if (this.currentMode === 'PAPER_TRADING') {
             // A. Paper Sandbox Execution
             await this.paperEngine.executePaperTrade({
@@ -320,8 +327,8 @@ export class AutonomousOrchestrator {
                 targets: finalTargets,
                 riskPercentage: 1.5,
                 leverage: 10,
-                engineId: 'AUTONOMOUS_V2',
-                aiJustification: justification
+                engineId: primaryEngine,
+                aiJustification: fullJustification
             });
         } else if (this.currentMode === 'SEMI_AUTO') {
             // B. Semi-Autonomous Confirmation Card (Interactive Telegram Button)

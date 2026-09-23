@@ -17,36 +17,50 @@ export class TradingMemoryService {
      * Updates adaptive memory after a trade closes
      */
     static async recordTradeResult(trade: ITrade): Promise<void> {
-        if (!trade.engineId) return;
-
         try {
-            const isProfit = trade.currentStatus === 'CLOSED_PROFIT' || (trade.pnl && trade.pnl > 0);
-            logger.info(`[TradingMemory] Recording trade result for ${trade.symbol} (${trade.engineId}): ${isProfit ? 'PROFIT ✅' : 'LOSS 🛑'}`);
+            const enginesToUpdate = new Set<string>();
+            if (trade.engineId) enginesToUpdate.add(trade.engineId);
+            enginesToUpdate.add('AUTONOMOUS_V2');
 
-            // Update rolling stats from DB for this engine
-            const pastTrades = await Trade.find({
-                engineId: trade.engineId,
-                currentStatus: { $in: ['CLOSED_PROFIT', 'CLOSED_LOSS'] }
-            }).limit(50);
+            // Detect any participating engines mentioned in justification
+            const textToScan = `${trade.aiJustification || ''} ${trade.logs ? trade.logs.join(' ') : ''}`;
+            const knownEngines = ['V1', 'V2', 'V3', 'V5', 'V6', 'V7', 'V8', 'V10', 'V11', 'V13', 'V16', 'V17', 'V18', 'HARMONIC'];
+            for (const eng of knownEngines) {
+                if (new RegExp(`\\b${eng}\\b`, 'i').test(textToScan)) {
+                    enginesToUpdate.add(eng);
+                }
+            }
 
-            const wins = pastTrades.filter(t => t.currentStatus === 'CLOSED_PROFIT' || (t.pnl && t.pnl > 0)).length;
-            const total = pastTrades.length;
-            const winRate = total > 0 ? (wins / total) * 100 : 50;
+            for (const eng of enginesToUpdate) {
+                const pastTrades = await Trade.find({
+                    $or: [
+                        { engineId: eng },
+                        ...(eng === 'AUTONOMOUS_V2' ? [{ isPaperTrade: true }] : [{ aiJustification: new RegExp(`\\b${eng}\\b`, 'i') }])
+                    ],
+                    currentStatus: { $in: ['CLOSED_PROFIT', 'CLOSED_LOSS'] }
+                }).limit(50);
 
-            // Dynamic weight: base 1.0, scaled up to 1.4 for > 65% winrate, or down to 0.7 for < 45% winrate
-            let weight = 1.0;
-            if (winRate >= 70) weight = 1.4;
-            else if (winRate >= 60) weight = 1.2;
-            else if (winRate < 45) weight = 0.75;
+                const wins = pastTrades.filter(t => t.currentStatus === 'CLOSED_PROFIT' || (t.realizedPnl && t.realizedPnl > 0)).length;
+                const total = pastTrades.length;
+                const winRate = total > 0 ? (wins / total) * 100 : 50;
 
-            this.engineStatsCache.set(trade.engineId, {
-                engineId: trade.engineId,
-                totalSignals: total,
-                winningSignals: wins,
-                losingSignals: total - wins,
-                winRate: Number(winRate.toFixed(1)),
-                dynamicWeight: weight
-            });
+                let weight = 1.0;
+                if (total > 0) {
+                    if (winRate >= 70) weight = 1.4;
+                    else if (winRate >= 60) weight = 1.2;
+                    else if (winRate < 45) weight = 0.75;
+                }
+
+                this.engineStatsCache.set(eng, {
+                    engineId: eng,
+                    totalSignals: total,
+                    winningSignals: wins,
+                    losingSignals: total - wins,
+                    winRate: Number(winRate.toFixed(1)),
+                    dynamicWeight: weight
+                });
+            }
+            logger.info(`[TradingMemory] Adaptive stats updated for engines: ${Array.from(enginesToUpdate).join(', ')}`);
         } catch (e: any) {
             logger.error(`[TradingMemory] Error recording trade result: ${e.message}`);
         }
@@ -64,7 +78,7 @@ export class TradingMemoryService {
      * Gets performance records for all active engines
      */
     static getAllEngineStats(): EnginePerformanceRecord[] {
-        const engines = ['V1', 'V3', 'V5', 'V10', 'V11', 'V13', 'V17', 'V18', 'HARMONIC'];
+        const engines = ['AUTONOMOUS_V2', 'V1', 'V2', 'V3', 'V5', 'V6', 'V7', 'V8', 'V10', 'V11', 'V13', 'V16', 'V17', 'V18', 'HARMONIC'];
         return engines.map(eng => {
             const cached = this.engineStatsCache.get(eng);
             if (cached) return cached;
@@ -84,15 +98,18 @@ export class TradingMemoryService {
      */
     static async initFromDb(): Promise<void> {
         try {
-            const engines = ['V1', 'V3', 'V5', 'V10', 'V11', 'V13', 'V17', 'V18', 'HARMONIC', 'AUTONOMOUS_V2'];
+            const engines = ['AUTONOMOUS_V2', 'V1', 'V2', 'V3', 'V5', 'V6', 'V7', 'V8', 'V10', 'V11', 'V13', 'V16', 'V17', 'V18', 'HARMONIC'];
             for (const eng of engines) {
                 const pastTrades = await Trade.find({
-                    engineId: eng,
+                    $or: [
+                        { engineId: eng },
+                        ...(eng === 'AUTONOMOUS_V2' ? [{ isPaperTrade: true }] : [{ aiJustification: new RegExp(`\\b${eng}\\b`, 'i') }])
+                    ],
                     currentStatus: { $in: ['CLOSED_PROFIT', 'CLOSED_LOSS'] }
                 }).limit(50);
 
                 if (pastTrades.length > 0) {
-                    const wins = pastTrades.filter(t => t.currentStatus === 'CLOSED_PROFIT' || (t.pnl && t.pnl > 0)).length;
+                    const wins = pastTrades.filter(t => t.currentStatus === 'CLOSED_PROFIT' || (t.realizedPnl && t.realizedPnl > 0)).length;
                     const total = pastTrades.length;
                     const winRate = Number(((wins / total) * 100).toFixed(1));
                     let weight = 1.0;

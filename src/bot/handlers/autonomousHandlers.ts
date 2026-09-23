@@ -584,11 +584,12 @@ async function renderPaperHistory(ctx: any, orchestrator: AutonomousOrchestrator
     let msg = `📜 <b>سجل الصفقات الافتراضية السابقة (${totalClosed} صفقة مسجلة):</b>\n`;
     msg += `📄 <i>الصفحة ${page} من ${totalPages}</i>\n`;
     msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
-
     for (const t of trades) {
-        const isWin = (t.pnl || 0) >= 0;
+        const margin = (t.amount && t.leverage) ? (t.amount / t.leverage).toFixed(2) : '10.00';
+        const realizedVal = t.realizedPnl !== undefined ? t.realizedPnl : (margin ? parseFloat(margin) * ((t.pnl || 0) / 100) : (t.pnl || 0));
+        const isWin = realizedVal > 0 || (realizedVal === 0 && (t.pnl || 0) >= 0);
         const statusBadge = isWin ? '🟢 ربح' : '🔴 خسارة';
-        const pnlSign = isWin ? '+' : '';
+        const pnlSign = (t.pnl || 0) >= 0 ? '+' : '';
         const entryStr = t.entryTime ? new Date(t.entryTime).toLocaleString('ar-EG', { timeZone: 'UTC', hour12: false }) : 'غير محدد';
         const closeStr = t.closeTime ? new Date(t.closeTime).toLocaleString('ar-EG', { timeZone: 'UTC', hour12: false }) : 'غير محدد';
 
@@ -621,10 +622,9 @@ async function renderPaperHistory(ctx: any, orchestrator: AutonomousOrchestrator
             exitPriceStr = String(t.stopLoss);
         }
 
-        const margin = (t.amount && t.leverage) ? (t.amount / t.leverage).toFixed(2) : '10.00';
         const realizedText = t.realizedPnl !== undefined
             ? `${t.realizedPnl >= 0 ? '+' : ''}$${t.realizedPnl.toFixed(2)} USDT`
-            : `${pnlSign}${(margin ? (parseFloat(margin) * (t.pnl / 100)).toFixed(2) : '0.00')} USDT`;
+            : `${pnlSign}${(margin ? (parseFloat(margin) * ((t.pnl || 0) / 100)).toFixed(2) : '0.00')} USDT`;
 
         msg += `${isWin ? '🟢' : '🔴'} <b>${t.symbol}</b> | <b>${t.direction}</b> [${statusBadge}]\n`;
         msg += `   • ⚡ <b>الرافعة المالية:</b> <code>${t.leverage || 10}x</code>\n`;
@@ -742,10 +742,14 @@ async function renderEngineWeightsHub(ctx: any, orchestrator: AutonomousOrchestr
     msg += `تتعلم المنظومة ذاتياً من نتائج آخر 50 صفقة؛ فيتم رفع وزن المحرك الأكثر ربحية حتى <b>1.4x</b> وخفض المحرك المتراجع حتى <b>0.75x</b>:\n\n`;
 
     stats.forEach(rec => {
+        let title = `محرك [${rec.engineId}]`;
+        if (rec.engineId === 'AUTONOMOUS_V2') {
+            title = '👑 المحرك الذاتي الشامل [AUTONOMOUS V2]';
+        }
         const weightEmoji = rec.dynamicWeight >= 1.2 ? '🔥' : rec.dynamicWeight < 1.0 ? '❄️' : '⚡';
-        msg += `${weightEmoji} <b>محرك [${rec.engineId}]:</b>\n`;
+        msg += `${weightEmoji} <b>${title}:</b>\n`;
         msg += `   • الوزن الديناميكي: <code>${rec.dynamicWeight}x</code>\n`;
-        msg += `   • نسبة الفوز: <code>${rec.winRate}%</code> (رابحة: ${rec.winningSignals} / إجمالي: ${rec.totalSignals})\n`;
+        msg += `   • نسبة النجاح: <code>${rec.winRate}%</code> (رابحة: ${rec.winningSignals} / إجمالي: ${rec.totalSignals})\n\n`;
     });
 
     msg += `━━━━━━━━━━━━━━━━━━━━━\n`;

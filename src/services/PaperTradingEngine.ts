@@ -3,6 +3,7 @@ import Trade, { ITrade } from '../models/Trade';
 import User from '../models/User';
 import logger from '../utils/logger';
 import { BingXService } from './BingXService';
+import { TradingMemoryService } from './TradingMemoryService';
 
 export interface PaperPerformanceStats {
     initialBalance: number;
@@ -88,13 +89,53 @@ export class PaperTradingEngine {
         // Deduct taker fee
         const entryFee = positionNotional * (PaperTradingEngine.TAKER_FEE_PCT / 100);
 
+        // Sanitize Stop Loss and Targets
+        const isLong = params.direction === 'LONG';
+        const defaultRiskPct = 0.015;
+        let safeSL = params.stopLoss;
+
+        if (isLong) {
+            if (!safeSL || safeSL >= actualEntryPrice) {
+                safeSL = Number((actualEntryPrice * (1 - defaultRiskPct)).toFixed(6));
+            }
+        } else {
+            if (!safeSL || safeSL <= actualEntryPrice) {
+                safeSL = Number((actualEntryPrice * (1 + defaultRiskPct)).toFixed(6));
+            }
+        }
+
+        const riskDist = Math.abs(actualEntryPrice - safeSL);
+        let safeTargets: number[] = [];
+
+        if (params.targets && params.targets.length > 0) {
+            if (isLong) {
+                safeTargets = params.targets.filter(p => p > actualEntryPrice).sort((a, b) => a - b);
+            } else {
+                safeTargets = params.targets.filter(p => p < actualEntryPrice).sort((a, b) => b - a);
+            }
+        }
+
+        if (safeTargets.length === 0) {
+            safeTargets = isLong
+                ? [
+                    Number((actualEntryPrice + riskDist * 1.5).toFixed(6)),
+                    Number((actualEntryPrice + riskDist * 2.5).toFixed(6)),
+                    Number((actualEntryPrice + riskDist * 4.0).toFixed(6))
+                ]
+                : [
+                    Number((actualEntryPrice - riskDist * 1.5).toFixed(6)),
+                    Number((actualEntryPrice - riskDist * 2.5).toFixed(6)),
+                    Number((actualEntryPrice - riskDist * 4.0).toFixed(6))
+                ];
+        }
+
         const paperTrade = new Trade({
             userId: userObjectId,
             symbol: params.symbol,
             direction: params.direction,
             entryPrice: actualEntryPrice,
-            stopLoss: params.stopLoss,
-            targets: params.targets.map(t => ({ price: t, hit: false })),
+            stopLoss: safeSL,
+            targets: safeTargets.map(t => ({ price: t, hit: false })),
             currentStatus: 'OPEN',
             amount: positionNotional,
             leverage,
@@ -136,26 +177,30 @@ export class PaperTradingEngine {
                 const slHit = isLong ? (currentPrice <= trade.stopLoss) : (currentPrice >= trade.stopLoss);
                 if (slHit) {
                     const exitFee = trade.amount * (PaperTradingEngine.TAKER_FEE_PCT / 100);
-                    const diffPct = isLong ? (trade.stopLoss - entry) / entry : (entry - trade.stopLoss) / entry;
-                    const lossAmount = (margin * diffPct * lev) - exitFee - (trade.commissionPaid || 0);
-                    const pnlPct = (lossAmount / margin) * 100;
+                    const priceDiff = isLong ? (currentPrice - entry) : (entry - currentPrice);
+                    const grossPnl = (priceDiff / entry) * trade.amount;
+                    const netPnl = grossPnl - exitFee - (trade.commissionPaid || 0);
+                    const pnlPct = (netPnl / margin) * 100;
 
-                    trade.currentStatus = 'CLOSED_LOSS';
+                    trade.currentStatus = netPnl >= 0 ? 'CLOSED_PROFIT' : 'CLOSED_LOSS';
                     trade.closeTime = new Date();
                     trade.exitPrice = currentPrice;
                     trade.pnl = pnlPct;
-                    trade.realizedPnl = lossAmount;
+                    trade.realizedPnl = netPnl;
                     trade.commissionPaid = (trade.commissionPaid || 0) + exitFee;
-                    trade.logs.push(`[PaperTrading] SL hit at ${currentPrice}. Realized loss: $${lossAmount.toFixed(2)}`);
+                    trade.logs.push(`[PaperTrading] SL hit at ${currentPrice}. Realized: $${netPnl.toFixed(2)} (${pnlPct.toFixed(2)}%)`);
                     await trade.save();
-                    logger.info(`[PaperTrading] ${trade.symbol} hit SL at ${currentPrice}. Closed.`);
+                    await TradingMemoryService.recordTradeResult(trade);
+                    logger.info(`[PaperTrading] ${trade.symbol} hit SL at ${currentPrice}. Status: ${trade.currentStatus} (${netPnl.toFixed(2)} USDT)`);
                     continue;
                 }
 
                 // 2. Check Take Profit Hits
                 if (trade.targets && trade.targets.length > 0) {
                     const tp1 = trade.targets[0].price;
-                    const tp1Hit = isLong ? (currentPrice >= tp1) : (currentPrice <= tp1);
+                    const tp1Hit = isLong
+                        ? (currentPrice >= tp1 && currentPrice > entry)
+                        : (currentPrice <= tp1 && currentPrice < entry);
 
                     if (tp1Hit && !trade.isBreakEvenSet) {
                         // Move SL to Entry (Break Even)
@@ -170,22 +215,28 @@ export class PaperTradingEngine {
 
                     // Check Final Target (Full Profit)
                     const lastTarget = trade.targets[trade.targets.length - 1].price;
-                    const finalHit = isLong ? (currentPrice >= lastTarget) : (currentPrice <= lastTarget);
+                    const finalHit = isLong
+                        ? (currentPrice >= lastTarget && currentPrice > entry)
+                        : (currentPrice <= lastTarget && currentPrice < entry);
+
                     if (finalHit) {
                         const exitFee = trade.amount * (PaperTradingEngine.MAKER_FEE_PCT / 100);
-                        const diffPct = isLong ? (lastTarget - entry) / entry : (entry - lastTarget) / entry;
-                        const profitAmount = (margin * diffPct * lev) - exitFee - (trade.commissionPaid || 0);
-                        const pnlPct = (profitAmount / margin) * 100;
+                        const priceDiff = isLong ? (currentPrice - entry) : (entry - currentPrice);
+                        const grossPnl = (priceDiff / entry) * trade.amount;
+                        const netPnl = grossPnl - exitFee - (trade.commissionPaid || 0);
+                        const pnlPct = (netPnl / margin) * 100;
 
-                        trade.currentStatus = 'CLOSED_PROFIT';
+                        trade.currentStatus = netPnl >= 0 ? 'CLOSED_PROFIT' : 'CLOSED_LOSS';
                         trade.closeTime = new Date();
                         trade.exitPrice = currentPrice;
                         trade.pnl = pnlPct;
-                        trade.realizedPnl = profitAmount;
+                        trade.realizedPnl = netPnl;
                         trade.commissionPaid = (trade.commissionPaid || 0) + exitFee;
-                        trade.logs.push(`[PaperTrading] Final TP hit at ${currentPrice}! Realized profit: $${profitAmount.toFixed(2)}`);
+                        trade.targets.forEach(t => t.hit = true);
+                        trade.logs.push(`[PaperTrading] Final TP hit at ${currentPrice}! Realized: $${netPnl.toFixed(2)} (${pnlPct.toFixed(2)}%)`);
                         await trade.save();
-                        logger.info(`[PaperTrading] ${trade.symbol} closed with full profit at ${currentPrice}.`);
+                        await TradingMemoryService.recordTradeResult(trade);
+                        logger.info(`[PaperTrading] ${trade.symbol} closed with Final TP at ${currentPrice}. Status: ${trade.currentStatus} (${netPnl.toFixed(2)} USDT)`);
                     }
                 }
             }

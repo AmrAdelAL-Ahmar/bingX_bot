@@ -319,15 +319,38 @@ export class EngineConfluenceArbiter {
             ? quickCandles[quickCandles.length - 1].close * 0.008
             : currentPrice * 0.008;
 
-        const suggestedSL = recDir === 'LONG'
-            ? (slCandidates.length > 0 ? Math.max(...slCandidates) : currentPrice - (atr15m * 1.5))
-            : (slCandidates.length > 0 ? Math.min(...slCandidates) : currentPrice + (atr15m * 1.5));
+        const defaultSlDist = Math.max(atr15m * 1.5, currentPrice * 0.012);
 
-        const tp1 = recDir === 'LONG' ? currentPrice + (Math.abs(currentPrice - suggestedSL) * 1.5) : currentPrice - (Math.abs(currentPrice - suggestedSL) * 1.5);
-        const tp2 = recDir === 'LONG' ? currentPrice + (Math.abs(currentPrice - suggestedSL) * 2.5) : currentPrice - (Math.abs(currentPrice - suggestedSL) * 2.5);
-        const tp3 = recDir === 'LONG' ? fibZones.fibTarget1272 : fibZones.fib786;
+        // Filter SL candidates that strictly match the recommended trade direction
+        const validSlCandidates = slCandidates.filter(sl => {
+            if (recDir === 'LONG') return sl < currentPrice * 0.998;
+            if (recDir === 'SHORT') return sl > currentPrice * 1.002;
+            return false;
+        });
 
-        const riskDist = Math.abs(currentPrice - suggestedSL);
+        let suggestedSL: number;
+        if (recDir === 'LONG') {
+            suggestedSL = validSlCandidates.length > 0
+                ? Math.max(...validSlCandidates)
+                : currentPrice - defaultSlDist;
+            // Strict bound: SL must always be below entry
+            if (suggestedSL >= currentPrice) suggestedSL = currentPrice - defaultSlDist;
+        } else {
+            suggestedSL = validSlCandidates.length > 0
+                ? Math.min(...validSlCandidates)
+                : currentPrice + defaultSlDist;
+            // Strict bound: SL must always be above entry
+            if (suggestedSL <= currentPrice) suggestedSL = currentPrice + defaultSlDist;
+        }
+
+        const riskDist = Math.max(Math.abs(currentPrice - suggestedSL), currentPrice * 0.008);
+
+        const tp1 = recDir === 'LONG' ? currentPrice + (riskDist * 1.5) : currentPrice - (riskDist * 1.5);
+        const tp2 = recDir === 'LONG' ? currentPrice + (riskDist * 2.5) : currentPrice - (riskDist * 2.5);
+        const tp3 = recDir === 'LONG'
+            ? (fibZones.fibTarget1272 > tp2 ? fibZones.fibTarget1272 : currentPrice + (riskDist * 4.0))
+            : (fibZones.fib786 < tp2 ? fibZones.fib786 : currentPrice - (riskDist * 4.0));
+
         const rewardDist = Math.abs(tp1 - currentPrice);
         const rrr = riskDist > 0 ? Number((rewardDist / riskDist).toFixed(2)) : 1.5;
 

@@ -10,6 +10,7 @@ import logger from '../utils/logger';
 import { getRadarEngine } from '../core/radar/RadarEngineRegistry';
 import { FrozenPairsRegistry } from '../utils/FrozenPairsRegistry';
 import { OHLCV, AnalysisDetails } from '../core/shared/types';
+import { TradingMemoryService } from './TradingMemoryService';
 
 export class PositionMonitor {
     private bingx: BingXService;
@@ -341,6 +342,7 @@ export class PositionMonitor {
                         trade.pnl = pnlPercent;
                         trade.logs.push(`Position monitor detected close. PnL: ${pnlPercent.toFixed(2)}%`);
                         await trade.save();
+                        await TradingMemoryService.recordTradeResult(trade);
 
                         // --- Enhanced Exit Notification ---
                         if (telegramId) {
