@@ -37,7 +37,7 @@ export class TradingMemoryService {
                         { engineId: eng },
                         ...(eng === 'AUTONOMOUS_V2' ? [{ isPaperTrade: true }] : [{ aiJustification: new RegExp(`\\b${eng}\\b`, 'i') }])
                     ],
-                    currentStatus: { $in: ['CLOSED_PROFIT', 'CLOSED_LOSS'] }
+                    currentStatus: { $in: ['CLOSED_PROFIT', 'CLOSED_LOSS', 'CLOSED_TP', 'CLOSED_SL'] }
                 }).limit(50);
 
                 const wins = pastTrades.filter(t => t.currentStatus === 'CLOSED_PROFIT' || (t.realizedPnl && t.realizedPnl > 0)).length;
@@ -105,7 +105,7 @@ export class TradingMemoryService {
                         { engineId: eng },
                         ...(eng === 'AUTONOMOUS_V2' ? [{ isPaperTrade: true }] : [{ aiJustification: new RegExp(`\\b${eng}\\b`, 'i') }])
                     ],
-                    currentStatus: { $in: ['CLOSED_PROFIT', 'CLOSED_LOSS'] }
+                    currentStatus: { $in: ['CLOSED_PROFIT', 'CLOSED_LOSS', 'CLOSED_TP', 'CLOSED_SL'] }
                 }).limit(50);
 
                 if (pastTrades.length > 0) {

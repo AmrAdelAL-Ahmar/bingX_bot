@@ -22,7 +22,7 @@ export interface PaperPerformanceStats {
 }
 
 export class PaperTradingEngine {
-    private static DEFAULT_INITIAL_BALANCE = 1000; // 1,000 USDT
+    public static initialBalance = 1000; // Default 1,000 USDT (Configurable)
     public static MAKER_FEE_PCT = 0.02; // 0.02%
     public static TAKER_FEE_PCT = 0.05; // 0.05%
     public static SIMULATED_SLIPPAGE_PCT = 0.04; // 0.04%
@@ -69,7 +69,7 @@ export class PaperTradingEngine {
     }): Promise<ITrade> {
         const userObjectId = await this.resolveUserObjectId(params.userId);
         const stats = await this.getPerformanceStats(userObjectId ? userObjectId.toString() : undefined);
-        const balance = stats.currentBalance > 0 ? stats.currentBalance : PaperTradingEngine.DEFAULT_INITIAL_BALANCE;
+        const balance = stats.currentBalance > 0 ? stats.currentBalance : PaperTradingEngine.initialBalance;
 
         const riskPct = params.riskPercentage || 1.5; // Default 1.5%
         const leverage = params.leverage || 10;
@@ -202,6 +202,27 @@ export class PaperTradingEngine {
                         ? (currentPrice >= tp1 && currentPrice > entry)
                         : (currentPrice <= tp1 && currentPrice < entry);
 
+                    if (trade.targets.length === 1 && tp1Hit) {
+                        const exitFee = trade.amount * (PaperTradingEngine.MAKER_FEE_PCT / 100);
+                        const priceDiff = isLong ? (currentPrice - entry) : (entry - currentPrice);
+                        const grossPnl = (priceDiff / entry) * trade.amount;
+                        const netPnl = grossPnl - exitFee - (trade.commissionPaid || 0);
+                        const pnlPct = (netPnl / margin) * 100;
+
+                        trade.currentStatus = netPnl >= 0 ? 'CLOSED_PROFIT' : 'CLOSED_LOSS';
+                        trade.closeTime = new Date();
+                        trade.exitPrice = currentPrice;
+                        trade.pnl = pnlPct;
+                        trade.realizedPnl = netPnl;
+                        trade.commissionPaid = (trade.commissionPaid || 0) + exitFee;
+                        trade.targets[0].hit = true;
+                        trade.logs.push(`[PaperTrading] Target 1 reached at ${currentPrice} (Single TP Mode)! Realized: $${netPnl.toFixed(2)} (${pnlPct.toFixed(2)}%)`);
+                        await trade.save();
+                        await TradingMemoryService.recordTradeResult(trade);
+                        logger.info(`[PaperTrading] ${trade.symbol} closed with single TP at ${currentPrice}. Status: ${trade.currentStatus} (${netPnl.toFixed(2)} USDT)`);
+                        continue;
+                    }
+
                     if (tp1Hit && !trade.isBreakEvenSet) {
                         // Move SL to Entry (Break Even)
                         trade.stopLoss = entry;
@@ -277,7 +298,7 @@ export class PaperTradingEngine {
         let losses = 0;
         const returns: number[] = [];
 
-        let runningBalance = PaperTradingEngine.DEFAULT_INITIAL_BALANCE;
+        let runningBalance = PaperTradingEngine.initialBalance;
         let peakBalance = runningBalance;
         let maxDrawdownUSDT = 0;
 
@@ -305,7 +326,7 @@ export class PaperTradingEngine {
         const winRate = totalTrades > 0 ? Number(((wins / totalTrades) * 100).toFixed(1)) : 0;
         const profitFactor = grossLoss > 0 ? Number((grossProfit / grossLoss).toFixed(2)) : (grossProfit > 0 ? 99 : 0);
         const netProfitUSDT = Number((grossProfit - grossLoss).toFixed(2));
-        const netProfitPercent = Number(((netProfitUSDT / PaperTradingEngine.DEFAULT_INITIAL_BALANCE) * 100).toFixed(2));
+        const netProfitPercent = Number(((netProfitUSDT / PaperTradingEngine.initialBalance) * 100).toFixed(2));
         const maxDrawdownPct = peakBalance > 0 ? Number(((maxDrawdownUSDT / peakBalance) * 100).toFixed(2)) : 0;
 
         // Sharpe Ratio Calculation (assumed risk-free rate = 0)
@@ -320,7 +341,7 @@ export class PaperTradingEngine {
         }
 
         return {
-            initialBalance: PaperTradingEngine.DEFAULT_INITIAL_BALANCE,
+            initialBalance: PaperTradingEngine.initialBalance,
             currentBalance: Number(runningBalance.toFixed(2)),
             totalTrades,
             winningTrades: wins,
@@ -337,12 +358,15 @@ export class PaperTradingEngine {
     }
 
     /**
-     * Resets the paper trading sandbox history and restores 1,000 USDT virtual balance
+     * Resets the paper trading sandbox history and restores virtual balance
      */
-    async resetAccount(userId?: string): Promise<void> {
+    async resetAccount(userId?: string, newBalance?: number): Promise<void> {
+        if (newBalance && newBalance > 0) {
+            PaperTradingEngine.initialBalance = newBalance;
+        }
         const query: any = { isPaperTrade: true };
         if (userId) query.userId = userId;
         await Trade.deleteMany(query);
-        logger.info(`[PaperTradingEngine] Reset paper sandbox trades for user: ${userId || 'ALL'}`);
+        logger.info(`[PaperTradingEngine] Reset paper sandbox trades for user: ${userId || 'ALL'}. Starting capital set to: ${PaperTradingEngine.initialBalance} USDT`);
     }
 }

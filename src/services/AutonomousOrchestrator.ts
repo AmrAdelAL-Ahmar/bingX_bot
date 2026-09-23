@@ -35,6 +35,8 @@ export class AutonomousOrchestrator {
     public minConfluenceScore: number = 70;
     public maxConcurrentTrades: number = 3;
     public maxNewTradesPerCycle: number = 1;
+    public tradeStyle: 'HYBRID' | 'SCALP' | 'SWING' = 'HYBRID';
+    public tpExecutionMode: 'single' | 'multiple' = 'multiple';
 
     constructor(
         private bingx: BingXService,
@@ -195,9 +197,13 @@ export class AutonomousOrchestrator {
                     const mtfOHLCV: Record<string, OHLCV[]> = {};
                     fetchResults.forEach(r => mtfOHLCV[r.tf] = r.ohlcv);
 
+                    const quickTF = this.tradeStyle === 'SCALP' ? '5m' : '15m';
+                    const longTF = this.tradeStyle === 'SWING' ? '4h' : (this.tradeStyle === 'SCALP' ? '15m' : '1h');
+
                     const dossier = EngineConfluenceArbiter.buildDossier(fullSymbol, pricePrecision, mtfOHLCV, {
-                        quickTF: '15m',
-                        longTF: '1h'
+                        quickTF,
+                        longTF,
+                        tradeStyle: this.tradeStyle
                     });
 
                     const score = dossier.confluenceMetrics.overallScore;
@@ -299,6 +305,11 @@ export class AutonomousOrchestrator {
             finalStopLoss = audit.recommendedSL || finalStopLoss;
             finalTargets = audit.recommendedTPs && audit.recommendedTPs.length > 0 ? audit.recommendedTPs : finalTargets;
             justification = audit.auditJustification || justification;
+        }
+
+        // Apply single or multiple target mode
+        if (this.tpExecutionMode === 'single' && finalTargets.length > 0) {
+            finalTargets = [finalTargets[0]];
         }
 
         // 2. Portfolio Heat & Correlation Guard (Aware of Paper and Live trades)

@@ -154,10 +154,11 @@ export class EngineConfluenceArbiter {
         symbol: string,
         pricePrecision: number,
         mtfOHLCV: Record<string, OHLCV[]>,
-        options: { quickTF?: string; longTF?: string } = {}
+        options: { quickTF?: string; longTF?: string; tradeStyle?: 'HYBRID' | 'SCALP' | 'SWING' } = {}
     ): InstitutionalMarketDossier {
         const quickTF = options.quickTF || '15m';
         const longTF = options.longTF || '1h';
+        const tradeStyle = options.tradeStyle || 'HYBRID';
 
         const quickCandles = mtfOHLCV[quickTF] || mtfOHLCV['15m'] || mtfOHLCV['5m'] || [];
         const dailyCandles = mtfOHLCV['1d'] || [];
@@ -214,7 +215,11 @@ export class EngineConfluenceArbiter {
                     limit: 200
                 });
 
-                const activeRec = res.scalp.type !== 'NONE' ? res.scalp : (res.swing.type !== 'NONE' ? res.swing : null);
+                const activeRec = tradeStyle === 'SCALP'
+                    ? (res.scalp.type !== 'NONE' ? res.scalp : null)
+                    : tradeStyle === 'SWING'
+                        ? (res.swing.type !== 'NONE' ? res.swing : null)
+                        : (res.scalp.type !== 'NONE' ? res.scalp : (res.swing.type !== 'NONE' ? res.swing : null));
                 const dir: 'LONG' | 'SHORT' | 'NONE' = activeRec ? activeRec.type : 'NONE';
                 const weight = ENGINE_WEIGHTS[engId] || 1.0;
 

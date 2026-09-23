@@ -9,6 +9,7 @@ import { EngineConfluenceArbiter } from '../../core/analysis/EngineConfluenceArb
 import { MATRIX_TFS } from '../../core/analysis/TechnicalAnalyzer';
 import { OHLCV } from '../../core/shared/types';
 import { GeminiService } from '../../services/GeminiService';
+import { PaperTradingEngine } from '../../services/PaperTradingEngine';
 import User from '../../models/User';
 import Trade from '../../models/Trade';
 import { getMainMenuKeyboard } from '../keyboards/baseKeyboards';
@@ -58,6 +59,27 @@ export const registerAutonomousHandlers = (
         }
     });
 
+    bot.command(['set_paper_balance', 'paper_balance', 'paper_capital'], async (ctx) => {
+        try {
+            const text = ctx.message?.text || '';
+            const parts = text.split(/\s+/).filter(Boolean);
+            if (parts.length >= 2) {
+                const amount = parseFloat(parts[1]);
+                if (isNaN(amount) || amount <= 0) {
+                    return ctx.reply('⚠️ الرجاء إدخال مبلغ صحيح لرأس المال، مثال:\n<code>/set_paper_balance 1500</code>', { parse_mode: 'HTML' });
+                }
+                await orchestrator.getPaperEngine().resetAccount(undefined, amount);
+                await ctx.reply(`✅ <b>تم تصفير السجل الافتراضي وتعيين رأس المال الأولي إلى: $${amount.toLocaleString()} USDT والبدء من جديد!</b>`, { parse_mode: 'HTML' });
+                await renderPaperStats(ctx, orchestrator);
+            } else {
+                await renderPaperBalancePicker(ctx);
+            }
+        } catch (e: any) {
+            logger.error('Error in /set_paper_balance command:', e);
+            ctx.reply('❌ حدث خطأ أثناء ضبط رأس المال الافتراضي.');
+        }
+    });
+
     bot.command(['paper_trades', 'paper_active'], async (ctx) => {
         try {
             await renderOpenPaperTrades(ctx, orchestrator);
@@ -101,7 +123,37 @@ export const registerAutonomousHandlers = (
         }
     });
 
-    // ── 3. Navigation Callbacks ──────────────────────────────────────────────
+    bot.command(['help', 'commands', 'all_commands'], async (ctx) => {
+        try {
+            const helpMsg =
+                `📜 <b>دليل أوامر البوت الشامل (اضغط على أي أمر لنسخه):</b>\n` +
+                `━━━━━━━━━━━━━━━━━━━━━\n\n` +
+                `🚀 <b>منظومة التداول الذاتي والمحاكاة:</b>\n` +
+                `• <code>/auto</code> — لوحة القيادة لمنظومة التداول الذاتي V2\n` +
+                `• <code>/paper</code> — لوحة المحفظة الافتراضية وإحصائياتها\n` +
+                `• <code>/paper_trades</code> — الصفقات الافتراضية المفتوحة الآن\n` +
+                `• <code>/paper_history</code> — سجل الصفقات الافتراضية المغلقة\n` +
+                `• <code>/set_paper_balance 100</code> — تحديد رأس مال افتراضي وتصفير السجل\n` +
+                `• <code>/analyze BTC</code> — الفحص والتحليل الرياضي لأي عملة\n` +
+                `• <code>/engines</code> — ميزان أداء وتقييم المحركات والذاكرة\n\n` +
+                `💼 <b>إدارة الحساب الحقيقي والمنصة (BingX):</b>\n` +
+                `• <code>/status</code> — الصفقات والمراكز الحية النشطة في المنصة\n` +
+                `• <code>/balance</code> — الاستعلام عن رصيد حساب BingX الحقيقي\n` +
+                `• <code>/macro</code> — رادار الأخبار الكلية وأوقات التوقف\n` +
+                `• <code>/heat</code> — فحص حرارة المحفظة وترابط الصفقات\n` +
+                `• <code>/circuit_breaker</code> — نظام قاطع الدائرة للحماية من التراجع\n` +
+                `• <code>/panic</code> — 🚨 إغلاق فوري لجميع المراكز وإلغاء الأوامر\n` +
+                `• <code>/menu</code> — العودة للقائمة الرئيسية للبوت\n` +
+                `━━━━━━━━━━━━━━━━━━━━━\n` +
+                `💡 <i>يمكنك الضغط على أي أمر مكتوب داخل المربع لنسخه واستخدامه فوراً.</i>`;
+
+            await ctx.replyWithHTML(helpMsg);
+        } catch (e: any) {
+            logger.error('Error in /help command:', e);
+            ctx.reply('❌ حدث خطأ أثناء عرض قائمة الأوامر.');
+        }
+    });
+
     bot.action(['menu_autonomous', 'aut_main_menu'], async (ctx) => {
         try {
             await ctx.answerCbQuery().catch(() => {});
@@ -164,6 +216,61 @@ export const registerAutonomousHandlers = (
         orchestrator.currentMode = 'FULL_AUTO';
         await ctx.answerCbQuery('⚠️ تم تفعيل نمط التداول التلقائي الكامل على الحساب الحقيقي').catch(() => {});
         await renderAutonomousDashboard(ctx, orchestrator, true);
+    });
+
+    // ── Trade Style Controls ──
+    bot.action('aut_style_scalp', async (ctx) => {
+        orchestrator.tradeStyle = 'SCALP';
+        await ctx.answerCbQuery('⚡ تم تفعيل نمط السكالب (فريمات سريعة 5m / 15m)').catch(() => {});
+        await renderAutonomousDashboard(ctx, orchestrator, true);
+    });
+
+    bot.action('aut_style_swing', async (ctx) => {
+        orchestrator.tradeStyle = 'SWING';
+        await ctx.answerCbQuery('🌊 تم تفعيل نمط السوينغ (فريمات اتجاهية 15m / 4h)').catch(() => {});
+        await renderAutonomousDashboard(ctx, orchestrator, true);
+    });
+
+    bot.action('aut_style_hybrid', async (ctx) => {
+        orchestrator.tradeStyle = 'HYBRID';
+        await ctx.answerCbQuery('🔄 تم تفعيل النمط الهجين المتوازن').catch(() => {});
+        await renderAutonomousDashboard(ctx, orchestrator, true);
+    });
+
+    // ── TP Execution Mode Controls ──
+    bot.action('aut_tp_single', async (ctx) => {
+        orchestrator.tpExecutionMode = 'single';
+        await ctx.answerCbQuery('🎯 تم تفعيل نمط الهدف الأول فقط (خروج كامل 100% عند TP1)').catch(() => {});
+        await renderAutonomousDashboard(ctx, orchestrator, true);
+    });
+
+    bot.action('aut_tp_multiple', async (ctx) => {
+        orchestrator.tpExecutionMode = 'multiple';
+        await ctx.answerCbQuery('🏆 تم تفعيل نمط جميع الأهداف (تأمين ونقل الستوب للدخول)').catch(() => {});
+        await renderAutonomousDashboard(ctx, orchestrator, true);
+    });
+
+    // ── Paper Balance & Reset Picker ──
+    bot.action('aut_paper_balance_menu', async (ctx) => {
+        try {
+            await ctx.answerCbQuery().catch(() => {});
+            await renderPaperBalancePicker(ctx, true);
+        } catch (e: any) {
+            logger.error('Error in aut_paper_balance_menu:', e);
+        }
+    });
+
+    bot.action(/^aut_set_bal_(\d+)$/, async (ctx) => {
+        try {
+            const amount = parseInt(ctx.match[1]);
+            await ctx.answerCbQuery(`⏳ جاري تعيين رأس المال $${amount}...`).catch(() => {});
+            await orchestrator.getPaperEngine().resetAccount(undefined, amount);
+            await ctx.reply(`✅ <b>تم تصفير السجل الافتراضي وتعيين رأس المال الأولي إلى: $${amount.toLocaleString()} USDT بنجاح والبدء من جديد!</b>`, { parse_mode: 'HTML' });
+            await renderPaperStats(ctx, orchestrator);
+        } catch (e: any) {
+            logger.error('Error in aut_set_bal callback:', e);
+            ctx.reply(`❌ فشل تعيين رأس المال: ${e.message}`);
+        }
     });
 
     bot.action('aut_toggle_pause', async (ctx) => {
@@ -372,7 +479,17 @@ async function renderAutonomousDashboard(ctx: any, orchestrator: AutonomousOrche
         ? '🎮 تداول افتراضي محاكى (Paper Trading - صفر مخاطرة)'
         : mode === 'SEMI_AUTO'
             ? '🟡 نصف تلقائي (تأكيد عبر تيليجرام 60 ثانية)'
-            : '🟢 تلقائي كامل على المحفظة الحقيقية (Full Auto)';
+            : '🟢 تلقائي كامل على المحفظة الحقيقية (BingX Real Balance)';
+
+    const styleLabel = orchestrator.tradeStyle === 'SCALP'
+        ? '⚡ سكالب سريع (5m/15m)'
+        : orchestrator.tradeStyle === 'SWING'
+            ? '🌊 سوينغ اتجاهي (15m/4h)'
+            : '🔄 هجين متوازن (تلقائي)';
+
+    const tpLabel = orchestrator.tpExecutionMode === 'single'
+        ? '🎯 الهدف الأول فقط (خروج 100% عند TP1)'
+        : '🏆 جميع الأهداف (تأمين الدخول بعد TP1)';
 
     const statusBadge = orchestrator.isPaused ? '⏸️ متوقفة مؤقتاً' : '🟢 نشطة وتعمل بالخلفية';
     const aiBadge = orchestrator.isAiAuditEnabled ? '🧠 مفعل (Gemini Sovereign)' : '⚪ معطل (توافق رياضي فقط)';
@@ -381,24 +498,37 @@ async function renderAutonomousDashboard(ctx: any, orchestrator: AutonomousOrche
     let msg = `🤖 <b>لوحة القيادة لمنظومة التداول الذاتي الفائقة (Autonomous V2)</b>\n`;
     msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
     msg += `• <b>الحالة العامة:</b> <b>${statusBadge}</b>\n`;
-    msg += `• <b>النمط المعتمد:</b>\n  👉 <b>${modeLabel}</b>\n\n`;
+    msg += `• <b>نمط التنفيذ:</b>\n  👉 <b>${modeLabel}</b>\n`;
+    msg += `• <b>أسلوب التداول:</b> <b>${styleLabel}</b>\n`;
+    msg += `• <b>نظام جني الأرباح:</b> <b>${tpLabel}</b>\n\n`;
     msg += `• <b>المشرف الأمني:</b> ${aiBadge}\n`;
     msg += `• <b>درع الاقتصاد الكلي:</b> ${macroBadge}\n`;
     msg += `• <b>عتبة التوافق الرياضي:</b> 🎯 <code>${orchestrator.minConfluenceScore}%</code>\n\n`;
     msg += `• <b>العملات المراقبة الآن:</b>\n  <code>${orchestrator.activeWatchlist.join(' • ')}</code>\n\n`;
     msg += `• <b>مزامنة الشموع:</b> ⏰ <i>كل 15 دقيقة فور إغلاق الشمعة (:00، :15، :30، :45)</i>\n`;
     msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
-    msg += `👇 <b>تحكم بالمنظومة أو بدّل الأنماط بالضغط على الأزرار أدناه:</b>`;
+    msg += `👇 <b>تحكم بالمنظومة والأنماط والأهداف بالضغط على الأزرار أدناه:</b>`;
 
     const keyboard = {
         inline_keyboard: [
+            // Mode Selectors
             [
-                { text: mode === 'PAPER_TRADING' ? '🔘 [نشط] محاكاة افتراضية 🎮' : '🎮 محاكاة افتراضية (Paper)', callback_data: 'aut_set_paper' },
-                { text: mode === 'SEMI_AUTO' ? '🔘 [نشط] نصف تلقائي 🟡' : '🟡 نصف تلقائي (تأكيد)', callback_data: 'aut_set_semi' }
+                { text: mode === 'PAPER_TRADING' ? '🔘 [نشط] محاكاة 🎮' : '🎮 محاكاة (Paper)', callback_data: 'aut_set_paper' },
+                { text: mode === 'SEMI_AUTO' ? '🔘 [نشط] نصف تلقائي 🟡' : '🟡 نصف تلقائي', callback_data: 'aut_set_semi' },
+                { text: mode === 'FULL_AUTO' ? '🔘 [نشط] حقيقي 🟢' : '🚀 حقيقي (Live)', callback_data: 'aut_set_full' }
             ],
+            // Trade Style Selectors (Scalp vs Swing vs Hybrid)
             [
-                { text: mode === 'FULL_AUTO' ? '🔘 [نشط] تلقائي كامل 🟢' : '🚀 تلقائي كامل (BingX Live)', callback_data: 'aut_set_full' }
+                { text: orchestrator.tradeStyle === 'SCALP' ? '🔘 ⚡ سكالب (5m)' : '⚡ سكالب (5m)', callback_data: 'aut_style_scalp' },
+                { text: orchestrator.tradeStyle === 'SWING' ? '🔘 🌊 سوينغ (4h)' : '🌊 سوينغ (4h)', callback_data: 'aut_style_swing' },
+                { text: orchestrator.tradeStyle === 'HYBRID' ? '🔘 🔄 هجين' : '🔄 هجين', callback_data: 'aut_style_hybrid' }
             ],
+            // TP Mode Selectors (Single TP vs Multiple TPs)
+            [
+                { text: orchestrator.tpExecutionMode === 'single' ? '🔘 🎯 الهدف الأول فقط' : '🎯 الهدف الأول فقط', callback_data: 'aut_tp_single' },
+                { text: orchestrator.tpExecutionMode === 'multiple' ? '🔘 🏆 جميع الأهداف' : '🏆 جميع الأهداف', callback_data: 'aut_tp_multiple' }
+            ],
+            // Core Hubs
             [
                 { text: '🎮 المحفظة الافتراضية (Paper Hub)', callback_data: 'aut_view_paper_stats' },
                 { text: '🧠 تدقيق الذكاء (AI Audit)', callback_data: 'aut_ai_audit_menu' }
@@ -467,8 +597,8 @@ async function renderPaperStats(ctx: any, orchestrator: AutonomousOrchestrator, 
                 { text: '📜 السجل المغلق', callback_data: 'aut_view_paper_history' }
             ],
             [
-                { text: '🔬 فحص وتحليل عملة رياضياً', callback_data: 'aut_analyze_picker' },
-                { text: '🗑️ تصفير المحفظة (1000$)', callback_data: 'aut_reset_paper_confirm' }
+                { text: '💵 ضبط رأس المال وتصفير السجل', callback_data: 'aut_paper_balance_menu' },
+                { text: '🔬 فحص عملة رياضياً', callback_data: 'aut_analyze_picker' }
             ],
             [
                 { text: '🔙 رجوع للوحة التحكم الذاتي', callback_data: 'aut_main_menu' }
@@ -1107,5 +1237,45 @@ async function executeOnDemandPaperTrade(ctx: any, cleanSymbol: string, bingx: B
     } catch (e: any) {
         logger.error(`Error executing paper trade for ${cleanSymbol}:`, e);
         ctx.reply(`❌ فشل فتح الصفقة التجريبية: ${e.message}`);
+    }
+}
+
+/**
+ * 11. Paper Trading Balance Picker & Reset Menu
+ */
+async function renderPaperBalancePicker(ctx: any, isEdit = false) {
+    const currentBal = PaperTradingEngine.initialBalance;
+    const msg =
+        `💰 <b>تحديد رأس المال للمحفظة الافتراضية والبدء من جديد</b>\n` +
+        `━━━━━━━━━━━━━━━━━━━━━\n` +
+        `• <b>رأس المال المعتمد حالياً:</b> <code>$${currentBal.toLocaleString()} USDT</code>\n\n` +
+        `اختر رأس المال الافتراضي الذي تريد محاكاته وبدء سجل تداول جديد به، أو يمكنك كتابة أمر مخصص:\n` +
+        `👉 <code>/set_paper_balance 1500</code>\n\n` +
+        `⚠️ <i>تنبيه: اختيار أي مبلغ سيقوم بتصفير سجل الصفقات الافتراضية والبدء من جديد بهذا الرصيد.</i>`;
+
+    const keyboard = {
+        inline_keyboard: [
+            [
+                { text: '$50 USDT 🪙', callback_data: 'aut_set_bal_50' },
+                { text: '$100 USDT 💵', callback_data: 'aut_set_bal_100' },
+                { text: '$250 USDT 💵', callback_data: 'aut_set_bal_250' }
+            ],
+            [
+                { text: '$500 USDT 💵', callback_data: 'aut_set_bal_500' },
+                { text: '$1,000 USDT 💼', callback_data: 'aut_set_bal_1000' },
+                { text: '$5,000 USDT 🏦', callback_data: 'aut_set_bal_5000' }
+            ],
+            [
+                { text: '🔙 رجوع للمحفظة الافتراضية', callback_data: 'aut_view_paper_stats' }
+            ]
+        ]
+    };
+
+    if (isEdit && ctx.callbackQuery) {
+        await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: keyboard }).catch(async () => {
+            await ctx.replyWithHTML(msg, { reply_markup: keyboard });
+        });
+    } else {
+        await ctx.replyWithHTML(msg, { reply_markup: keyboard });
     }
 }
