@@ -37,13 +37,49 @@ export interface AiOptimizationResult {
 
 export class GeminiService {
     private static rateLimitCooldownUntil: number = 0;
+    private static keyCooldowns: Map<string, number> = new Map();
+    private static currentKeyIndex: number = 0;
 
-    private static getApiKey(): string {
-        return process.env.GEMINI_API_KEY || '';
+    /**
+     * Extracts and cleans all configured Gemini API keys (supports comma-separated list in GEMINI_API_KEYS or GEMINI_API_KEY)
+     */
+    public static getApiKeys(): string[] {
+        const raw = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '';
+        return raw.split(',')
+            .map(k => k.trim().replace(/^['"]|['"]$/g, ''))
+            .filter(Boolean);
+    }
+
+    /**
+     * Retrieves the next healthy API key using round-robin, automatically skipping keys that are on cooldown
+     */
+    private static getNextHealthyApiKey(): { key: string; index: number; total: number } | null {
+        const keys = this.getApiKeys();
+        if (keys.length === 0) return null;
+
+        const now = Date.now();
+        // Clean up expired cooldowns
+        for (const [k, exp] of this.keyCooldowns.entries()) {
+            if (now >= exp) this.keyCooldowns.delete(k);
+        }
+
+        // Try to find a healthy key starting from currentKeyIndex
+        for (let i = 0; i < keys.length; i++) {
+            const index = (this.currentKeyIndex + i) % keys.length;
+            const candidate = keys[index];
+            const cooldownUntil = this.keyCooldowns.get(candidate) || 0;
+            if (now >= cooldownUntil) {
+                this.currentKeyIndex = (index + 1) % keys.length;
+                return { key: candidate, index, total: keys.length };
+            }
+        }
+
+        // All keys are currently in cooldown
+        return null;
     }
 
     private static getModelName(): string {
-        return process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+        return process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
     }
 
     /**
@@ -111,8 +147,8 @@ export class GeminiService {
             throw new Error(`429 - فترة تهدئة الـ AI نشطة (${waitSec} ثانية متبقية).`);
         }
 
-        const apiKey = this.getApiKey();
-        if (!apiKey) {
+        const allKeys = this.getApiKeys();
+        if (allKeys.length === 0) {
             throw new Error('⚠️ لم يتم العثور على مفتاح GEMINI_API_KEY في ملف الـ .env. يرجى إضافته لاستخدام الذكاء الاصطناعي.');
         }
 
@@ -125,74 +161,93 @@ export class GeminiService {
         const uniqueModels = [...new Set(candidateModels)];
         let lastError: Error | null = null;
 
-        for (const currentModel of uniqueModels) {
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/${currentModel}:generateContent?key=${apiKey}`;
-
-            const payload: any = {
-                contents: [{
-                    parts: [{ text: prompt }]
-                }],
-                generationConfig: {
-                    temperature: 0.2,
-                    topP: 0.95,
-                    maxOutputTokens: 2548,
-                    ...(isJson ? { responseMimeType: 'application/json' } : {})
-                }
-            };
-
-            if (systemInstruction) {
-                payload.systemInstruction = {
-                    parts: [{ text: systemInstruction }]
-                };
+        // Try healthy keys from pool
+        for (let keyAttempt = 0; keyAttempt < allKeys.length; keyAttempt++) {
+            const keyInfo = this.getNextHealthyApiKey();
+            if (!keyInfo) {
+                const waitSec = Math.ceil(Math.max(5, (this.rateLimitCooldownUntil - Date.now()) / 1000));
+                throw new Error(`429 - جميع مفاتيح الـ AI (${allKeys.length}) في فترة تهدئة مؤقتة (${waitSec} ثانية متبقية).`);
             }
 
-            try {
-                const result = await this.callGeminiOnce(url, payload);
+            const apiKey = keyInfo.key;
+            let keyRateLimited = false;
 
-                if (result.ok) {
-                    const text = result.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-                    if (!text) {
-                        throw new Error('عذراً، لم يقم نموذج الذكاء الاصطناعي بإرجاع رد صالح.');
+            for (const currentModel of uniqueModels) {
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/${currentModel}:generateContent?key=${apiKey}`;
+
+                const payload: any = {
+                    contents: [{
+                        parts: [{ text: prompt }]
+                    }],
+                    generationConfig: {
+                        temperature: 0.2,
+                        topP: 0.95,
+                        maxOutputTokens: 2548,
+                        ...(isJson ? { responseMimeType: 'application/json' } : {})
                     }
-                    return text;
+                };
+
+                if (systemInstruction) {
+                    payload.systemInstruction = {
+                        parts: [{ text: systemInstruction }]
+                    };
                 }
 
-                // If 503 (model overloaded) or 404, try next candidate model immediately
-                if (result.status === 503 || result.status === 404) {
-                    logger.warn(`[GeminiService] Model ${currentModel} returned ${result.status}. Failing over to next model...`);
-                    continue;
-                }
+                try {
+                    const result = await this.callGeminiOnce(url, payload);
 
-                // Rate limit (429): Quota exhausted
-                if (result.status === 429) {
-                    let waitSec = 60;
-                    const match = result.errorMessage?.match(/retry in ([\d\.]+)s/i);
-                    if (match && match[1]) {
-                        waitSec = Math.ceil(parseFloat(match[1])) + 2;
+                    if (result.ok) {
+                        const text = result.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+                        if (!text) {
+                            throw new Error('عذراً، لم يقم نموذج الذكاء الاصطناعي بإرجاع رد صالح.');
+                        }
+                        return text;
                     }
-                    this.rateLimitCooldownUntil = Date.now() + (waitSec * 1000);
-                    logger.warn(
-                        `[GeminiService] ⚠️ حد طلبات Gemini المجاني مكتمل (429 Rate Limit). ` +
-                        `تفعيل التهدئة التلقائية لمدة ${waitSec} ثانية.`
-                    );
-                    throw new Error(`Gemini API error: 429 - Quota exceeded. Cooldown active for ${waitSec}s.`);
-                }
 
-                // Other error on this model — log and try next model
-                logger.warn(`[GeminiService] Model ${currentModel} returned ${result.status}: ${result.errorMessage}. Trying next model...`);
-                lastError = new Error(`Gemini API error (${currentModel}): ${result.status} - ${result.errorMessage}`);
-            } catch (error: any) {
-                if (error.message?.includes('429')) {
-                    throw error;
+                    // If 503 (model overloaded) or 404, try next candidate model immediately
+                    if (result.status === 503 || result.status === 404) {
+                        logger.warn(`[GeminiService] Model ${currentModel} returned ${result.status}. Failing over to next model...`);
+                        continue;
+                    }
+
+                    // Rate limit (429): Quota exhausted on this key
+                    if (result.status === 429) {
+                        let waitSec = 60;
+                        const match = result.errorMessage?.match(/retry in ([\d\.]+)s/i);
+                        if (match && match[1]) {
+                            waitSec = Math.ceil(parseFloat(match[1])) + 2;
+                        }
+                        this.keyCooldowns.set(apiKey, Date.now() + (waitSec * 1000));
+                        logger.warn(
+                            `[GeminiService] ⚠️ المفتاح [${keyInfo.index + 1}/${keyInfo.total}] (...${apiKey.slice(-6)}) استنفد الكوتا (429). ` +
+                            `وضع المفتاح في التهدئة لمدة ${waitSec} ثانية والتحويل للمفتاح التالي في المسبح...`
+                        );
+                        keyRateLimited = true;
+                        break; // Exit model loop to try the next key from the pool!
+                    }
+
+                    // Other error on this model — log and try next model
+                    logger.warn(`[GeminiService] Model ${currentModel} returned ${result.status}: ${result.errorMessage}. Trying next model...`);
+                    lastError = new Error(`Gemini API error (${currentModel}): ${result.status} - ${result.errorMessage}`);
+                } catch (error: any) {
+                    if (error.message?.includes('429')) {
+                        keyRateLimited = true;
+                        break;
+                    }
+                    lastError = error;
+                    logger.warn(`[GeminiService] Exception with model ${currentModel}: ${error.message}. Trying next model...`);
                 }
-                lastError = error;
-                logger.warn(`[GeminiService] Exception with model ${currentModel}: ${error.message}. Trying next model...`);
+            }
+
+            if (!keyRateLimited) {
+                // If key succeeded or hit non-rate-limit errors
             }
         }
 
-        // All candidate models exhausted
-        logger.error('[GeminiService] All candidate Gemini models failed.');
-        throw lastError ?? new Error('فشل الاتصال بـ Gemini API عبر جميع النماذج المتاحة.');
+        // All keys and models exhausted
+        logger.error('[GeminiService] All API keys and candidate models exhausted.');
+        this.rateLimitCooldownUntil = Date.now() + (30 * 1000);
+        throw lastError ?? new Error('فشل الاتصال بـ Gemini API عبر جميع المفاتيح والنماذج المتاحة.');
     }
 
     /**
