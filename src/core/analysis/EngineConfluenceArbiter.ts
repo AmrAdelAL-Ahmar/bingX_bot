@@ -363,10 +363,12 @@ export class EngineConfluenceArbiter {
         const rewardDist = Math.abs(tp1 - currentPrice);
         const rrr = riskDist > 0 ? Number((rewardDist / riskDist).toFixed(2)) : 1.5;
 
-        // Micro-TP: 50% distance of the primary target for rapid scalping execution
+        // Ultra-Fast Scalp Target (Micro-TP): close target (0.45% - 0.65% price move)
+        // Highly reachable in 1-3 candles, giving 10%-20% profit on high leverage (20x-30x)
+        const microDist = Math.max(currentPrice * 0.005, Math.min(rewardDist * 0.35, currentPrice * 0.008));
         const microTP = recDir === 'LONG'
-            ? currentPrice + (rewardDist * 0.5)
-            : currentPrice - (rewardDist * 0.5);
+            ? currentPrice + microDist
+            : currentPrice - microDist;
 
         // ── 5. Assemble Dossier ─────────────────────────────────────────────
         return {

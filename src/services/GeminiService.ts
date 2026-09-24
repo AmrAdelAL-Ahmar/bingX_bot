@@ -116,31 +116,36 @@ export class GeminiService {
             throw new Error('⚠️ لم يتم العثور على مفتاح GEMINI_API_KEY في ملف الـ .env. يرجى إضافته لاستخدام الذكاء الاصطناعي.');
         }
 
-        const model = this.getModelName();
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-
-        const payload: any = {
-            contents: [{
-                parts: [{ text: prompt }]
-            }],
-            generationConfig: {
-                temperature: 0.2,
-                topP: 0.95,
-                maxOutputTokens: 2548,
-                ...(isJson ? { responseMimeType: 'application/json' } : {})
-            }
-        };
-
-        if (systemInstruction) {
-            payload.systemInstruction = {
-                parts: [{ text: systemInstruction }]
-            };
-        }
-
-        const MAX_RETRIES = 3;
+        const candidateModels = [
+            this.getModelName(),
+            'gemini-3.5-flash-lite',
+            'gemini-3.5-flash',
+            'gemini-flash-latest'
+        ];
+        const uniqueModels = [...new Set(candidateModels)];
         let lastError: Error | null = null;
 
-        for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        for (const currentModel of uniqueModels) {
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${currentModel}:generateContent?key=${apiKey}`;
+
+            const payload: any = {
+                contents: [{
+                    parts: [{ text: prompt }]
+                }],
+                generationConfig: {
+                    temperature: 0.2,
+                    topP: 0.95,
+                    maxOutputTokens: 2548,
+                    ...(isJson ? { responseMimeType: 'application/json' } : {})
+                }
+            };
+
+            if (systemInstruction) {
+                payload.systemInstruction = {
+                    parts: [{ text: systemInstruction }]
+                };
+            }
+
             try {
                 const result = await this.callGeminiOnce(url, payload);
 
@@ -152,7 +157,13 @@ export class GeminiService {
                     return text;
                 }
 
-                // Rate limit (429): Quota exhausted. Enter cooldown immediately without futile short retries
+                // If 503 (model overloaded) or 404, try next candidate model immediately
+                if (result.status === 503 || result.status === 404) {
+                    logger.warn(`[GeminiService] Model ${currentModel} returned ${result.status}. Failing over to next model...`);
+                    continue;
+                }
+
+                // Rate limit (429): Quota exhausted
                 if (result.status === 429) {
                     let waitSec = 60;
                     const match = result.errorMessage?.match(/retry in ([\d\.]+)s/i);
@@ -162,43 +173,26 @@ export class GeminiService {
                     this.rateLimitCooldownUntil = Date.now() + (waitSec * 1000);
                     logger.warn(
                         `[GeminiService] ⚠️ حد طلبات Gemini المجاني مكتمل (429 Rate Limit). ` +
-                        `تفعيل التهدئة التلقائية لمدة ${waitSec} ثانية. ` +
-                        `سيتم الاعتماد على التوافق الرياضي فوراً وبدون تأخير.`
+                        `تفعيل التهدئة التلقائية لمدة ${waitSec} ثانية.`
                     );
                     throw new Error(`Gemini API error: 429 - Quota exceeded. Cooldown active for ${waitSec}s.`);
                 }
 
-                // Temporary overload (503): Retry with exponential backoff
-                if (result.status === 503) {
-                    const waitMs = Math.pow(2, attempt - 1) * 1000; // 1s, 2s, 4s
-                    logger.warn(
-                        `Gemini API returned 503 (attempt ${attempt}/${MAX_RETRIES}). ` +
-                        `Retrying in ${waitMs / 1000}s... Reason: ${result.errorMessage}`
-                    );
-                    lastError = new Error(`Gemini API error: 503 - ${result.errorMessage}`);
-                    await new Promise(resolve => setTimeout(resolve, waitMs));
-                    continue;
-                }
-
-                // Non-retryable error — throw immediately
-                logger.error(`Gemini API request failed (${result.status}):`, result.errorMessage);
-                throw new Error(`Gemini API error: ${result.status} - ${result.errorMessage}`);
-
+                // Other error on this model — log and try next model
+                logger.warn(`[GeminiService] Model ${currentModel} returned ${result.status}: ${result.errorMessage}. Trying next model...`);
+                lastError = new Error(`Gemini API error (${currentModel}): ${result.status} - ${result.errorMessage}`);
             } catch (error: any) {
                 if (error.message?.includes('429')) {
                     throw error;
                 }
-                if (!error.message?.includes('503')) {
-                    logger.error('Error in callGemini:', error);
-                    throw error;
-                }
                 lastError = error;
+                logger.warn(`[GeminiService] Exception with model ${currentModel}: ${error.message}. Trying next model...`);
             }
         }
 
-        // All retries exhausted
-        logger.error(`Gemini API failed after ${MAX_RETRIES} attempts.`);
-        throw lastError ?? new Error('فشل الاتصال بـ Gemini API بعد عدة محاولات. يرجى المحاولة لاحقاً.');
+        // All candidate models exhausted
+        logger.error('[GeminiService] All candidate Gemini models failed.');
+        throw lastError ?? new Error('فشل الاتصال بـ Gemini API عبر جميع النماذج المتاحة.');
     }
 
     /**
