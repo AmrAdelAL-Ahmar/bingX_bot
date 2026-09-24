@@ -423,6 +423,16 @@ export const registerAutonomousHandlers = (
                 return ctx.reply('❌ المستخدم غير مسجل في قاعدة البيانات.');
             }
 
+            const existingLive = await Trade.findOne({
+                userId: user._id,
+                symbol: `${shortSymbol}/USDT:USDT`,
+                isPaperTrade: { $ne: true },
+                currentStatus: { $in: ['OPEN', 'TP1_HIT', 'TP2_HIT'] }
+            });
+            if (existingLive) {
+                return ctx.reply(`⚠️ توجد بالفعل صفقة حية نشطة مفتوحة لعملة <b>${shortSymbol}</b> حالياً.\nلا يمكن فتح صفقة جديدة لنفس العملة حتى تُغلق الصفقة الحالية.`, { parse_mode: 'HTML' });
+            }
+
             const signal = {
                 type: 'TRADE' as const,
                 symbol: `${shortSymbol}/USDT:USDT`,
@@ -1199,6 +1209,16 @@ async function executeOnDemandPaperTrade(ctx: any, cleanSymbol: string, bingx: B
             dbUser = await User.findOne({ isActive: true }) || await User.findOne({});
         }
         const userRefId = dbUser ? dbUser._id.toString() : ctx.from.id.toString();
+
+        // Check if trade already active for this symbol
+        const existingActive = await Trade.findOne({
+            isPaperTrade: true,
+            symbol: fullSymbol,
+            currentStatus: { $in: ['OPEN', 'TP1_HIT', 'TP2_HIT'] }
+        });
+        if (existingActive) {
+            return ctx.reply(`⚠️ توجد بالفعل صفقة افتراضية نشطة مفتوحة لعملة <b>${cleanSymbol}</b> حالياً.\nلا يمكن فتح صفقة جديدة لنفس العملة حتى تُغلق الصفقة الحالية.`, { parse_mode: 'HTML' });
+        }
 
         const trade = await orchestrator.getPaperEngine().executePaperTrade({
             userId: userRefId,

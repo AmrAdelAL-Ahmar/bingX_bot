@@ -67,6 +67,18 @@ export class PaperTradingEngine {
         engineId?: string;
         aiJustification?: string;
     }): Promise<ITrade> {
+        // 0. Prevent duplicate concurrent trades on the exact same symbol
+        const existingActive = await Trade.findOne({
+            isPaperTrade: true,
+            symbol: params.symbol,
+            currentStatus: { $in: ['OPEN', 'TP1_HIT', 'TP2_HIT'] }
+        });
+        if (existingActive) {
+            const warnMsg = `[PaperTradingEngine] 🛑 رفض فتح صفقة افتراضية لـ ${params.symbol}: توجد صفقة نشطة بالفعل لنفس العملة (ID: ${existingActive._id}).`;
+            logger.warn(warnMsg);
+            throw new Error(`توجد صفقة نشطة بالفعل لنفس العملة (${params.symbol})`);
+        }
+
         const userObjectId = await this.resolveUserObjectId(params.userId);
         const stats = await this.getPerformanceStats(userObjectId ? userObjectId.toString() : undefined);
         const balance = stats.currentBalance > 0 ? stats.currentBalance : PaperTradingEngine.initialBalance;

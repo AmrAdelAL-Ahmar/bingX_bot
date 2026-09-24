@@ -165,12 +165,17 @@ export class AutonomousOrchestrator {
                 return;
             }
 
-            // ── 1. Check Existing Active Positions Count ───────────────────
+            // ── 1. Check Existing Active Positions & Active Symbols ───────────────────
             const isPaper = this.currentMode === 'PAPER_TRADING';
-            const openPositionsCount = await Trade.countDocuments({
+            const activeTrades = await Trade.find({
                 isPaperTrade: isPaper ? true : { $ne: true },
                 currentStatus: { $in: ['OPEN', 'TP1_HIT', 'TP2_HIT'] }
-            });
+            }, { symbol: 1 });
+
+            const activeSymbols = new Set(
+                activeTrades.map(t => t.symbol.toUpperCase().replace('/USDT:USDT', '').replace('-USDT', '').replace('/USDT', ''))
+            );
+            const openPositionsCount = activeTrades.length;
 
             // ── 2. Phase 1: Mathematical Pre-screening of all symbols (0 AI calls) ──
             const candidatePool: {
@@ -184,6 +189,17 @@ export class AutonomousOrchestrator {
             const evaluations: { symbol: string; score: number; direction: string; executed: boolean }[] = [];
 
             for (const sym of this.activeWatchlist) {
+                const cleanSym = sym.toUpperCase().replace('/USDT:USDT', '').replace('-USDT', '').replace('/USDT', '');
+                if (activeSymbols.has(cleanSym)) {
+                    evaluations.push({
+                        symbol: sym,
+                        score: 0,
+                        direction: 'صفقة نشطة حالياً 🔒',
+                        executed: false
+                    });
+                    continue;
+                }
+
                 try {
                     const fullSymbol = `${sym}/USDT:USDT`;
                     const [pricePrecision, ...fetchResults] = await Promise.all([
@@ -317,6 +333,17 @@ export class AutonomousOrchestrator {
         if (!corrResult.allowed) {
             logger.warn(`[AutonomousOrchestrator] Correlation guard rejected ${shortSymbol}: ${corrResult.reason}`);
             return { symbol: shortSymbol, score, direction: `حظر الارتباط (${corrResult.reason})`, executed: false };
+        }
+
+        // Check if trade already exists for this symbol (double check before execution)
+        const isAlreadyActive = await Trade.exists({
+            isPaperTrade: isPaper ? true : { $ne: true },
+            symbol: fullSymbol,
+            currentStatus: { $in: ['OPEN', 'TP1_HIT', 'TP2_HIT'] }
+        });
+        if (isAlreadyActive) {
+            logger.warn(`[AutonomousOrchestrator] 🛑 تم منع فتح صفقة لـ ${shortSymbol}: توجد صفقة نشطة بالفعل لنفس العملة.`);
+            return { symbol: shortSymbol, score, direction: 'توجد صفقة نشطة بالفعل 🔒', executed: false };
         }
 
         // ── 3. Execution Routing based on Active Mode ───────────────────────

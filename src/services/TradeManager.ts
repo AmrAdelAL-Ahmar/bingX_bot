@@ -154,6 +154,32 @@ export class TradeManager {
                     return;
                 }
 
+                // 0. Prevent duplicate concurrent trades on the exact same symbol (DB + Exchange)
+                const existingTrade = await Trade.findOne({
+                    userId: user._id,
+                    symbol: signal.symbol,
+                    isPaperTrade: { $ne: true },
+                    currentStatus: { $in: ['OPEN', 'TP1_HIT', 'TP2_HIT'] }
+                });
+                if (existingTrade) {
+                    const dupMsg = `🚨 [حظر تكرار الصفقات] توجد صفقة نشطة بالفعل لعملة ${signal.symbol} في قاعدة البيانات (ID: ${existingTrade._id}). تم إلغاء التنفيذ.`;
+                    logger.warn(dupMsg);
+                    throw new Error(dupMsg);
+                }
+
+                try {
+                    const livePositions = await this.bingx.getPositions();
+                    const openBingXPos = livePositions.find((p: any) => p.symbol === signal.symbol && Math.abs(p.contracts || p.size || 0) > 0);
+                    if (openBingXPos) {
+                        const livePosMsg = `🚨 [حظر تكرار الصفقات] يوجد مركز مفتوح بالفعل لعملة ${signal.symbol} على منصة BingX (الحجم: ${openBingXPos.contracts || openBingXPos.size}). تم إلغاء التنفيذ.`;
+                        logger.warn(livePosMsg);
+                        throw new Error(livePosMsg);
+                    }
+                } catch (posErr: any) {
+                    if (posErr.message && posErr.message.includes('حظر تكرار الصفقات')) throw posErr;
+                    logger.warn(`Could not verify BingX open positions for ${signal.symbol}: ${posErr.message}`);
+                }
+
                 // Check if HITLAR mode is enabled
                 const isHitlar = user.hitlarModeEnabled;
                 const hitlar = user.hitlarSettings || {
