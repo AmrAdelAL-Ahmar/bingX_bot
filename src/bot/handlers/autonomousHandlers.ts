@@ -652,7 +652,7 @@ async function renderOpenPaperTrades(ctx: any, orchestrator: AutonomousOrchestra
     for (const t of openTrades) {
         const dirEmoji = t.direction === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
         const margin = (t.amount && t.leverage) ? (t.amount / t.leverage).toFixed(2) : '10.00';
-        const entryDate = t.entryTime ? new Date(t.entryTime).toLocaleString('ar-EG', { timeZone: 'UTC', hour12: false }) : 'غير محدد';
+        const entryDate = t.entryTime ? new Date(t.entryTime).toLocaleString('ar-EG-u-nu-latn', { timeZone: 'Asia/Riyadh', hour12: true }) : 'غير محدد';
         const statusBadge = t.currentStatus === 'TP1_HIT' ? '🎯 تم حجز الهدف 1 ومؤمنة على الدخول' : '⏳ جارية';
 
         // Calculate current elapsed time
@@ -671,7 +671,7 @@ async function renderOpenPaperTrades(ctx: any, orchestrator: AutonomousOrchestra
             msg += `   • 🎯 الأهداف: <code>${t.targets.map(x => x.price).join(' | ')}</code>\n`;
         }
         msg += `   • 💰 الهامش: <code>$${margin} USDT</code> (القيمة: <code>$${t.amount?.toFixed(2)}</code>)\n`;
-        msg += `   • ⏱️ وقت البدء: <code>${entryDate} UTC</code> (منذ ${elapsedStr})\n`;
+        msg += `   • ⏱️ وقت البدء: <code>${entryDate}</code> (منذ ${elapsedStr})\n`;
         if (t.aiJustification) {
             msg += `   • 🧠 التبرير: <i>${t.aiJustification.substring(0, 80)}...</i>\n`;
         }
@@ -730,8 +730,8 @@ async function renderPaperHistory(ctx: any, orchestrator: AutonomousOrchestrator
         const isWin = realizedVal > 0 || (realizedVal === 0 && (t.pnl || 0) >= 0);
         const statusBadge = isWin ? '🟢 ربح' : '🔴 خسارة';
         const pnlSign = (t.pnl || 0) >= 0 ? '+' : '';
-        const entryStr = t.entryTime ? new Date(t.entryTime).toLocaleString('ar-EG', { timeZone: 'UTC', hour12: false }) : 'غير محدد';
-        const closeStr = t.closeTime ? new Date(t.closeTime).toLocaleString('ar-EG', { timeZone: 'UTC', hour12: false }) : 'غير محدد';
+        const entryStr = t.entryTime ? new Date(t.entryTime).toLocaleString('ar-EG-u-nu-latn', { timeZone: 'Asia/Riyadh', hour12: true }) : 'غير محدد';
+        const closeStr = t.closeTime ? new Date(t.closeTime).toLocaleString('ar-EG-u-nu-latn', { timeZone: 'Asia/Riyadh', hour12: true }) : 'غير محدد';
 
         // Calculate trade duration
         let durationStr = 'N/A';
@@ -778,8 +778,8 @@ async function renderPaperHistory(ctx: any, orchestrator: AutonomousOrchestrator
         msg += `   • 💰 <b>صافي الربح / الخسارة:</b> <b>${realizedText}</b> (النسبة: <code>${pnlSign}${t.pnl?.toFixed(2)}%</code>)\n`;
         msg += `   • 💼 <b>الهامش المستخدم:</b> <code>$${margin} USDT</code> (القيمة الكلية: <code>$${t.amount?.toFixed(2)}</code>)\n`;
         msg += `   • 💸 <b>العمولة المحسومة:</b> <code>$${(t.commissionPaid || 0).toFixed(3)} USDT</code>\n`;
-        msg += `   • ⏱️ <b>تاريخ ووقت الدخول:</b> <code>${entryStr} UTC</code>\n`;
-        msg += `   • 🏁 <b>تاريخ ووقت الإغلاق:</b> <code>${closeStr} UTC</code>\n`;
+        msg += `   • ⏱️ <b>تاريخ ووقت الدخول:</b> <code>${entryStr}</code>\n`;
+        msg += `   • 🏁 <b>تاريخ ووقت الإغلاق:</b> <code>${closeStr}</code>\n`;
         msg += `   • ⏳ <b>مدة بقاء الصفقة:</b> <b>${durationStr}</b>\n`;
         if (t.aiJustification) {
             msg += `   • 🧠 <b>التبرير الفني:</b> <i>${t.aiJustification.substring(0, 80)}...</i>\n`;
@@ -1233,6 +1233,7 @@ async function executeOnDemandPaperTrade(ctx: any, cleanSymbol: string, bingx: B
             aiJustification: `تنفيذ يدوي بطلب من المستخدم بناءً على فحص التوافق الرياضي (${dossier.confluenceMetrics.overallScore}%)`
         });
 
+        const execTime = new Date().toLocaleString('ar-EG-u-nu-latn', { timeZone: 'Asia/Riyadh', hour12: true });
         const msg = `🎮✅ <b>تم فتح صفقة افتراضية تجريبية بنجاح!</b>\n` +
             `━━━━━━━━━━━━━━━━━━━━━\n` +
             `🪙 <b>العملة:</b> <b>${cleanSymbol}</b> (${trade.direction} 10x)\n` +
@@ -1240,7 +1241,7 @@ async function executeOnDemandPaperTrade(ctx: any, cleanSymbol: string, bingx: B
             `🛑 <b>وقف الخسارة:</b> <code>${trade.stopLoss}</code>\n` +
             `🎯 <b>الأهداف:</b> <code>${trade.targets.map(t => t.price).join(' | ')}</code>\n` +
             `💰 <b>الهامش المستخدم:</b> <code>$${(trade.amount / trade.leverage).toFixed(2)} USDT</code>\n` +
-            `⏱️ <b>وقت التنفيذ:</b> <code>${new Date().toLocaleTimeString()}</code>\n` +
+            `⏱️ <b>وقت التنفيذ:</b> <code>${execTime}</code>\n` +
             `━━━━━━━━━━━━━━━━━━━━━\n` +
             `<i>يمكنك متابعة هذه الصفقة في أي وقت عبر أمر /paper_trades</i>`;
 

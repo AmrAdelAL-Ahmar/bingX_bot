@@ -22,12 +22,29 @@ export interface PaperPerformanceStats {
 }
 
 export class PaperTradingEngine {
-    public static initialBalance = 1000; // Default 1,000 USDT (Configurable)
+    public static initialBalance = 1000; // Default 1,000 USDT (Configurable and DB-persisted)
     public static MAKER_FEE_PCT = 0.02; // 0.02%
     public static TAKER_FEE_PCT = 0.05; // 0.05%
     public static SIMULATED_SLIPPAGE_PCT = 0.04; // 0.04%
 
     constructor(private bingx: BingXService) {}
+
+    /**
+     * Resolves the persisted paper starting capital from DB or cache
+     */
+    async getInitialBalance(userId?: string): Promise<number> {
+        try {
+            const userObjId = await this.resolveUserObjectId(userId);
+            const user = userObjId ? await User.findById(userObjId) : (await User.findOne({ isActive: true }) || await User.findOne({}));
+            if (user && user.paperInitialBalance && user.paperInitialBalance > 0) {
+                PaperTradingEngine.initialBalance = user.paperInitialBalance;
+                return user.paperInitialBalance;
+            }
+        } catch (e: any) {
+            logger.warn(`[PaperTradingEngine] Error loading paper balance from DB: ${e.message}`);
+        }
+        return PaperTradingEngine.initialBalance || 1000;
+    }
 
     /**
      * Gracefully resolves any userId string (Telegram ID or Mongo ObjectId string) to a valid ObjectId
@@ -81,7 +98,8 @@ export class PaperTradingEngine {
 
         const userObjectId = await this.resolveUserObjectId(params.userId);
         const stats = await this.getPerformanceStats(userObjectId ? userObjectId.toString() : undefined);
-        const balance = stats.currentBalance > 0 ? stats.currentBalance : PaperTradingEngine.initialBalance;
+        const initialBal = await this.getInitialBalance(userObjectId ? userObjectId.toString() : undefined);
+        const balance = stats.currentBalance > 0 ? stats.currentBalance : initialBal;
 
         const riskPct = params.riskPercentage || 1.5; // Default 1.5%
         const leverage = params.leverage || 10;
@@ -286,12 +304,15 @@ export class PaperTradingEngine {
      */
     async getPerformanceStats(userId?: string): Promise<PaperPerformanceStats> {
         const query: any = { isPaperTrade: true };
+        let resolvedId: mongoose.Types.ObjectId | null = null;
         if (userId) {
-            const resolvedId = await this.resolveUserObjectId(userId);
+            resolvedId = await this.resolveUserObjectId(userId);
             if (resolvedId) {
                 query.userId = resolvedId;
             }
         }
+
+        const initialBalance = await this.getInitialBalance(resolvedId ? resolvedId.toString() : userId);
 
         const closedTrades = await Trade.find({
             ...query,
@@ -310,7 +331,7 @@ export class PaperTradingEngine {
         let losses = 0;
         const returns: number[] = [];
 
-        let runningBalance = PaperTradingEngine.initialBalance;
+        let runningBalance = initialBalance;
         let peakBalance = runningBalance;
         let maxDrawdownUSDT = 0;
 
@@ -338,7 +359,7 @@ export class PaperTradingEngine {
         const winRate = totalTrades > 0 ? Number(((wins / totalTrades) * 100).toFixed(1)) : 0;
         const profitFactor = grossLoss > 0 ? Number((grossProfit / grossLoss).toFixed(2)) : (grossProfit > 0 ? 99 : 0);
         const netProfitUSDT = Number((grossProfit - grossLoss).toFixed(2));
-        const netProfitPercent = Number(((netProfitUSDT / PaperTradingEngine.initialBalance) * 100).toFixed(2));
+        const netProfitPercent = Number(((netProfitUSDT / initialBalance) * 100).toFixed(2));
         const maxDrawdownPct = peakBalance > 0 ? Number(((maxDrawdownUSDT / peakBalance) * 100).toFixed(2)) : 0;
 
         // Sharpe Ratio Calculation (assumed risk-free rate = 0)
@@ -353,7 +374,7 @@ export class PaperTradingEngine {
         }
 
         return {
-            initialBalance: PaperTradingEngine.initialBalance,
+            initialBalance,
             currentBalance: Number(runningBalance.toFixed(2)),
             totalTrades,
             winningTrades: wins,
@@ -375,6 +396,17 @@ export class PaperTradingEngine {
     async resetAccount(userId?: string, newBalance?: number): Promise<void> {
         if (newBalance && newBalance > 0) {
             PaperTradingEngine.initialBalance = newBalance;
+            try {
+                const userObjId = await this.resolveUserObjectId(userId);
+                if (userObjId) {
+                    await User.findByIdAndUpdate(userObjId, { paperInitialBalance: newBalance });
+                } else {
+                    await User.updateMany({}, { paperInitialBalance: newBalance });
+                }
+                logger.info(`[PaperTradingEngine] Persisted initial balance of $${newBalance} USDT to MongoDB.`);
+            } catch (e: any) {
+                logger.warn(`[PaperTradingEngine] Failed to persist paper initial balance: ${e.message}`);
+            }
         }
         const query: any = { isPaperTrade: true };
         if (userId) query.userId = userId;
@@ -382,3 +414,4 @@ export class PaperTradingEngine {
         logger.info(`[PaperTradingEngine] Reset paper sandbox trades for user: ${userId || 'ALL'}. Starting capital set to: ${PaperTradingEngine.initialBalance} USDT`);
     }
 }
+

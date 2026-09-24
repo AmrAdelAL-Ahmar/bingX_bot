@@ -74,6 +74,7 @@ export interface IUser extends Document {
         engine: 'multicriteria' | 'ccxt';
         limit: number;
     };
+    paperInitialBalance?: number;
 }
 
 const UserSchema: Schema = new Schema({
@@ -85,6 +86,7 @@ const UserSchema: Schema = new Schema({
     enforceMaxSlLoss: { type: Boolean, default: null },
     botState: { type: String, default: null },
     isActive: { type: Boolean, default: true },
+    paperInitialBalance: { type: Number, default: 1000 },
     createdAt: { type: Date, default: Date.now },
     // Warning settings
     slWarningEnabled: { type: Boolean, default: true },

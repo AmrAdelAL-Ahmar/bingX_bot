@@ -399,28 +399,39 @@ ${sig.sl.toFixed(precision)}`;
 
             // A. state: Comprehensive AI analysis symbol
             if (user.botState === 'AWAITING_AI_COMP_SYMBOL') {
+                user.botState = 'NONE';
+                await user.save();
+
                 if (message === 'رجوع 🔙' || message === 'إلغاء ❌') {
-                    user.botState = 'NONE';
-                    await user.save();
                     return ctx.reply('تم الإلغاء والعودة للقائمة الرئيسية.', { reply_markup: getMainMenuKeyboard(user) });
                 }
 
-                let symbol = message.toUpperCase();
-                if (!symbol.includes('/')) symbol = `${symbol}/USDT:USDT`;
+                let cleanSymbol = message.toUpperCase().trim().replace('/USDT:USDT', '').replace('-USDT', '').replace('/USDT', '').replace('USDT', '');
+                if (!cleanSymbol || cleanSymbol.length < 2 || cleanSymbol.length > 15 || cleanSymbol.includes(' ')) {
+                    return ctx.reply('⚠️ رمز العملة غير صالح، يرجى كتابة الرمز مثل: BTC أو ETH أو SOL', { reply_markup: getMainMenuKeyboard(user) });
+                }
+                const symbol = `${cleanSymbol}/USDT:USDT`;
 
-                ctx.reply(`⏳ جاري جلب البيانات وتشغيل الـ 16 محرك ومحركات القنص لعملة ${symbol.split('/')[0]}... قد يستغرق هذا 20 ثانية.`);
+                ctx.reply(`⏳ جاري جلب البيانات وتشغيل الـ 16 محرك ومحركات القنص لعملة ${cleanSymbol}...`);
 
                 try {
-                    const pricePrecision = await bingxService.getPricePrecision(symbol);
+                    const [pricePrecision, candle5m] = await Promise.all([
+                        bingxService.getPricePrecision(symbol),
+                        bingxService.fetchOHLCV(symbol, '5m', 1)
+                    ]);
+
+                    if (!candle5m || candle5m.length === 0) {
+                        return ctx.reply(`❌ تعذر جلب بيانات الشموع لعملة ${cleanSymbol} من منصة BingX. يرجى التأكد من توفر العملة في العقود الآجلة.`, { reply_markup: getMainMenuKeyboard(user) });
+                    }
+                    const currentPrice = candle5m[candle5m.length - 1].close;
                     
-                    // 1. Fetch data
-                    const [currentPrice, ...fetchResults] = await Promise.all([
-                        bingxService.fetchOHLCV(symbol, '5m', 1).then(c => c[c.length - 1].close),
-                        ...MATRIX_TFS.map(async tf => {
-                            const ohlcv = await bingxService.fetchOHLCV(symbol, tf, 200);
+                    // 1. Fetch MTF data
+                    const fetchResults = await Promise.all(
+                        MATRIX_TFS.map(async tf => {
+                            const ohlcv = await bingxService.fetchOHLCV(symbol, tf, 100);
                             return { tf, ohlcv };
                         })
-                    ]);
+                    );
 
                     const mtfOHLCV: Record<string, OHLCV[]> = {};
                     fetchResults.forEach(res => mtfOHLCV[res.tf] = res.ohlcv);

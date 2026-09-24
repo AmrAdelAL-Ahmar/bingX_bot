@@ -75,7 +75,7 @@ export class GeminiService {
     /**
      * Internal helper to make REST calls to Gemini API with automatic retry on 503 and cooldown on 429
      */
-    private static async callGemini(prompt: string, systemInstruction?: string): Promise<string> {
+    private static async callGemini(prompt: string, systemInstruction?: string, isJson: boolean = false): Promise<string> {
         if (Date.now() < this.rateLimitCooldownUntil) {
             const waitSec = Math.ceil((this.rateLimitCooldownUntil - Date.now()) / 1000);
             throw new Error(`429 - فترة تهدئة الـ AI نشطة (${waitSec} ثانية متبقية).`);
@@ -96,7 +96,8 @@ export class GeminiService {
             generationConfig: {
                 temperature: 0.2,
                 topP: 0.95,
-                maxOutputTokens: 2548
+                maxOutputTokens: 2548,
+                ...(isJson ? { responseMimeType: 'application/json' } : {})
             }
         };
 
@@ -174,24 +175,41 @@ export class GeminiService {
      * Parses JSON safely from markdown or plain text returned by AI
      */
     private static parseJsonResponse<T>(text: string): T {
-        try {
-            let clean = text.trim();
-            // 1. Try markdown code block extraction
-            const codeBlockMatch = clean.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-            if (codeBlockMatch && codeBlockMatch[1]) {
-                clean = codeBlockMatch[1].trim();
-            } else {
-                // 2. Extract first '{' to last '}'
-                const firstBrace = clean.indexOf('{');
-                const lastBrace = clean.lastIndexOf('}');
-                if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-                    clean = clean.substring(firstBrace, lastBrace + 1);
-                }
+        let clean = text.trim();
+        // 1. Try markdown code block extraction
+        const codeBlockMatch = clean.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+        if (codeBlockMatch && codeBlockMatch[1]) {
+            clean = codeBlockMatch[1].trim();
+        } else {
+            // 2. Extract first '{' to last '}'
+            const firstBrace = clean.indexOf('{');
+            const lastBrace = clean.lastIndexOf('}');
+            if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+                clean = clean.substring(firstBrace, lastBrace + 1);
             }
+        }
+
+        // Try direct parse first
+        try {
             return JSON.parse(clean) as T;
-        } catch (err) {
-            logger.error('Failed to parse JSON response from Gemini:', text);
-            throw new Error('فشل في معالجة استجابة الذكاء الاصطناعي بصيغة JSON.');
+        } catch (firstErr) {
+            // Robust sanitization for LLM output (comments, trailing commas, unescaped newlines in strings)
+            try {
+                let sanitized = clean
+                    .replace(/\/\/[^\n\r]*/g, '') // remove single-line comments
+                    .replace(/\/\*[\s\S]*?\*\//g, '') // remove multi-line comments
+                    .replace(/,(\s*[}\]])/g, '$1'); // remove trailing commas
+
+                // Escape raw unescaped newlines and tabs inside quoted string values
+                sanitized = sanitized.replace(/"([^"\\]*(?:\\.[^"\\]*)*)"/g, (match) => {
+                    return match.replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
+                });
+
+                return JSON.parse(sanitized) as T;
+            } catch (secondErr: any) {
+                logger.error(`Failed to parse JSON response from Gemini (${secondErr.message}): ${text}`);
+                throw new Error('فشل في معالجة استجابة الذكاء الاصطناعي بصيغة JSON.');
+            }
         }
     }
 
@@ -278,8 +296,56 @@ ${JSON.stringify(simplifiedSnipers, null, 2)}
 - إذا كانت اتجاهات المحركات مشتتة أو متعارضة بنسبة كبيرة، اختر "direction": "NONE".
 `;
 
-        const responseText = await this.callGemini(prompt, ALGO_GUIDELINES);
-        return this.parseJsonResponse<AiTradeSignal>(responseText);
+        try {
+            const responseText = await this.callGemini(prompt, ALGO_GUIDELINES, true);
+            return this.parseJsonResponse<AiTradeSignal>(responseText);
+        } catch (e: any) {
+            logger.warn(`[GeminiService] Comprehensive AI analysis failed or rate-limited (${e.message}). Falling back to algorithmic consensus.`);
+
+            // Count votes across all engines and snipers
+            let longVotes = 0;
+            let shortVotes = 0;
+            for (const eng of simplifiedEngines) {
+                if (eng.scalp === 'LONG' || eng.swing === 'LONG') longVotes++;
+                if (eng.scalp === 'SHORT' || eng.swing === 'SHORT') shortVotes++;
+            }
+            for (const snp of simplifiedSnipers) {
+                if (snp.direction === 'LONG' && snp.readyToFire) longVotes += 2;
+                if (snp.direction === 'SHORT' && snp.readyToFire) shortVotes += 2;
+            }
+
+            const total = longVotes + shortVotes;
+            const isLong = longVotes > shortVotes && longVotes >= 3;
+            const isShort = shortVotes > longVotes && shortVotes >= 3;
+
+            if (!isLong && !isShort) {
+                return {
+                    direction: 'NONE',
+                    entry: currentPrice,
+                    tp: [currentPrice * 1.01, currentPrice * 1.02, currentPrice * 1.03],
+                    sl: currentPrice * 0.99,
+                    justification: 'حالة حياد؛ الإشارات الفنية بين المحركات متضاربة حالياً.',
+                    confidence: 50
+                };
+            }
+
+            const dir: 'LONG' | 'SHORT' = isLong ? 'LONG' : 'SHORT';
+            const confidence = total > 0 ? Math.min(95, Math.round((Math.max(longVotes, shortVotes) / total) * 100)) : 75;
+            const slPct = 0.015;
+            const sl = isLong ? currentPrice * (1 - slPct) : currentPrice * (1 + slPct);
+            const tp1 = isLong ? currentPrice * 1.015 : currentPrice * 0.985;
+            const tp2 = isLong ? currentPrice * 1.03 : currentPrice * 0.97;
+            const tp3 = isLong ? currentPrice * 1.05 : currentPrice * 0.95;
+
+            return {
+                direction: dir,
+                entry: currentPrice,
+                tp: [Number(tp1.toFixed(pricePrecision)), Number(tp2.toFixed(pricePrecision)), Number(tp3.toFixed(pricePrecision))],
+                sl: Number(sl.toFixed(pricePrecision)),
+                justification: `تحليل خوارزمي تلقائي: توافق إيجابي قوي لجانب الـ ${dir} بأغلبية إشارات المحركات الفنية والزنادات (${isLong ? longVotes : shortVotes} إشارة). تم الاعتماد الرياضي التلقائي خلال فترة تهدئة الذكاء الاصطناعي.`,
+                confidence
+            };
+        }
     }
 
     /**
@@ -575,7 +641,7 @@ ${JSON.stringify(dossier.snipersSummary, null, 2)}
 `;
 
         try {
-            const res = await this.callGemini(prompt, ALGO_GUIDELINES);
+            const res = await this.callGemini(prompt, ALGO_GUIDELINES, true);
             return this.parseJsonResponse(res);
         } catch (e: any) {
             logger.warn(`[GeminiService] Dossier audit failed or timed out: ${e.message}. Falling back to quantitative consensus.`);
