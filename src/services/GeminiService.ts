@@ -72,10 +72,40 @@ export class GeminiService {
         return { ok: true, status: response.status, data };
     }
 
+    private static queuePromise: Promise<any> = Promise.resolve();
+    private static lastRequestCompletedAt: number = 0;
+    private static readonly MIN_REQUEST_INTERVAL_MS = 8000; // Safe interval between AI calls (8 seconds)
+
     /**
-     * Internal helper to make REST calls to Gemini API with automatic retry on 503 and cooldown on 429
+     * Internal helper to make REST calls to Gemini API with automatic retry on 503 and cooldown on 429.
+     * Enforces strict sequential FIFO processing with a minimum interval to guarantee we never breach API rate limits.
      */
     private static async callGemini(prompt: string, systemInstruction?: string, isJson: boolean = false): Promise<string> {
+        return new Promise<string>((resolve, reject) => {
+            this.queuePromise = this.queuePromise.then(async () => {
+                const now = Date.now();
+                const elapsedSinceLast = now - this.lastRequestCompletedAt;
+                if (elapsedSinceLast < this.MIN_REQUEST_INTERVAL_MS) {
+                    const delay = this.MIN_REQUEST_INTERVAL_MS - elapsedSinceLast;
+                    await new Promise(r => setTimeout(r, delay));
+                }
+
+                try {
+                    const result = await this.executeGeminiCall(prompt, systemInstruction, isJson);
+                    resolve(result);
+                } catch (err) {
+                    reject(err);
+                } finally {
+                    this.lastRequestCompletedAt = Date.now();
+                }
+            }).catch(err => {
+                // Keep queue healthy even on prior failure
+                reject(err);
+            });
+        });
+    }
+
+    private static async executeGeminiCall(prompt: string, systemInstruction?: string, isJson: boolean = false): Promise<string> {
         if (Date.now() < this.rateLimitCooldownUntil) {
             const waitSec = Math.ceil((this.rateLimitCooldownUntil - Date.now()) / 1000);
             throw new Error(`429 - فترة تهدئة الـ AI نشطة (${waitSec} ثانية متبقية).`);
@@ -577,9 +607,16 @@ ${eventsJson}
         confidence: number;
         recommendedEntry: number;
         recommendedSL: number;
+        microTP?: number;
         recommendedTPs: number[];
         auditJustification: string;
     }> {
+        const fallbackMicro = dossier.confluenceMetrics.suggestedMicroTP || (
+            dossier.confluenceMetrics.suggestedTPs?.length > 0
+                ? Number((dossier.confluenceMetrics.suggestedEntry + (dossier.confluenceMetrics.suggestedTPs[0] - dossier.confluenceMetrics.suggestedEntry) * 0.5).toFixed(dossier.pricePrecision || 4))
+                : undefined
+        );
+
         // If cooldown is active, return quantitative consensus immediately (0ms delay)
         if (Date.now() < this.rateLimitCooldownUntil) {
             const remainingSec = Math.ceil((this.rateLimitCooldownUntil - Date.now()) / 1000);
@@ -590,6 +627,7 @@ ${eventsJson}
                 confidence: dossier.confluenceMetrics.overallScore,
                 recommendedEntry: dossier.confluenceMetrics.suggestedEntry,
                 recommendedSL: dossier.confluenceMetrics.suggestedSL,
+                microTP: fallbackMicro,
                 recommendedTPs: dossier.confluenceMetrics.suggestedTPs,
                 auditJustification: `تمت المصادقة التلقائية بالاعتماد على التوافق الرياضي المباشر (${dossier.confluenceMetrics.overallScore}%) خلال فترة تهدئة الـ AI.`
             };
@@ -624,6 +662,7 @@ ${JSON.stringify(dossier.snipersSummary, null, 2)}
 الاتجاه الموصى به: ${dossier.confluenceMetrics.recommendedDirection} | قوة التوافق: ${dossier.confluenceMetrics.overallScore}%
 الدخول المقترح: $${dossier.confluenceMetrics.suggestedEntry}
 الستوب المقترح: $${dossier.confluenceMetrics.suggestedSL}
+الهدف الخاطف المقترح (50% Micro-TP): $${fallbackMicro || dossier.confluenceMetrics.suggestedEntry}
 الأهداف: ${JSON.stringify(dossier.confluenceMetrics.suggestedTPs)} | نسبة RRR: ${dossier.confluenceMetrics.riskRewardRatio}
 
 المطلوب تدقيق هذه الصفقة أمنياً وفنياً والمصادقة عليها أو رفضها (Veto).
@@ -634,7 +673,8 @@ ${JSON.stringify(dossier.snipersSummary, null, 2)}
   "finalDirection": "LONG" | "SHORT" | "NONE",
   "confidence": نسبة مئوية من 0 إلى 100,
   "recommendedEntry": رقم سعر الدخول,
-  "recommendedSL": رقم وقف الخسارة,
+  "microTP": رقم هدف خاطف سريع جداً يمثل حوالي 50% من المسافة للهدف الأول لخطف الأرباح السريعة,
+  "recommendedSL": رقم وقف الخسارة (يجب أن يوفر مساحة كافية للتنفس ولا يقل عن 1.5% من الدخول),
   "recommendedTPs": [رقم الهدف الأول, رقم الهدف الثاني, رقم الهدف الثالث],
   "auditJustification": "تقرير باللغة العربية يشرح سبب المصادقة مع تحليل مستويات الدعم والمقاومة وفيبوناتشي وتوافق المحركات"
 }
@@ -642,7 +682,12 @@ ${JSON.stringify(dossier.snipersSummary, null, 2)}
 
         try {
             const res = await this.callGemini(prompt, ALGO_GUIDELINES, true);
-            return this.parseJsonResponse(res);
+            const parsed = this.parseJsonResponse<any>(res);
+            if (!parsed.microTP && parsed.recommendedTPs?.length > 0) {
+                const entry = parsed.recommendedEntry || dossier.confluenceMetrics.suggestedEntry;
+                parsed.microTP = Number((entry + (parsed.recommendedTPs[0] - entry) * 0.5).toFixed(dossier.pricePrecision || 4));
+            }
+            return parsed;
         } catch (e: any) {
             logger.warn(`[GeminiService] Dossier audit failed or timed out: ${e.message}. Falling back to quantitative consensus.`);
             // Safe mathematical fallback if AI is momentarily unreachable
@@ -652,6 +697,7 @@ ${JSON.stringify(dossier.snipersSummary, null, 2)}
                 confidence: dossier.confluenceMetrics.overallScore,
                 recommendedEntry: dossier.confluenceMetrics.suggestedEntry,
                 recommendedSL: dossier.confluenceMetrics.suggestedSL,
+                microTP: fallbackMicro,
                 recommendedTPs: dossier.confluenceMetrics.suggestedTPs,
                 auditJustification: `تمت المصادقة التلقائية بالاعتماد على التوافق الرياضي المباشر (${dossier.confluenceMetrics.overallScore}%) لتعذر الاتصال بلجنة الذكاء الاصطناعي.`
             };

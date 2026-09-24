@@ -35,7 +35,7 @@ export class AutonomousOrchestrator {
     public minConfluenceScore: number = 70;
     public maxConcurrentTrades: number = 3;
     public maxNewTradesPerCycle: number = 1;
-    public tradeStyle: 'HYBRID' | 'SCALP' | 'SWING' = 'HYBRID';
+    public tradeStyle: 'HYBRID' | 'SCALP' | 'SWING' | 'SCALP_TURBO' = 'HYBRID';
     public tpExecutionMode: 'single' | 'multiple' = 'multiple';
 
     constructor(
@@ -88,22 +88,24 @@ export class AutonomousOrchestrator {
     }
 
     /**
-     * Checks if current second falls in the 15m candle close execution window (:00, :15, :30, :45)
+     * Checks if current second falls in the execution window (5m close for SCALP_TURBO, 15m for others)
      */
     private async checkCandleCloseTick(): Promise<void> {
         const now = new Date();
         const mins = now.getMinutes();
         const secs = now.getSeconds();
 
-        // Execution window: 0 to 20 seconds after 15m candle close (:00, :15, :30, :45)
-        const isCandleClose = (mins % 15 === 0) && (secs >= 2 && secs <= 20);
+        const intervalMins = this.tradeStyle === 'SCALP_TURBO' ? 5 : 15;
+        // Execution window: 0 to 20 seconds after candle close
+        const isCandleClose = (mins % intervalMins === 0) && (secs >= 2 && secs <= 20);
         if (!isCandleClose) return;
 
         // Prevent double execution within the same candle
-        if (Date.now() - this.lastScanTimestamp < 60 * 1000) return;
+        const minThrottleMs = intervalMins === 5 ? 30 * 1000 : 60 * 1000;
+        if (Date.now() - this.lastScanTimestamp < minThrottleMs) return;
         this.lastScanTimestamp = Date.now();
 
-        logger.info(`[AutonomousOrchestrator] ⏰ 15M Candle Closed (${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}). Initiating Autonomous Market Scan...`);
+        logger.info(`[AutonomousOrchestrator] ⏰ ${intervalMins}M Candle Closed (${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}). Initiating Market Scan (${this.tradeStyle})...`);
         await this.runAutonomousCycle();
     }
 
@@ -213,8 +215,8 @@ export class AutonomousOrchestrator {
                     const mtfOHLCV: Record<string, OHLCV[]> = {};
                     fetchResults.forEach(r => mtfOHLCV[r.tf] = r.ohlcv);
 
-                    const quickTF = this.tradeStyle === 'SCALP' ? '5m' : '15m';
-                    const longTF = this.tradeStyle === 'SWING' ? '4h' : (this.tradeStyle === 'SCALP' ? '15m' : '1h');
+                    const quickTF = (this.tradeStyle === 'SCALP' || this.tradeStyle === 'SCALP_TURBO') ? '5m' : '15m';
+                    const longTF = this.tradeStyle === 'SWING' ? '4h' : ((this.tradeStyle === 'SCALP' || this.tradeStyle === 'SCALP_TURBO') ? '15m' : '1h');
 
                     const dossier = EngineConfluenceArbiter.buildDossier(fullSymbol, pricePrecision, mtfOHLCV, {
                         quickTF,
@@ -299,6 +301,9 @@ export class AutonomousOrchestrator {
         let finalTargets = dossier.confluenceMetrics.suggestedTPs;
         let justification = `التوافق الرياضي (${score}%)`;
 
+        const isTurbo = this.tradeStyle === 'SCALP_TURBO';
+        let microTP = dossier.confluenceMetrics.suggestedMicroTP;
+
         // 1. Gemini Supreme AI Audit (if enabled)
         if (this.isAiAuditEnabled) {
             logger.info(`[AutonomousOrchestrator] 🎯 Candidate Found for ${shortSymbol}: Direction=${recDir}, Score=${score}%. Escalating to Gemini Supreme Audit...`);
@@ -320,12 +325,33 @@ export class AutonomousOrchestrator {
             finalDirection = audit.finalDirection;
             finalStopLoss = audit.recommendedSL || finalStopLoss;
             finalTargets = audit.recommendedTPs && audit.recommendedTPs.length > 0 ? audit.recommendedTPs : finalTargets;
+            microTP = audit.microTP || microTP;
             justification = audit.auditJustification || justification;
         }
 
-        // Apply single or multiple target mode
-        if (this.tpExecutionMode === 'single' && finalTargets.length > 0) {
+        // Apply targets based on trade style and mode
+        if (isTurbo && microTP) {
+            // Turbo Scalp: Prioritize the 50% quick micro-target
+            if (this.tpExecutionMode === 'single') {
+                finalTargets = [microTP];
+            } else {
+                finalTargets = [microTP, ...finalTargets.filter(t => t !== microTP)];
+            }
+        } else if (this.tpExecutionMode === 'single' && finalTargets.length > 0) {
             finalTargets = [finalTargets[0]];
+        }
+
+        // Determine dynamic leverage based on coin tier
+        let dynamicLeverage = 10;
+        if (isTurbo) {
+            const cleanSym = shortSymbol.toUpperCase();
+            if (['BTC', 'ETH'].includes(cleanSym)) {
+                dynamicLeverage = 50;
+            } else if (['SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'NEAR'].includes(cleanSym)) {
+                dynamicLeverage = 30;
+            } else {
+                dynamicLeverage = 20;
+            }
         }
 
         // 2. Portfolio Heat & Correlation Guard (Aware of Paper and Live trades)
@@ -363,10 +389,13 @@ export class AutonomousOrchestrator {
                 entryPrice: dossier.currentPrice,
                 stopLoss: finalStopLoss,
                 targets: finalTargets,
-                riskPercentage: 1.5,
-                leverage: 10,
+                riskPercentage: isTurbo ? undefined : 1.5,
+                marginPercentage: isTurbo ? 3 : undefined,
+                maxCapitalRiskPercentage: isTurbo ? 6 : undefined,
+                leverage: dynamicLeverage,
+                isTurboScalp: isTurbo,
                 engineId: primaryEngine,
-                aiJustification: fullJustification
+                aiJustification: `${fullJustification}${isTurbo ? ' [⚡ TURBO SCALP: 3% Margin | 6% Max Risk | 50% Micro-TP]' : ''}`
             });
         } else if (this.currentMode === 'SEMI_AUTO') {
             // B. Semi-Autonomous Confirmation Card (Interactive Telegram Button)

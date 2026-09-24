@@ -68,6 +68,7 @@ export interface InstitutionalMarketDossier {
         totalWeight: number;
         suggestedEntry: number;
         suggestedSL: number;
+        suggestedMicroTP: number; // 50% quick scalp target
         suggestedTPs: number[];
         riskRewardRatio: number;
     };
@@ -76,21 +77,21 @@ export interface InstitutionalMarketDossier {
 // ─── Engine Trust Weights ───────────────────────────────────────────────────
 
 const ENGINE_WEIGHTS: Record<string, number> = {
-    'V16': 1.35, // Master Hybrid Matrix
-    'V15': 1.30, // Chan Pen & Harmonic Bat
-    'HARMONIC': 1.30, // 11 Harmonic Patterns PRZ
-    'V11': 1.25, // Adaptive Decision & Regime
-    'V10': 1.25, // Institutional Heikin-Ashi & POC
-    'V12': 1.20, // Order Flow & CVD Delta
-    'V13': 1.20, // Wyckoff & Liquidity Sweep
-    'V18': 1.15, // Order Book L2 Imbalance
-    'V17': 1.15, // Dynamic Market Regime
-    'V14': 1.10, // Adaptive Renko Cloud
-    'V9': 1.10,  // SMC Order Block & FVG
-    'V8': 1.05,  // Wave & Liquidity Sweep
-    'V7': 1.05,  // Hybrid Sniper
-    'V1': 1.10,  // V1 Benchmark (VWAP & Matrix)
-    'V6': 0.95,
+    'HARMONIC': 1.35, // 11 Harmonic Patterns PRZ (Golden Ratio Reversals)
+    'V16': 1.35,      // Master Hybrid Matrix
+    'V1': 1.30,       // V1 Benchmark (VWAP & Multi-TF Core Matrix)
+    'V18': 1.25,      // Order Book L2 Imbalance
+    'V17': 1.25,      // Dynamic Market Regime
+    'V6': 1.25,       // Momentum Confluence (RSI, MACD, Stoch)
+    'V11': 1.20,      // Adaptive Decision & Regime
+    'V15': 1.20,      // Chan Pen & Harmonic Bat
+    'V10': 1.15,      // Institutional Heikin-Ashi & POC
+    'V12': 1.15,      // Order Flow & CVD Delta
+    'V13': 1.15,      // Wyckoff & Liquidity Sweep
+    'V14': 1.10,      // Adaptive Renko Cloud
+    'V9': 1.10,       // SMC Order Block & FVG
+    'V8': 1.05,       // Wave & Liquidity Sweep
+    'V7': 1.05,       // Hybrid Sniper
     'V3': 0.90,
     'V5': 0.85,
     'V2': 0.85,
@@ -154,7 +155,7 @@ export class EngineConfluenceArbiter {
         symbol: string,
         pricePrecision: number,
         mtfOHLCV: Record<string, OHLCV[]>,
-        options: { quickTF?: string; longTF?: string; tradeStyle?: 'HYBRID' | 'SCALP' | 'SWING' } = {}
+        options: { quickTF?: string; longTF?: string; tradeStyle?: 'HYBRID' | 'SCALP' | 'SWING' | 'SCALP_TURBO' } = {}
     ): InstitutionalMarketDossier {
         const quickTF = options.quickTF || '15m';
         const longTF = options.longTF || '1h';
@@ -215,7 +216,8 @@ export class EngineConfluenceArbiter {
                     limit: 200
                 });
 
-                const activeRec = tradeStyle === 'SCALP'
+                const isScalp = tradeStyle === 'SCALP' || tradeStyle === 'SCALP_TURBO';
+                const activeRec = isScalp
                     ? (res.scalp.type !== 'NONE' ? res.scalp : null)
                     : tradeStyle === 'SWING'
                         ? (res.swing.type !== 'NONE' ? res.swing : null)
@@ -324,12 +326,13 @@ export class EngineConfluenceArbiter {
             ? quickCandles[quickCandles.length - 1].close * 0.008
             : currentPrice * 0.008;
 
-        const defaultSlDist = Math.max(atr15m * 1.5, currentPrice * 0.012);
+        // Enforce safe stop loss distance (minimum 1.6% or 1.8x ATR) to avoid noise stop hunts
+        const minSlDist = Math.max(atr15m * 1.8, currentPrice * 0.016);
 
-        // Filter SL candidates that strictly match the recommended trade direction
+        // Filter SL candidates that strictly match the recommended trade direction and respect the minimum safety buffer
         const validSlCandidates = slCandidates.filter(sl => {
-            if (recDir === 'LONG') return sl < currentPrice * 0.998;
-            if (recDir === 'SHORT') return sl > currentPrice * 1.002;
+            if (recDir === 'LONG') return sl <= currentPrice - minSlDist;
+            if (recDir === 'SHORT') return sl >= currentPrice + minSlDist;
             return false;
         });
 
@@ -337,19 +340,20 @@ export class EngineConfluenceArbiter {
         if (recDir === 'LONG') {
             suggestedSL = validSlCandidates.length > 0
                 ? Math.max(...validSlCandidates)
-                : currentPrice - defaultSlDist;
+                : currentPrice - minSlDist;
             // Strict bound: SL must always be below entry
-            if (suggestedSL >= currentPrice) suggestedSL = currentPrice - defaultSlDist;
+            if (suggestedSL >= currentPrice) suggestedSL = currentPrice - minSlDist;
         } else {
             suggestedSL = validSlCandidates.length > 0
                 ? Math.min(...validSlCandidates)
-                : currentPrice + defaultSlDist;
+                : currentPrice + minSlDist;
             // Strict bound: SL must always be above entry
-            if (suggestedSL <= currentPrice) suggestedSL = currentPrice + defaultSlDist;
+            if (suggestedSL <= currentPrice) suggestedSL = currentPrice + minSlDist;
         }
 
-        const riskDist = Math.max(Math.abs(currentPrice - suggestedSL), currentPrice * 0.008);
+        const riskDist = Math.max(Math.abs(currentPrice - suggestedSL), minSlDist);
 
+        // Standard Targets
         const tp1 = recDir === 'LONG' ? currentPrice + (riskDist * 1.5) : currentPrice - (riskDist * 1.5);
         const tp2 = recDir === 'LONG' ? currentPrice + (riskDist * 2.5) : currentPrice - (riskDist * 2.5);
         const tp3 = recDir === 'LONG'
@@ -358,6 +362,11 @@ export class EngineConfluenceArbiter {
 
         const rewardDist = Math.abs(tp1 - currentPrice);
         const rrr = riskDist > 0 ? Number((rewardDist / riskDist).toFixed(2)) : 1.5;
+
+        // Micro-TP: 50% distance of the primary target for rapid scalping execution
+        const microTP = recDir === 'LONG'
+            ? currentPrice + (rewardDist * 0.5)
+            : currentPrice - (rewardDist * 0.5);
 
         // ── 5. Assemble Dossier ─────────────────────────────────────────────
         return {
@@ -389,6 +398,7 @@ export class EngineConfluenceArbiter {
                 totalWeight: Number(totalMatrixWeight.toFixed(2)),
                 suggestedEntry: Number(avgEntry.toFixed(pricePrecision)),
                 suggestedSL: Number(suggestedSL.toFixed(pricePrecision)),
+                suggestedMicroTP: Number(microTP.toFixed(pricePrecision)),
                 suggestedTPs: [
                     Number(tp1.toFixed(pricePrecision)),
                     Number(tp2.toFixed(pricePrecision)),

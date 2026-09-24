@@ -80,7 +80,10 @@ export class PaperTradingEngine {
         stopLoss: number;
         targets: number[];
         riskPercentage?: number;
+        marginPercentage?: number;
+        maxCapitalRiskPercentage?: number;
         leverage?: number;
+        isTurboScalp?: boolean;
         engineId?: string;
         aiJustification?: string;
     }): Promise<ITrade> {
@@ -101,14 +104,24 @@ export class PaperTradingEngine {
         const initialBal = await this.getInitialBalance(userObjectId ? userObjectId.toString() : undefined);
         const balance = stats.currentBalance > 0 ? stats.currentBalance : initialBal;
 
-        const riskPct = params.riskPercentage || 1.5; // Default 1.5%
-        const leverage = params.leverage || 10;
+        const isTurbo = params.isTurboScalp || params.marginPercentage === 3;
+        const leverage = params.leverage || (isTurbo ? 25 : 10);
 
-        // Position sizing based on distance to stop loss
-        const riskAmountUSDT = balance * (riskPct / 100);
-        const slDistPct = Math.abs(params.entryPrice - params.stopLoss) / params.entryPrice;
-        const positionNotional = slDistPct > 0 ? Math.min(riskAmountUSDT / slDistPct, balance * 0.10 * leverage) : riskAmountUSDT * leverage;
-        const marginUsed = positionNotional / leverage;
+        let positionNotional: number;
+        let marginUsed: number;
+
+        if (isTurbo || params.marginPercentage) {
+            // Turbo Scalp: fixed margin (e.g. 3% of capital)
+            const marginPct = params.marginPercentage || 3;
+            marginUsed = balance * (marginPct / 100);
+            positionNotional = marginUsed * leverage;
+        } else {
+            const riskPct = params.riskPercentage || 1.5; // Default 1.5%
+            const riskAmountUSDT = balance * (riskPct / 100);
+            const slDistPct = Math.abs(params.entryPrice - params.stopLoss) / params.entryPrice;
+            positionNotional = slDistPct > 0 ? Math.min(riskAmountUSDT / slDistPct, balance * 0.10 * leverage) : riskAmountUSDT * leverage;
+            marginUsed = positionNotional / leverage;
+        }
 
         // Apply entry slippage
         const slippageMultiplier = params.direction === 'LONG'
@@ -131,6 +144,23 @@ export class PaperTradingEngine {
         } else {
             if (!safeSL || safeSL <= actualEntryPrice) {
                 safeSL = Number((actualEntryPrice * (1 + defaultRiskPct)).toFixed(6));
+            }
+        }
+
+        // Enforce strict Max Capital Loss limit (e.g. max 6% of total account balance)
+        const maxCapitalRiskPct = params.maxCapitalRiskPercentage || (isTurbo ? 6 : 15);
+        const maxAllowedLossUSDT = balance * (maxCapitalRiskPct / 100);
+        const maxAllowedDistPct = positionNotional > 0 ? (maxAllowedLossUSDT / positionNotional) : 0.06;
+
+        if (isLong) {
+            const maxSlPrice = Number((actualEntryPrice * (1 - maxAllowedDistPct)).toFixed(6));
+            if (safeSL < maxSlPrice) {
+                safeSL = maxSlPrice; // Pull up SL so loss does not exceed 6% of capital
+            }
+        } else {
+            const maxSlPrice = Number((actualEntryPrice * (1 + maxAllowedDistPct)).toFixed(6));
+            if (safeSL > maxSlPrice) {
+                safeSL = maxSlPrice; // Pull down SL so loss does not exceed 6% of capital
             }
         }
 
