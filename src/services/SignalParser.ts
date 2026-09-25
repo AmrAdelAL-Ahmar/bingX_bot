@@ -10,6 +10,7 @@ export interface ParsedSignal {
     risk?: number;
     leverage?: number;
     marginMode?: 'CROSS' | 'ISOLATED';
+    engineId?: string;
 }
 
 export class SignalParser {
@@ -175,12 +176,11 @@ export class SignalParser {
             }
 
             // Final check
-            // Entry is optional now (will use market price if missing)
-            if (!symbol || targets.length === 0 || stopLoss === 0) {
-                // If we have symbol and something else, we might still want to try?
-                // But generally fail to avoid bad trades.
+            if (!symbol) {
                 return null;
             }
+
+            // Return whatever we have, even if partial
 
             return {
                 type: 'TRADE',
@@ -198,5 +198,36 @@ export class SignalParser {
             console.error('Error parsing signal:', error);
             return null;
         }
+    }
+
+    /**
+     * Attempts regex parsing first; if it returns null, invokes AI LLM fallback
+     */
+    static async parseWithAIFallback(message: string): Promise<ParsedSignal | null> {
+        const regexResult = this.parse(message);
+        if (regexResult) return regexResult;
+
+        try {
+            const { GeminiService } = await import('./GeminiService');
+            logger.info('[SignalParser] Regex parse returned null. Invoking Gemini AI fallback parser...');
+            const aiResult = await GeminiService.parseSignalWithAI(message);
+            if (aiResult && aiResult.symbol) {
+                logger.info(`[SignalParser] Successfully extracted signal via AI: ${aiResult.symbol} ${aiResult.direction}`);
+                return {
+                    type: aiResult.type || 'TRADE',
+                    symbol: aiResult.symbol,
+                    direction: aiResult.direction,
+                    entry: Array.isArray(aiResult.entry) ? aiResult.entry : (aiResult.entry ? [aiResult.entry] : []),
+                    targets: Array.isArray(aiResult.targets) ? aiResult.targets : (aiResult.targets ? [aiResult.targets] : []),
+                    stopLoss: aiResult.stopLoss,
+                    leverage: aiResult.leverage,
+                    risk: aiResult.risk
+                };
+            }
+        } catch (err) {
+            logger.warn('[SignalParser] AI Fallback parsing failed:', err);
+        }
+
+        return null;
     }
 }

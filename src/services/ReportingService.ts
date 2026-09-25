@@ -3,6 +3,7 @@ import { Telegraf } from 'telegraf';
 import Trade from '../models/Trade';
 import User from '../models/User';
 import logger from '../utils/logger';
+import { sendTelegramMessage } from '../utils/telegram';
 
 export class ReportingService {
     private bot: Telegraf;
@@ -61,13 +62,13 @@ export class ReportingService {
 Period: ${startTime.toLocaleDateString()} - ${now.toLocaleDateString()}
 
 Total Trades: ${trades.length}
-Win Rate: ${winRate.toFixed(1)}%
-Total PnL: ${totalPnL.toFixed(2)} USDT
+Win Rate: ${winRate.toFixed(2)}%
+Total PnL: ${totalPnL.toFixed(3)} USDT
 
 Keep it up! 🚀
             `;
 
-                await this.bot.telegram.sendMessage(user.telegramId, message, { parse_mode: 'Markdown' });
+                await sendTelegramMessage(this.bot, user.telegramId, message);
                 logger.info(`Report sent to ${user.telegramId}`);
 
             } catch (error) {

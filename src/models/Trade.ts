@@ -15,13 +15,26 @@ export interface ITrade extends Document {
     leverage: number;
     pnl: number;
     isBreakEvenSet?: boolean;
+    binanceOrderId?: string;
     bingxOrderId?: string;
     entryTime: Date;
     closeTime?: Date;
+    sourceChatId?: string;
     logs: string[];
     // Warning tracking
     slWarningSent?: boolean;
     triggeredTpWarnings?: number[]; // e.g. [70, 90] means those thresholds were already notified
+    correctionAlertEnabled?: boolean;
+    correctionWarningSent?: boolean;
+    engineId?: string;
+    currentTrailingSl?: number;
+    isTrailingActive?: boolean;
+    realizedPnl?: number;
+    closedAt?: Date;
+    isPaperTrade?: boolean;
+    commissionPaid?: number;
+    aiJustification?: string;
+    exitPrice?: number;
 }
 
 const TradeSchema: Schema = new Schema({
@@ -43,13 +56,26 @@ const TradeSchema: Schema = new Schema({
     leverage: { type: Number, default: 10 },
     pnl: { type: Number, default: 0 },
     isBreakEvenSet: { type: Boolean, default: false },
+    currentTrailingSl: { type: Number },
+    isTrailingActive: { type: Boolean, default: false },
+    realizedPnl: { type: Number },
+    closedAt: { type: Date },
+    isPaperTrade: { type: Boolean, default: false },
+    commissionPaid: { type: Number, default: 0 },
+    aiJustification: { type: String },
+    exitPrice: { type: Number },
+    binanceOrderId: { type: String },
     bingxOrderId: { type: String },
     entryTime: { type: Date, default: Date.now },
     closeTime: { type: Date },
+    sourceChatId: { type: String },
     logs: [{ type: String }],
     // Warning tracking
     slWarningSent: { type: Boolean, default: false },
     triggeredTpWarnings: { type: [Number], default: [] },
+    correctionAlertEnabled: { type: Boolean, default: false },
+    correctionWarningSent: { type: Boolean, default: false },
+    engineId: { type: String }
 });
 
 export default mongoose.model<ITrade>('Trade', TradeSchema);
