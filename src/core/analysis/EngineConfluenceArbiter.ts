@@ -3,6 +3,7 @@ import { CoreAnalysisService } from './CoreAnalysisService';
 import { getSniperEngine } from '../sniper/SniperRegistry';
 import { CoreSniperScanner } from '../sniper/CoreSniperScanner';
 import { TechnicalAnalyzer, MATRIX_TFS } from './TechnicalAnalyzer';
+import { WhaleSurgeDetector, WhaleSurgeReport } from './WhaleSurgeDetector';
 import logger from '../../utils/logger';
 
 // ─── Interfaces ─────────────────────────────────────────────────────────────
@@ -60,6 +61,7 @@ export interface InstitutionalMarketDossier {
     };
     enginesSummary: EngineVerdict[];
     snipersSummary: { engineId: string; readyToFire: boolean; direction: string }[];
+    whaleSurge?: WhaleSurgeReport;
     confluenceMetrics: {
         overallScore: number; // 0 to 100
         recommendedDirection: 'LONG' | 'SHORT' | 'NONE';
@@ -155,7 +157,7 @@ export class EngineConfluenceArbiter {
         symbol: string,
         pricePrecision: number,
         mtfOHLCV: Record<string, OHLCV[]>,
-        options: { quickTF?: string; longTF?: string; tradeStyle?: 'HYBRID' | 'SCALP' | 'SWING' | 'SCALP_TURBO' } = {}
+        options: { quickTF?: string; longTF?: string; tradeStyle?: 'HYBRID' | 'SCALP' | 'SWING' | 'SCALP_TURBO' | 'WHALE_SURGE' } = {}
     ): InstitutionalMarketDossier {
         const quickTF = options.quickTF || '15m';
         const longTF = options.longTF || '1h';
@@ -299,6 +301,25 @@ export class EngineConfluenceArbiter {
         if (sniperBullish > 0) bullScore += Math.min(10, sniperBullish * 5);
         if (sniperBearish > 0) bearScore += Math.min(10, sniperBearish * 5);
 
+        // ── 3b. Whale Surge / SMC Breakout Evaluation ───────────────────────
+        const isWhaleSurge = tradeStyle === 'WHALE_SURGE';
+        let whaleSurgeReport: WhaleSurgeReport | undefined;
+
+        if (isWhaleSurge) {
+            try {
+                whaleSurgeReport = WhaleSurgeDetector.analyze(symbol, pricePrecision, mtfOHLCV);
+                if (whaleSurgeReport.isQualified) {
+                    if (whaleSurgeReport.direction === 'LONG') {
+                        bullScore += 25;
+                    } else if (whaleSurgeReport.direction === 'SHORT') {
+                        bearScore += 25;
+                    }
+                }
+            } catch (surgeErr: any) {
+                logger.warn(`[Arbiter] WhaleSurge analysis error: ${surgeErr.message}`);
+            }
+        }
+
         // Clamp to 10 - 98 range
         const finalBullish = Math.max(10, Math.min(98, Math.round(bullScore)));
         const finalBearish = Math.max(10, Math.min(98, Math.round(bearScore)));
@@ -371,11 +392,21 @@ export class EngineConfluenceArbiter {
         const riskDist = Math.max(Math.abs(currentPrice - suggestedSL), minSlDist);
 
         // Standard Targets
-        const tp1 = recDir === 'LONG' ? currentPrice + (riskDist * 1.5) : currentPrice - (riskDist * 1.5);
-        const tp2 = recDir === 'LONG' ? currentPrice + (riskDist * 2.5) : currentPrice - (riskDist * 2.5);
-        const tp3 = recDir === 'LONG'
+        let tp1 = recDir === 'LONG' ? currentPrice + (riskDist * 1.5) : currentPrice - (riskDist * 1.5);
+        let tp2 = recDir === 'LONG' ? currentPrice + (riskDist * 2.5) : currentPrice - (riskDist * 2.5);
+        let tp3 = recDir === 'LONG'
             ? (fibZones.fibTarget1272 > tp2 ? fibZones.fibTarget1272 : currentPrice + (riskDist * 4.0))
             : (fibZones.fib786 < tp2 ? fibZones.fib786 : currentPrice - (riskDist * 4.0));
+
+        // Override targets and SL if qualified Whale Surge was detected
+        if (isWhaleSurge && whaleSurgeReport && whaleSurgeReport.isQualified) {
+            recDir = whaleSurgeReport.direction;
+            dominantScore = Math.max(dominantScore, whaleSurgeReport.confidenceScore);
+            suggestedSL = whaleSurgeReport.suggestedSL;
+            tp1 = whaleSurgeReport.suggestedTPs[0];
+            tp2 = whaleSurgeReport.suggestedTPs[1];
+            tp3 = whaleSurgeReport.suggestedTPs[2];
+        }
 
         const rewardDist = Math.abs(tp1 - currentPrice);
         const rrr = riskDist > 0 ? Number((rewardDist / riskDist).toFixed(2)) : 1.5;
@@ -383,9 +414,9 @@ export class EngineConfluenceArbiter {
         // Ultra-Fast Scalp Target (Micro-TP): close target (0.45% - 0.65% price move)
         // Highly reachable in 1-3 candles, giving 10%-20% profit on high leverage (20x-30x)
         const microDist = Math.max(currentPrice * 0.005, Math.min(rewardDist * 0.35, currentPrice * 0.008));
-        const microTP = recDir === 'LONG'
-            ? currentPrice + microDist
-            : currentPrice - microDist;
+        const microTP = (isWhaleSurge && whaleSurgeReport && whaleSurgeReport.isQualified)
+            ? whaleSurgeReport.suggestedTPs[0]
+            : (recDir === 'LONG' ? currentPrice + microDist : currentPrice - microDist);
 
         // ── 5. Assemble Dossier ─────────────────────────────────────────────
         return {
@@ -409,6 +440,7 @@ export class EngineConfluenceArbiter {
             },
             enginesSummary: engineVerdicts,
             snipersSummary,
+            whaleSurge: whaleSurgeReport,
             confluenceMetrics: {
                 overallScore: dominantScore,
                 recommendedDirection: recDir,

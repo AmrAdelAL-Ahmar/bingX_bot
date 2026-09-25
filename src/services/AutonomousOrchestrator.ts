@@ -35,7 +35,7 @@ export class AutonomousOrchestrator {
     public minConfluenceScore: number = 70;
     public maxConcurrentTrades: number = 3;
     public maxNewTradesPerCycle: number = 1;
-    public tradeStyle: 'HYBRID' | 'SCALP' | 'SWING' | 'SCALP_TURBO' = 'HYBRID';
+    public tradeStyle: 'HYBRID' | 'SCALP' | 'SWING' | 'SCALP_TURBO' | 'WHALE_SURGE' = 'HYBRID';
     public tpExecutionMode: 'single' | 'multiple' = 'multiple';
 
     // Advanced Risk and Strategy Controls
@@ -109,6 +109,7 @@ export class AutonomousOrchestrator {
                 if (admin.autonomousSettings.allowedDirection) this.allowedDirection = admin.autonomousSettings.allowedDirection;
                 if (admin.autonomousSettings.postTpCooldownMinutes !== undefined) this.postTpCooldownMinutes = admin.autonomousSettings.postTpCooldownMinutes;
                 if (admin.autonomousSettings.turboSlPercentage) this.turboSlPercentage = admin.autonomousSettings.turboSlPercentage;
+                if (admin.autonomousSettings.tradeStyle) this.tradeStyle = admin.autonomousSettings.tradeStyle;
             }
             if (admin?.autoBreakEven !== undefined) {
                 this.autoBreakEvenEnabled = admin.autoBreakEven;
@@ -397,6 +398,7 @@ export class AutonomousOrchestrator {
         let justification = `التوافق الرياضي (${score}%)`;
 
         const isTurbo = this.tradeStyle === 'SCALP_TURBO';
+        const isWhale = this.tradeStyle === 'WHALE_SURGE';
         let microTP = dossier.confluenceMetrics.suggestedMicroTP;
 
         // 1. Gemini Supreme AI Audit (if enabled)
@@ -432,6 +434,12 @@ export class AutonomousOrchestrator {
             } else {
                 finalTargets = [microTP, ...finalTargets.filter(t => t !== microTP)];
             }
+        } else if (isWhale && dossier.whaleSurge?.isQualified) {
+            // Whale Surge targets: multi-tier [1.5%, 2.5%, 4.5%]
+            finalTargets = this.tpExecutionMode === 'single'
+                ? [dossier.whaleSurge.suggestedTPs[0]]
+                : [dossier.whaleSurge.suggestedTPs[0], dossier.whaleSurge.suggestedTPs[1], dossier.whaleSurge.suggestedTPs[2]];
+            finalStopLoss = dossier.whaleSurge.suggestedSL;
         } else if (this.tpExecutionMode === 'single' && finalTargets.length > 0) {
             finalTargets = [finalTargets[0]];
         }
@@ -451,7 +459,7 @@ export class AutonomousOrchestrator {
             }
         }
 
-        // Determine dynamic leverage based on coin tier
+        // Determine dynamic leverage based on coin tier and trade style
         let dynamicLeverage = 10;
         if (isTurbo) {
             const cleanSym = shortSymbol.toUpperCase();
@@ -461,6 +469,15 @@ export class AutonomousOrchestrator {
                 dynamicLeverage = 30;
             } else {
                 dynamicLeverage = 20;
+            }
+        } else if (isWhale) {
+            const cleanSym = shortSymbol.toUpperCase();
+            if (['BTC', 'ETH'].includes(cleanSym)) {
+                dynamicLeverage = 25;
+            } else if (['SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'NEAR'].includes(cleanSym)) {
+                dynamicLeverage = 20;
+            } else {
+                dynamicLeverage = 15;
             }
         }
 
@@ -499,13 +516,13 @@ export class AutonomousOrchestrator {
                 entryPrice: dossier.currentPrice,
                 stopLoss: finalStopLoss,
                 targets: finalTargets,
-                riskPercentage: isTurbo ? undefined : 1.5,
-                marginPercentage: isTurbo ? 3 : undefined,
-                maxCapitalRiskPercentage: isTurbo ? 6 : undefined,
+                riskPercentage: isTurbo ? undefined : (isWhale ? 2.0 : 1.5),
+                marginPercentage: isTurbo ? 3 : (isWhale ? 4 : undefined),
+                maxCapitalRiskPercentage: isTurbo ? 6 : (isWhale ? 8 : undefined),
                 leverage: dynamicLeverage,
                 isTurboScalp: isTurbo,
-                engineId: primaryEngine,
-                aiJustification: `${fullJustification}${isTurbo ? ' [⚡ TURBO SCALP: 3% Margin | 6% Max Risk | 50% Micro-TP]' : ''}`
+                engineId: isWhale ? 'WHALE_SURGE' : primaryEngine,
+                aiJustification: `${fullJustification}${isTurbo ? ' [⚡ TURBO SCALP: 3% Margin | 6% Max Risk | 50% Micro-TP]' : ''}${isWhale ? ` [💥 WHALE SURGE: ${dossier.whaleSurge?.justification || 'سحب سيولة وكسر هيكل'}]` : ''}`
             });
         } else if (this.currentMode === 'SEMI_AUTO') {
             // B. Semi-Autonomous Confirmation Card (Interactive Telegram Button)

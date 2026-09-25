@@ -230,25 +230,36 @@ export const registerAutonomousHandlers = (
     // ── Trade Style Controls ──
     bot.action('aut_style_turbo', async (ctx) => {
         orchestrator.tradeStyle = 'SCALP_TURBO';
+        await User.updateOne({ isActive: true }, { 'autonomousSettings.tradeStyle': 'SCALP_TURBO' }).catch(() => {});
         await ctx.answerCbQuery('🚀 تم تفعيل نمط التيربو السريع (رافعة 20-50x | مارجن 3% | هدف خاطف 50%)').catch(() => {});
         await renderAutonomousDashboard(ctx, orchestrator, true);
     });
 
     bot.action('aut_style_scalp', async (ctx) => {
         orchestrator.tradeStyle = 'SCALP';
+        await User.updateOne({ isActive: true }, { 'autonomousSettings.tradeStyle': 'SCALP' }).catch(() => {});
         await ctx.answerCbQuery('⚡ تم تفعيل نمط السكالب (فريمات سريعة 5m / 15m)').catch(() => {});
         await renderAutonomousDashboard(ctx, orchestrator, true);
     });
 
     bot.action('aut_style_swing', async (ctx) => {
         orchestrator.tradeStyle = 'SWING';
+        await User.updateOne({ isActive: true }, { 'autonomousSettings.tradeStyle': 'SWING' }).catch(() => {});
         await ctx.answerCbQuery('🌊 تم تفعيل نمط السوينغ (فريمات اتجاهية 15m / 4h)').catch(() => {});
         await renderAutonomousDashboard(ctx, orchestrator, true);
     });
 
     bot.action('aut_style_hybrid', async (ctx) => {
         orchestrator.tradeStyle = 'HYBRID';
+        await User.updateOne({ isActive: true }, { 'autonomousSettings.tradeStyle': 'HYBRID' }).catch(() => {});
         await ctx.answerCbQuery('🔄 تم تفعيل النمط الهجين المتوازن').catch(() => {});
+        await renderAutonomousDashboard(ctx, orchestrator, true);
+    });
+
+    bot.action('aut_style_whale', async (ctx) => {
+        orchestrator.tradeStyle = 'WHALE_SURGE';
+        await User.updateOne({ isActive: true }, { 'autonomousSettings.tradeStyle': 'WHALE_SURGE' }).catch(() => {});
+        await ctx.answerCbQuery('💥 تم تفعيل نمط الصفقات الانفجارية (سحب سيولة + كسر هيكل + تدفق حجم 2.5x)').catch(() => {});
         await renderAutonomousDashboard(ctx, orchestrator, true);
     });
 
@@ -563,13 +574,15 @@ async function renderAutonomousDashboard(ctx: any, orchestrator: AutonomousOrche
             ? '🟡 نصف تلقائي (تأكيد عبر تيليجرام 60 ثانية)'
             : '🟢 تلقائي كامل على المحفظة الحقيقية (BingX Real Balance)';
 
-    const styleLabel = orchestrator.tradeStyle === 'SCALP_TURBO'
-        ? '🚀 تيربو سريع (رافعة 20-50x | مارجن 3% | هدف 50% خاطف)'
-        : orchestrator.tradeStyle === 'SCALP'
-            ? '⚡ سكالب سريع (5m/15m)'
-            : orchestrator.tradeStyle === 'SWING'
-                ? '🌊 سوينغ اتجاهي (15m/4h)'
-                : '🔄 هجين متوازن (تلقائي)';
+    const styleLabel = orchestrator.tradeStyle === 'WHALE_SURGE'
+        ? '💥 صفقات انفجارية (سحب سيولة V8 + كسر هيكل V9 + تدفق حجم 2.5x)'
+        : orchestrator.tradeStyle === 'SCALP_TURBO'
+            ? '🚀 تيربو سريع (رافعة 20-50x | مارجن 3% | هدف 50% خاطف)'
+            : orchestrator.tradeStyle === 'SCALP'
+                ? '⚡ سكالب سريع (5m/15m)'
+                : orchestrator.tradeStyle === 'SWING'
+                    ? '🌊 سوينغ اتجاهي (15m/4h)'
+                    : '🔄 هجين متوازن (تلقائي)';
 
     const tpLabel = orchestrator.tpExecutionMode === 'single'
         ? '🎯 الهدف الأول فقط (خروج 100% عند TP1)'
@@ -612,9 +625,12 @@ async function renderAutonomousDashboard(ctx: any, orchestrator: AutonomousOrche
                 { text: mode === 'SEMI_AUTO' ? '🔘 [نشط] نصف تلقائي 🟡' : '🟡 نصف تلقائي', callback_data: 'aut_set_semi' },
                 { text: mode === 'FULL_AUTO' ? '🔘 [نشط] حقيقي 🟢' : '🚀 حقيقي (Live)', callback_data: 'aut_set_full' }
             ],
-            // Trade Style Selectors (Turbo vs Scalp vs Swing vs Hybrid)
+            // Trade Style Selectors (Turbo vs Whale Surge vs Hybrid vs Swing)
             [
                 { text: orchestrator.tradeStyle === 'SCALP_TURBO' ? '🔘 🚀 تيربو سريع (3%)' : '🚀 تيربو سريع (3%)', callback_data: 'aut_style_turbo' },
+                { text: orchestrator.tradeStyle === 'WHALE_SURGE' ? '🔘 💥 انفجارية (SMC)' : '💥 انفجارية (SMC)', callback_data: 'aut_style_whale' }
+            ],
+            [
                 { text: orchestrator.tradeStyle === 'HYBRID' ? '🔘 🔄 هجين' : '🔄 هجين', callback_data: 'aut_style_hybrid' },
                 { text: orchestrator.tradeStyle === 'SWING' ? '🔘 🌊 سوينغ' : '🌊 سوينغ', callback_data: 'aut_style_swing' }
             ],

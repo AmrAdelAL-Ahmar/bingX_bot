@@ -81,6 +81,7 @@ export interface IUser extends Document {
         turboSlPercentage: number;
         breakEvenTriggerPct: number;
         microTpPercentage: number;
+        tradeStyle?: 'HYBRID' | 'SCALP' | 'SWING' | 'SCALP_TURBO' | 'WHALE_SURGE';
     };
 }
 
@@ -164,7 +165,8 @@ const UserSchema: Schema = new Schema({
         postTpCooldownMinutes: { type: Number, default: 30 },
         turboSlPercentage: { type: Number, default: 0.9 },
         breakEvenTriggerPct: { type: Number, default: 0.35 },
-        microTpPercentage: { type: Number, default: 0.55 }
+        microTpPercentage: { type: Number, default: 0.55 },
+        tradeStyle: { type: String, enum: ['HYBRID', 'SCALP', 'SWING', 'SCALP_TURBO', 'WHALE_SURGE'], default: 'HYBRID' }
     }
 });
 
