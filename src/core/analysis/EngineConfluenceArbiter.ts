@@ -326,13 +326,28 @@ export class EngineConfluenceArbiter {
             ? quickCandles[quickCandles.length - 1].close * 0.008
             : currentPrice * 0.008;
 
-        // Enforce safe stop loss distance (minimum 1.6% or 1.8x ATR) to avoid noise stop hunts
-        const minSlDist = Math.max(atr15m * 1.8, currentPrice * 0.016);
+        const isTurbo = tradeStyle === 'SCALP_TURBO';
 
-        // Filter SL candidates that strictly match the recommended trade direction and respect the minimum safety buffer
+        // In SCALP_TURBO: stop loss is balanced between 0.8% and 1.0% to match the quick 0.55% micro-target
+        // For HYBRID / SWING / SCALP: enforce minimum 1.6% or 1.8x ATR to avoid noise stop hunts
+        const minSlDist = isTurbo
+            ? currentPrice * 0.008 // 0.8% minimum
+            : Math.max(atr15m * 1.8, currentPrice * 0.016);
+
+        const maxSlDist = isTurbo
+            ? currentPrice * 0.010 // 1.0% maximum
+            : currentPrice * 0.035;
+
+        // Filter SL candidates that strictly match the recommended trade direction and respect the safety buffers
         const validSlCandidates = slCandidates.filter(sl => {
-            if (recDir === 'LONG') return sl <= currentPrice - minSlDist;
-            if (recDir === 'SHORT') return sl >= currentPrice + minSlDist;
+            if (recDir === 'LONG') {
+                const dist = currentPrice - sl;
+                return dist >= minSlDist && dist <= maxSlDist;
+            }
+            if (recDir === 'SHORT') {
+                const dist = sl - currentPrice;
+                return dist >= minSlDist && dist <= maxSlDist;
+            }
             return false;
         });
 
@@ -340,15 +355,17 @@ export class EngineConfluenceArbiter {
         if (recDir === 'LONG') {
             suggestedSL = validSlCandidates.length > 0
                 ? Math.max(...validSlCandidates)
-                : currentPrice - minSlDist;
+                : currentPrice - (isTurbo ? currentPrice * 0.009 : minSlDist);
             // Strict bound: SL must always be below entry
             if (suggestedSL >= currentPrice) suggestedSL = currentPrice - minSlDist;
+            if (isTurbo && (currentPrice - suggestedSL) > maxSlDist) suggestedSL = currentPrice - maxSlDist;
         } else {
             suggestedSL = validSlCandidates.length > 0
                 ? Math.min(...validSlCandidates)
-                : currentPrice + minSlDist;
+                : currentPrice + (isTurbo ? currentPrice * 0.009 : minSlDist);
             // Strict bound: SL must always be above entry
             if (suggestedSL <= currentPrice) suggestedSL = currentPrice + minSlDist;
+            if (isTurbo && (suggestedSL - currentPrice) > maxSlDist) suggestedSL = currentPrice + maxSlDist;
         }
 
         const riskDist = Math.max(Math.abs(currentPrice - suggestedSL), minSlDist);

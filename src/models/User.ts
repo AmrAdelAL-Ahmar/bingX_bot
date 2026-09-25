@@ -75,6 +75,13 @@ export interface IUser extends Document {
         limit: number;
     };
     paperInitialBalance?: number;
+    autonomousSettings?: {
+        allowedDirection: 'BOTH' | 'LONG_ONLY' | 'SHORT_ONLY';
+        postTpCooldownMinutes: number;
+        turboSlPercentage: number;
+        breakEvenTriggerPct: number;
+        microTpPercentage: number;
+    };
 }
 
 const UserSchema: Schema = new Schema({
@@ -151,6 +158,13 @@ const UserSchema: Schema = new Schema({
     pickerSettings: {
         engine: { type: String, enum: ['multicriteria', 'ccxt'], default: 'multicriteria' },
         limit: { type: Number, default: 20 }
+    },
+    autonomousSettings: {
+        allowedDirection: { type: String, enum: ['BOTH', 'LONG_ONLY', 'SHORT_ONLY'], default: 'BOTH' },
+        postTpCooldownMinutes: { type: Number, default: 30 },
+        turboSlPercentage: { type: Number, default: 0.9 },
+        breakEvenTriggerPct: { type: Number, default: 0.35 },
+        microTpPercentage: { type: Number, default: 0.55 }
     }
 });
 

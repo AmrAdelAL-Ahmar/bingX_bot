@@ -123,6 +123,15 @@ export const registerAutonomousHandlers = (
         }
     });
 
+    bot.command(['aut_settings', 'settings_auto', 'auto_settings'], async (ctx) => {
+        try {
+            await renderAutonomousSettingsHub(ctx, orchestrator);
+        } catch (e: any) {
+            logger.error('Error in /aut_settings command:', e);
+            ctx.reply('❌ حدث خطأ أثناء فتح لوحة إعدادات التداول الذاتي.');
+        }
+    });
+
     bot.command(['help', 'commands', 'all_commands'], async (ctx) => {
         try {
             const helpMsg =
@@ -254,6 +263,63 @@ export const registerAutonomousHandlers = (
         orchestrator.tpExecutionMode = 'multiple';
         await ctx.answerCbQuery('🏆 تم تفعيل نمط جميع الأهداف (تأمين ونقل الستوب للدخول)').catch(() => {});
         await renderAutonomousDashboard(ctx, orchestrator, true);
+    });
+
+    // ── Advanced Protection and Risk Settings ──
+    bot.action('aut_settings_hub', async (ctx) => {
+        try {
+            await ctx.answerCbQuery().catch(() => {});
+            await renderAutonomousSettingsHub(ctx, orchestrator, true);
+        } catch (e: any) {
+            logger.error('Error in aut_settings_hub:', e);
+        }
+    });
+
+    bot.action('aut_toggle_be', async (ctx) => {
+        orchestrator.autoBreakEvenEnabled = !orchestrator.autoBreakEvenEnabled;
+        await User.updateOne({ isActive: true }, { autoBreakEven: orchestrator.autoBreakEvenEnabled }).catch(() => {});
+        const msg = orchestrator.autoBreakEvenEnabled ? '🛡️ تم تفعيل التأمين الفوري (نقل الستوب عند +0.35%)' : '⚪ تم تعطيل التأمين الفوري';
+        await ctx.answerCbQuery(msg).catch(() => {});
+        await renderAutonomousSettingsHub(ctx, orchestrator, true);
+    });
+
+    bot.action('aut_dir_both', async (ctx) => {
+        orchestrator.allowedDirection = 'BOTH';
+        await User.updateOne({ isActive: true }, { 'autonomousSettings.allowedDirection': 'BOTH' }).catch(() => {});
+        await ctx.answerCbQuery('🔄 تم تفعيل كلا الاتجاهين (LONG & SHORT)').catch(() => {});
+        await renderAutonomousSettingsHub(ctx, orchestrator, true);
+    });
+
+    bot.action('aut_dir_long', async (ctx) => {
+        orchestrator.allowedDirection = 'LONG_ONLY';
+        await User.updateOne({ isActive: true }, { 'autonomousSettings.allowedDirection': 'LONG_ONLY' }).catch(() => {});
+        await ctx.answerCbQuery('🟢 تم حصر التداول في صفقات الشراء فقط (LONG)').catch(() => {});
+        await renderAutonomousSettingsHub(ctx, orchestrator, true);
+    });
+
+    bot.action('aut_dir_short', async (ctx) => {
+        orchestrator.allowedDirection = 'SHORT_ONLY';
+        await User.updateOne({ isActive: true }, { 'autonomousSettings.allowedDirection': 'SHORT_ONLY' }).catch(() => {});
+        await ctx.answerCbQuery('🔴 تم حصر التداول في صفقات البيع فقط (SHORT)').catch(() => {});
+        await renderAutonomousSettingsHub(ctx, orchestrator, true);
+    });
+
+    bot.action(/^aut_turbosl_(08|09|10|12)$/, async (ctx) => {
+        const valMap: Record<string, number> = { '08': 0.8, '09': 0.9, '10': 1.0, '12': 1.2 };
+        const val = valMap[ctx.match[1]] || 0.9;
+        orchestrator.turboSlPercentage = val;
+        await User.updateOne({ isActive: true }, { 'autonomousSettings.turboSlPercentage': val }).catch(() => {});
+        await ctx.answerCbQuery(`🛑 تم تعيين وقف خسارة التيربو على ${val}%`).catch(() => {});
+        await renderAutonomousSettingsHub(ctx, orchestrator, true);
+    });
+
+    bot.action(/^aut_cool_(0|15|30|45)$/, async (ctx) => {
+        const mins = parseInt(ctx.match[1]);
+        orchestrator.postTpCooldownMinutes = mins;
+        await User.updateOne({ isActive: true }, { 'autonomousSettings.postTpCooldownMinutes': mins }).catch(() => {});
+        const msg = mins > 0 ? `⏱️ تم ضبط فترة تهدئة العملة بعد الهدف على ${mins} دقيقة` : '⚪ تم تعطيل فترة تهدئة العملة بعد الهدف';
+        await ctx.answerCbQuery(msg).catch(() => {});
+        await renderAutonomousSettingsHub(ctx, orchestrator, true);
     });
 
     // ── Paper Balance & Reset Picker ──
@@ -517,12 +583,19 @@ async function renderAutonomousDashboard(ctx: any, orchestrator: AutonomousOrche
         ? '⏰ <i>كل 5 دقائق فور إغلاق الشمعة (5M Candle Close)</i>'
         : '⏰ <i>كل 15 دقيقة فور إغلاق الشمعة (:00، :15، :30، :45)</i>';
 
+    const beBadge = orchestrator.autoBreakEvenEnabled ? '🛡️ تأمين عند +0.35%' : '⚪ معطل';
+    const dirBadge = orchestrator.allowedDirection === 'BOTH' ? '🔄 كلاهما (L&S)' : (orchestrator.allowedDirection === 'LONG_ONLY' ? '🟢 شراء فقط' : '🔴 بيع فقط');
+    const cooldownBadge = orchestrator.postTpCooldownMinutes > 0 ? `⏱️ حظر ${orchestrator.postTpCooldownMinutes}د` : '⚪ بدون تهدئة';
+    const turboSlBadge = `🛑 ستوب ${orchestrator.turboSlPercentage}%`;
+
     let msg = `🤖 <b>لوحة القيادة لمنظومة التداول الذاتي الفائقة (Autonomous V2)</b>\n`;
     msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
     msg += `• <b>الحالة العامة:</b> <b>${statusBadge}</b>\n`;
     msg += `• <b>نمط التنفيذ:</b>\n  👉 <b>${modeLabel}</b>\n`;
     msg += `• <b>أسلوب التداول:</b> <b>${styleLabel}</b>\n`;
     msg += `• <b>نظام جني الأرباح:</b> <b>${tpLabel}</b>\n\n`;
+    msg += `• <b>التأمين الفوري (BE):</b> ${beBadge} | ${turboSlBadge}\n`;
+    msg += `• <b>الاتجاه والتهدئة:</b> ${dirBadge} | ${cooldownBadge}\n\n`;
     msg += `• <b>المشرف الأمني:</b> ${aiBadge}\n`;
     msg += `• <b>درع الاقتصاد الكلي:</b> ${macroBadge}\n`;
     msg += `• <b>عتبة التوافق الرياضي:</b> 🎯 <code>${orchestrator.minConfluenceScore}%</code>\n\n`;
@@ -549,6 +622,10 @@ async function renderAutonomousDashboard(ctx: any, orchestrator: AutonomousOrche
             [
                 { text: orchestrator.tpExecutionMode === 'single' ? '🔘 🎯 الهدف الأول فقط' : '🎯 الهدف الأول فقط', callback_data: 'aut_tp_single' },
                 { text: orchestrator.tpExecutionMode === 'multiple' ? '🔘 🏆 جميع الأهداف' : '🏆 جميع الأهداف', callback_data: 'aut_tp_multiple' }
+            ],
+            // Settings Hub (Protection, Break-Even, Direction & Risk)
+            [
+                { text: '⚙️ إعدادات الحماية والتأمين (Break-Even & Risk)', callback_data: 'aut_settings_hub' }
             ],
             // Core Hubs
             [
@@ -1300,6 +1377,73 @@ async function renderPaperBalancePicker(ctx: any, isEdit = false) {
             ],
             [
                 { text: '🔙 رجوع للمحفظة الافتراضية', callback_data: 'aut_view_paper_stats' }
+            ]
+        ]
+    };
+
+    if (isEdit && ctx.callbackQuery) {
+        await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: keyboard }).catch(async () => {
+            await ctx.replyWithHTML(msg, { reply_markup: keyboard });
+        });
+    } else {
+        await ctx.replyWithHTML(msg, { reply_markup: keyboard });
+    }
+}
+
+/**
+ * 12. Autonomous Advanced Settings & Risk Hub
+ */
+async function renderAutonomousSettingsHub(ctx: any, orchestrator: AutonomousOrchestrator, isEdit = false) {
+    const beStatus = orchestrator.autoBreakEvenEnabled ? '🟢 مفعل (نقل الستوب عند +0.35%)' : '⚪ معطل';
+    const dirStatus = orchestrator.allowedDirection === 'BOTH'
+        ? '🔄 كلا الاتجاهين (LONG & SHORT)'
+        : (orchestrator.allowedDirection === 'LONG_ONLY' ? '🟢 شراء فقط (LONG)' : '🔴 بيع فقط (SHORT)');
+    const coolStatus = orchestrator.postTpCooldownMinutes > 0 ? `⏱️ ${orchestrator.postTpCooldownMinutes} دقيقة` : '⚪ بدون تهدئة';
+    const slStatus = `🛑 ${orchestrator.turboSlPercentage}%`;
+
+    let msg = `⚙️ <b>لوحة إعدادات الحماية والتأمين لمنظومة التداول الذاتي</b>\n`;
+    msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
+    msg += `• <b>التأمين الفوري (Auto Break-Even):</b>\n  👉 <b>${beStatus}</b>\n`;
+    msg += `  <i>ينقل الستوب لسعر الدخول + الرسوم فور صعود الصفقة +0.35% لضمان عدم الخسارة</i>\n\n`;
+    msg += `• <b>الاتجاه المسموح للصفقات:</b>\n  👉 <b>${dirStatus}</b>\n\n`;
+    msg += `• <b>وقف خسارة السكالبينج التيربو:</b>\n  👉 <b>${slStatus}</b> <i>(موازنة المخاطرة مع الهدف 0.55%)</i>\n\n`;
+    msg += `• <b>فترة حظر العملة بعد الهدف (Anti-Peak Cooldown):</b>\n  👉 <b>${coolStatus}</b>\n`;
+    msg += `  <i>تمنع إعادة الدخول في نفس العملة فور ضرب الهدف لتجنب الشراء من قمة الحركة</i>\n`;
+    msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
+    msg += `👇 <b>اضغط على الأزرار لتعديل أي إعداد فوراً:</b>`;
+
+    const keyboard = {
+        inline_keyboard: [
+            // Row 1: Auto Break Even Toggle
+            [
+                {
+                    text: orchestrator.autoBreakEvenEnabled ? '🛡️ تأمين الأرباح (BE): مفعل 🟢' : '🛡️ تأمين الأرباح (BE): معطل ⚪',
+                    callback_data: 'aut_toggle_be'
+                }
+            ],
+            // Row 2: Allowed Direction
+            [
+                { text: orchestrator.allowedDirection === 'BOTH' ? '🔘 🔄 كلاهما' : '🔄 كلاهما', callback_data: 'aut_dir_both' },
+                { text: orchestrator.allowedDirection === 'LONG_ONLY' ? '🔘 🟢 شراء' : '🟢 شراء', callback_data: 'aut_dir_long' },
+                { text: orchestrator.allowedDirection === 'SHORT_ONLY' ? '🔘 🔴 بيع' : '🔴 بيع', callback_data: 'aut_dir_short' }
+            ],
+            // Row 3: Turbo SL selection
+            [
+                { text: orchestrator.turboSlPercentage === 0.8 ? '🔘 🛑 0.8%' : '🛑 0.8%', callback_data: 'aut_turbosl_08' },
+                { text: orchestrator.turboSlPercentage === 0.9 ? '🔘 🛑 0.9%' : '🛑 0.9%', callback_data: 'aut_turbosl_09' },
+                { text: orchestrator.turboSlPercentage === 1.0 ? '🔘 🛑 1.0%' : '🛑 1.0%', callback_data: 'aut_turbosl_10' },
+                { text: orchestrator.turboSlPercentage === 1.2 ? '🔘 🛑 1.2%' : '🛑 1.2%', callback_data: 'aut_turbosl_12' }
+            ],
+            // Row 4: Post-TP Cooldown selection
+            [
+                { text: orchestrator.postTpCooldownMinutes === 15 ? '🔘 ⏱️ 15 د' : '⏱️ 15 د', callback_data: 'aut_cool_15' },
+                { text: orchestrator.postTpCooldownMinutes === 30 ? '🔘 ⏱️ 30 د' : '⏱️ 30 د', callback_data: 'aut_cool_30' },
+                { text: orchestrator.postTpCooldownMinutes === 45 ? '🔘 ⏱️ 45 د' : '⏱️ 45 د', callback_data: 'aut_cool_45' },
+                { text: orchestrator.postTpCooldownMinutes === 0 ? '🔘 ⚪ بدون' : '⚪ بدون', callback_data: 'aut_cool_0' }
+            ],
+            // Row 5: Navigation
+            [
+                { text: '🔙 رجوع للوحة القيادة الذاتية', callback_data: 'aut_main_menu' }
             ]
         ]
     };

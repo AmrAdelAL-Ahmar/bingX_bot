@@ -157,10 +157,22 @@ export class PaperTradingEngine {
             if (safeSL < maxSlPrice) {
                 safeSL = maxSlPrice; // Pull up SL so loss does not exceed 6% of capital
             }
+            if (isTurbo) {
+                const turboMinSl = Number((actualEntryPrice * (1 - 0.010)).toFixed(6));
+                if (safeSL < turboMinSl) {
+                    safeSL = turboMinSl; // Clamp turbo SL to max 1.0% loss
+                }
+            }
         } else {
             const maxSlPrice = Number((actualEntryPrice * (1 + maxAllowedDistPct)).toFixed(6));
             if (safeSL > maxSlPrice) {
                 safeSL = maxSlPrice; // Pull down SL so loss does not exceed 6% of capital
+            }
+            if (isTurbo) {
+                const turboMaxSl = Number((actualEntryPrice * (1 + 0.010)).toFixed(6));
+                if (safeSL > turboMaxSl) {
+                    safeSL = turboMaxSl; // Clamp turbo SL to max 1.0% loss
+                }
             }
         }
 
@@ -233,11 +245,37 @@ export class PaperTradingEngine {
                 const lev = trade.leverage || 10;
                 const margin = trade.amount / lev;
 
+                const priceDiff = isLong ? (currentPrice - entry) : (entry - currentPrice);
+                const currentMovePct = (priceDiff / entry) * 100;
+
+                // ── Auto Break-Even Check ────────────────────────────────────
+                // If price moved >= 0.35% towards target (or 60% of distance to TP1)
+                // and break-even is not yet set, move SL to entry + 0.05% buffer (covers taker fee)
+                if (!trade.isBreakEvenSet && trade.targets && trade.targets.length > 0) {
+                    const tp1Price = trade.targets[0].price;
+                    const totalTargetDist = Math.abs(tp1Price - entry);
+                    const targetProgressRatio = totalTargetDist > 0 ? (priceDiff / totalTargetDist) : 0;
+
+                    if (currentMovePct >= 0.35 || targetProgressRatio >= 0.60) {
+                        const bePrice = isLong
+                            ? Number((entry * 1.0005).toFixed(6))
+                            : Number((entry * 0.9995).toFixed(6));
+                        
+                        const isBetter = isLong ? bePrice > trade.stopLoss : bePrice < trade.stopLoss;
+                        if (isBetter) {
+                            trade.stopLoss = bePrice;
+                            trade.isBreakEvenSet = true;
+                            trade.logs.push(`[PaperTrading] 🛡️ Auto Break-Even triggered at ${currentPrice} (+${currentMovePct.toFixed(2)}% | ${(targetProgressRatio * 100).toFixed(0)}% to TP)! SL secured at ${bePrice}`);
+                            await trade.save();
+                            logger.info(`[PaperTrading] 🛡️ ${trade.symbol} Auto Break-Even secured at ${bePrice} (+${currentMovePct.toFixed(2)}%)`);
+                        }
+                    }
+                }
+
                 // 1. Check Stop Loss Hit
                 const slHit = isLong ? (currentPrice <= trade.stopLoss) : (currentPrice >= trade.stopLoss);
                 if (slHit) {
                     const exitFee = trade.amount * (PaperTradingEngine.TAKER_FEE_PCT / 100);
-                    const priceDiff = isLong ? (currentPrice - entry) : (entry - currentPrice);
                     const grossPnl = (priceDiff / entry) * trade.amount;
                     const netPnl = grossPnl - exitFee - (trade.commissionPaid || 0);
                     const pnlPct = (netPnl / margin) * 100;

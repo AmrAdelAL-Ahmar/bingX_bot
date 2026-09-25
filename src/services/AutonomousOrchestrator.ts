@@ -38,6 +38,15 @@ export class AutonomousOrchestrator {
     public tradeStyle: 'HYBRID' | 'SCALP' | 'SWING' | 'SCALP_TURBO' = 'HYBRID';
     public tpExecutionMode: 'single' | 'multiple' = 'multiple';
 
+    // Advanced Risk and Strategy Controls
+    public autoBreakEvenEnabled: boolean = true;
+    public allowedDirection: 'BOTH' | 'LONG_ONLY' | 'SHORT_ONLY' = 'BOTH';
+    public postTpCooldownMinutes: number = 30;
+    public turboSlPercentage: number = 0.9; // 0.8% - 1.0%
+
+    // Cooldown map: key = `${cleanSymbol}_${direction}`, value = expireTimestamp (epoch ms)
+    private recentTpCooldowns: Map<string, { direction: string; expireAt: number; symbol: string }> = new Map();
+
     constructor(
         private bingx: BingXService,
         private tradeManager: TradeManager,
@@ -48,6 +57,68 @@ export class AutonomousOrchestrator {
     }
 
     /**
+     * Checks if a symbol is in post-TP cooldown period to prevent buying the top/selling the bottom
+     */
+    async isSymbolInCooldown(symbol: string, direction: string): Promise<{ inCooldown: boolean; remainingMinutes: number }> {
+        const cleanSym = symbol.toUpperCase().replace('/USDT:USDT', '').replace('-USDT', '').replace('/USDT', '');
+        const key = `${cleanSym}_${direction}`;
+        const now = Date.now();
+
+        // 1. Check in-memory map
+        const memEntry = this.recentTpCooldowns.get(key);
+        if (memEntry && memEntry.expireAt > now) {
+            const remMins = Math.ceil((memEntry.expireAt - now) / 60000);
+            return { inCooldown: true, remainingMinutes: remMins };
+        } else if (memEntry && memEntry.expireAt <= now) {
+            this.recentTpCooldowns.delete(key);
+        }
+
+        // 2. Check Database for recently closed trades at profit within cooldown window
+        if (this.postTpCooldownMinutes > 0) {
+            const cooldownWindow = new Date(now - (this.postTpCooldownMinutes * 60 * 1000));
+            const isPaper = this.currentMode === 'PAPER_TRADING';
+            const recentProfitTrade = await Trade.findOne({
+                isPaperTrade: isPaper ? true : { $ne: true },
+                symbol: new RegExp(cleanSym, 'i'),
+                direction: direction,
+                currentStatus: 'CLOSED_PROFIT',
+                closeTime: { $gte: cooldownWindow }
+            }).sort({ closeTime: -1 });
+
+            if (recentProfitTrade && recentProfitTrade.closeTime) {
+                const elapsedMs = now - recentProfitTrade.closeTime.getTime();
+                const totalCooldownMs = this.postTpCooldownMinutes * 60 * 1000;
+                if (elapsedMs < totalCooldownMs) {
+                    const remMins = Math.ceil((totalCooldownMs - elapsedMs) / 60000);
+                    this.recentTpCooldowns.set(key, { direction, expireAt: now + (totalCooldownMs - elapsedMs), symbol: cleanSym });
+                    return { inCooldown: true, remainingMinutes: remMins };
+                }
+            }
+        }
+
+        return { inCooldown: false, remainingMinutes: 0 };
+    }
+
+    /**
+     * Syncs runtime preferences from active database user
+     */
+    async syncSettingsFromUser(): Promise<void> {
+        try {
+            const admin = await User.findOne({ isActive: true });
+            if (admin?.autonomousSettings) {
+                if (admin.autonomousSettings.allowedDirection) this.allowedDirection = admin.autonomousSettings.allowedDirection;
+                if (admin.autonomousSettings.postTpCooldownMinutes !== undefined) this.postTpCooldownMinutes = admin.autonomousSettings.postTpCooldownMinutes;
+                if (admin.autonomousSettings.turboSlPercentage) this.turboSlPercentage = admin.autonomousSettings.turboSlPercentage;
+            }
+            if (admin?.autoBreakEven !== undefined) {
+                this.autoBreakEvenEnabled = admin.autoBreakEven;
+            }
+        } catch (e: any) {
+            logger.warn(`[AutonomousOrchestrator] Error syncing user settings: ${e.message}`);
+        }
+    }
+
+    /**
      * Starts the autonomous orchestrator daemon
      */
     start(): void {
@@ -55,7 +126,8 @@ export class AutonomousOrchestrator {
         this.isRunning = true;
         logger.info('🚀 [AutonomousOrchestrator] Starting Autonomous Quantitative Trading Engine V2...');
 
-        // 0. Pre-load adaptive engine weights and history from database
+        // 0. Pre-load adaptive engine weights, history, and settings from database
+        this.syncSettingsFromUser().catch(() => {});
         TradingMemoryService.initFromDb().catch(e => logger.warn(`[Orchestrator] Memory init warning: ${e.message}`));
 
         // 1. Initial watchlist refresh
@@ -227,11 +299,34 @@ export class AutonomousOrchestrator {
                     const score = dossier.confluenceMetrics.overallScore;
                     const recDir = dossier.confluenceMetrics.recommendedDirection;
 
-                    if (score >= this.minConfluenceScore && recDir !== 'NONE') {
-                        candidatePool.push({ shortSymbol: sym, fullSymbol, score, recDir, dossier });
-                    } else {
+                    if (score < this.minConfluenceScore || recDir === 'NONE') {
                         evaluations.push({ symbol: sym, score, direction: recDir, executed: false });
+                        continue;
                     }
+
+                    // Direction Filter (LONG_ONLY / SHORT_ONLY / BOTH)
+                    if (this.allowedDirection === 'LONG_ONLY' && recDir === 'SHORT') {
+                        evaluations.push({ symbol: sym, score, direction: 'SHORT (مستبعد: شراء فقط)', executed: false });
+                        continue;
+                    }
+                    if (this.allowedDirection === 'SHORT_ONLY' && recDir === 'LONG') {
+                        evaluations.push({ symbol: sym, score, direction: 'LONG (مستبعد: بيع فقط)', executed: false });
+                        continue;
+                    }
+
+                    // Post-TP Cooldown Filter (prevent buying the top after TP)
+                    const cooldownCheck = await this.isSymbolInCooldown(cleanSym, recDir);
+                    if (cooldownCheck.inCooldown) {
+                        evaluations.push({
+                            symbol: sym,
+                            score,
+                            direction: `تهدئة بعد الهدف ⏳ (باقي ${cooldownCheck.remainingMinutes} د)`,
+                            executed: false
+                        });
+                        continue;
+                    }
+
+                    candidatePool.push({ shortSymbol: sym, fullSymbol, score, recDir, dossier });
                 } catch (symErr: any) {
                     logger.error(`[AutonomousOrchestrator] Error screening ${sym}: ${symErr.message}`);
                 }
@@ -339,6 +434,21 @@ export class AutonomousOrchestrator {
             }
         } else if (this.tpExecutionMode === 'single' && finalTargets.length > 0) {
             finalTargets = [finalTargets[0]];
+        }
+
+        // Clamp Turbo Scalp SL strictly between 0.8% and 1.0% distance
+        if (isTurbo) {
+            const entryP = dossier.currentPrice;
+            const maxAllowedDist = entryP * 0.010; // max 1.0%
+            if (finalDirection === 'LONG') {
+                if (entryP - finalStopLoss > maxAllowedDist || finalStopLoss >= entryP) {
+                    finalStopLoss = Number((entryP * (1 - (this.turboSlPercentage / 100))).toFixed(dossier.pricePrecision));
+                }
+            } else if (finalDirection === 'SHORT') {
+                if (finalStopLoss - entryP > maxAllowedDist || finalStopLoss <= entryP) {
+                    finalStopLoss = Number((entryP * (1 + (this.turboSlPercentage / 100))).toFixed(dossier.pricePrecision));
+                }
+            }
         }
 
         // Determine dynamic leverage based on coin tier
