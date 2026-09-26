@@ -82,6 +82,10 @@ export interface IUser extends Document {
         breakEvenTriggerPct: number;
         microTpPercentage: number;
         tradeStyle?: 'HYBRID' | 'SCALP' | 'SWING' | 'SCALP_TURBO' | 'WHALE_SURGE';
+        positionMarginPct?: number;
+        maxConcurrentTrades?: number;
+        leverageMode?: 'DYNAMIC' | 'FIXED';
+        fixedLeverageValue?: number;
     };
 }
 
@@ -166,7 +170,11 @@ const UserSchema: Schema = new Schema({
         turboSlPercentage: { type: Number, default: 0.9 },
         breakEvenTriggerPct: { type: Number, default: 0.35 },
         microTpPercentage: { type: Number, default: 0.55 },
-        tradeStyle: { type: String, enum: ['HYBRID', 'SCALP', 'SWING', 'SCALP_TURBO', 'WHALE_SURGE'], default: 'HYBRID' }
+        tradeStyle: { type: String, enum: ['HYBRID', 'SCALP', 'SWING', 'SCALP_TURBO', 'WHALE_SURGE'], default: 'HYBRID' },
+        positionMarginPct: { type: Number, default: 3 },
+        maxConcurrentTrades: { type: Number, default: 3 },
+        leverageMode: { type: String, enum: ['DYNAMIC', 'FIXED'], default: 'DYNAMIC' },
+        fixedLeverageValue: { type: Number, default: 20 }
     }
 });
 

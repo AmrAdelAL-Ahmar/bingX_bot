@@ -10,6 +10,7 @@ import { BacktestService } from '../../services/BacktestService';
 
 import { SignalParser } from '../../services/SignalParser';
 import { TradeManager } from '../../services/TradeManager';
+import { AutonomousOrchestrator } from '../../services/AutonomousOrchestrator';
 import { sendTelegramMessage } from '../../utils/telegram';
 
 export function generateCSVBuffer(trades: any[], fullReportEnabled: boolean = false): Buffer {
@@ -171,7 +172,7 @@ export function generateCSVBuffer(trades: any[], fullReportEnabled: boolean = fa
     return Buffer.from('\uFEFF' + csvContent, 'utf-8');
 }
 
-export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManager) => {
+export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManager, autonomousOrchestrator?: AutonomousOrchestrator) => {
     const bingxService = new BingXService();
     const analysisService = new AnalysisService(bingxService);
     const backtestService = new BacktestService(bingxService, analysisService);
@@ -638,6 +639,111 @@ export const registerMessageHandlers = (bot: Telegraf, tradeManager: TradeManage
 
                 } else {
                     return ctx.reply('يرجى إدخال رقم بين 1 و 50:');
+                }
+            }
+
+            // ── Autonomous Custom Settings (Margin, Trades, Leverage) ──
+            if (user.botState === 'AWAITING_AUTONOMOUS_MARGIN') {
+                if (message === 'رجوع 🔙' || message === 'إلغاء ❌' || message === 'إلغاء' || message === '/cancel') {
+                    user.botState = 'NONE';
+                    await user.save();
+                    return ctx.reply('تم الإلغاء والعودة.');
+                }
+
+                const cleaned = message.replace('%', '').trim();
+                const val = parseFloat(cleaned);
+                if (!isNaN(val) && val >= 0.5 && val <= 50) {
+                    if (!user.autonomousSettings) (user as any).autonomousSettings = {};
+                    user.autonomousSettings!.positionMarginPct = val;
+                    user.botState = 'NONE';
+                    await user.save();
+                    if (autonomousOrchestrator) {
+                        autonomousOrchestrator.positionMarginPct = val;
+                    }
+                    return ctx.reply(
+                        `✅ <b>تم ضبط نسبة الدخول من رأس المال بنجاح إلى: ${val}%</b>\n` +
+                        `سيتم احتساب هذا الهامش لكل صفقة جديدة يفتحها البوت.`,
+                        {
+                            parse_mode: 'HTML',
+                            reply_markup: {
+                                inline_keyboard: [
+                                    [{ text: '⚙️ العودة لإعدادات التداول الذاتي', callback_data: 'aut_settings_hub' }]
+                                ]
+                            }
+                        }
+                    );
+                } else {
+                    return ctx.reply('⚠️ يرجى إدخال نسبة مئوية صحيحة بين 0.5 و 50 (مثال: <code>3.5</code> أو <code>5%</code>):', { parse_mode: 'HTML' });
+                }
+            }
+
+            if (user.botState === 'AWAITING_AUTONOMOUS_TRADES') {
+                if (message === 'رجوع 🔙' || message === 'إلغاء ❌' || message === 'إلغاء' || message === '/cancel') {
+                    user.botState = 'NONE';
+                    await user.save();
+                    return ctx.reply('تم الإلغاء والعودة.');
+                }
+
+                const cleaned = message.trim();
+                const val = parseInt(cleaned);
+                if (!isNaN(val) && val >= 1 && val <= 15) {
+                    if (!user.autonomousSettings) (user as any).autonomousSettings = {};
+                    user.autonomousSettings!.maxConcurrentTrades = val;
+                    user.botState = 'NONE';
+                    await user.save();
+                    if (autonomousOrchestrator) {
+                        autonomousOrchestrator.maxConcurrentTrades = val;
+                    }
+                    return ctx.reply(
+                        `✅ <b>تم ضبط الحد الأقصى للصفقات المتزامنة بنجاح إلى: ${val} صفقات</b>\n` +
+                        `لن يفتح البوت أكثر من هذا العدد من الصفقات في نفس الوقت.`,
+                        {
+                            parse_mode: 'HTML',
+                            reply_markup: {
+                                inline_keyboard: [
+                                    [{ text: '⚙️ العودة لإعدادات التداول الذاتي', callback_data: 'aut_settings_hub' }]
+                                ]
+                            }
+                        }
+                    );
+                } else {
+                    return ctx.reply('⚠️ يرجى إدخال عدد صفقات صحيح بين 1 و 15 (مثال: <code>3</code>):', { parse_mode: 'HTML' });
+                }
+            }
+
+            if (user.botState === 'AWAITING_AUTONOMOUS_LEVERAGE') {
+                if (message === 'رجوع 🔙' || message === 'إلغاء ❌' || message === 'إلغاء' || message === '/cancel') {
+                    user.botState = 'NONE';
+                    await user.save();
+                    return ctx.reply('تم الإلغاء والعودة.');
+                }
+
+                const cleaned = message.toLowerCase().replace('x', '').trim();
+                const val = parseInt(cleaned);
+                if (!isNaN(val) && val >= 1 && val <= 125) {
+                    if (!user.autonomousSettings) (user as any).autonomousSettings = {};
+                    user.autonomousSettings!.leverageMode = 'FIXED';
+                    user.autonomousSettings!.fixedLeverageValue = val;
+                    user.botState = 'NONE';
+                    await user.save();
+                    if (autonomousOrchestrator) {
+                        autonomousOrchestrator.leverageMode = 'FIXED';
+                        autonomousOrchestrator.fixedLeverageValue = val;
+                    }
+                    return ctx.reply(
+                        `✅ <b>تم تثبيت الرافعة المالية لجميع الصفقات بنجاح على: ${val}x</b>\n` +
+                        `يمكنك العودة للوضع الديناميكي التلقائي في أي وقت من الإعدادات.`,
+                        {
+                            parse_mode: 'HTML',
+                            reply_markup: {
+                                inline_keyboard: [
+                                    [{ text: '⚙️ العودة لإعدادات التداول الذاتي', callback_data: 'aut_settings_hub' }]
+                                ]
+                            }
+                        }
+                    );
+                } else {
+                    return ctx.reply('⚠️ يرجى إدخال مضاعف رافعة صحيح بين 1 و 125 (مثال: <code>20</code> أو <code>20x</code>):', { parse_mode: 'HTML' });
                 }
             }
 

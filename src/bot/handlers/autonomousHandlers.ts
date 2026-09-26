@@ -280,6 +280,7 @@ export const registerAutonomousHandlers = (
     bot.action('aut_settings_hub', async (ctx) => {
         try {
             await ctx.answerCbQuery().catch(() => {});
+            await User.updateOne({ isActive: true, botState: { $in: ['AWAITING_AUTONOMOUS_MARGIN', 'AWAITING_AUTONOMOUS_TRADES', 'AWAITING_AUTONOMOUS_LEVERAGE'] } }, { botState: 'NONE' }).catch(() => {});
             await renderAutonomousSettingsHub(ctx, orchestrator, true);
         } catch (e: any) {
             logger.error('Error in aut_settings_hub:', e);
@@ -331,6 +332,125 @@ export const registerAutonomousHandlers = (
         const msg = mins > 0 ? `⏱️ تم ضبط فترة تهدئة العملة بعد الهدف على ${mins} دقيقة` : '⚪ تم تعطيل فترة تهدئة العملة بعد الهدف';
         await ctx.answerCbQuery(msg).catch(() => {});
         await renderAutonomousSettingsHub(ctx, orchestrator, true);
+    });
+
+    bot.action('aut_noop', async (ctx) => {
+        await ctx.answerCbQuery().catch(() => {});
+    });
+
+    // ── Position Margin % Presets & Custom ──
+    bot.action(/^aut_margin_(2|3|5|10)$/, async (ctx) => {
+        const val = parseInt(ctx.match[1]);
+        orchestrator.positionMarginPct = val;
+        await User.updateOne({ isActive: true }, { 'autonomousSettings.positionMarginPct': val }).catch(() => {});
+        await ctx.answerCbQuery(`💰 تم تعيين نسبة الدخول إلى ${val}%`).catch(() => {});
+        await renderAutonomousSettingsHub(ctx, orchestrator, true);
+    });
+
+    bot.action('aut_margin_custom', async (ctx) => {
+        try {
+            await ctx.answerCbQuery().catch(() => {});
+            await User.updateOne({ isActive: true }, { botState: 'AWAITING_AUTONOMOUS_MARGIN' }).catch(() => {});
+            await ctx.reply(
+                `💰 <b>تحديد نسبة الدخول من رأس المال (Margin %)</b>\n` +
+                `━━━━━━━━━━━━━━━━━━━━━\n` +
+                `النسبة الحالية: <b>${orchestrator.positionMarginPct}%</b> من رأس المال لكل صفقة\n\n` +
+                `✍️ يرجى إرسال النسبة المئوية المطلوبة كرقم (مثال: <code>2.5</code> أو <code>4%</code>):\n` +
+                `<i>(القيم المسموحة: من 0.5% حتى 50%)</i>\n\n` +
+                `للإلغاء أرسل <b>إلغاء</b> أو اضغط الزر أدناه 👇`,
+                {
+                    parse_mode: 'HTML',
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '🔙 إلغاء والعودة للإعدادات', callback_data: 'aut_settings_hub' }]
+                        ]
+                    }
+                }
+            );
+        } catch (e: any) {
+            logger.error('Error in aut_margin_custom:', e);
+        }
+    });
+
+    // ── Concurrent Trades Presets & Custom ──
+    bot.action(/^aut_trades_(1|2|3|5)$/, async (ctx) => {
+        const val = parseInt(ctx.match[1]);
+        orchestrator.maxConcurrentTrades = val;
+        await User.updateOne({ isActive: true }, { 'autonomousSettings.maxConcurrentTrades': val }).catch(() => {});
+        await ctx.answerCbQuery(`🎯 تم ضبط أقصى صفقات متزامنة إلى ${val}`).catch(() => {});
+        await renderAutonomousSettingsHub(ctx, orchestrator, true);
+    });
+
+    bot.action('aut_trades_custom', async (ctx) => {
+        try {
+            await ctx.answerCbQuery().catch(() => {});
+            await User.updateOne({ isActive: true }, { botState: 'AWAITING_AUTONOMOUS_TRADES' }).catch(() => {});
+            await ctx.reply(
+                `🎯 <b>تحديد أقصى عدد صفقات متزامنة</b>\n` +
+                `━━━━━━━━━━━━━━━━━━━━━\n` +
+                `العدد الحالي: <b>${orchestrator.maxConcurrentTrades} صفقات</b>\n\n` +
+                `✍️ يرجى إرسال عدد الصفقات كرقم صحيح (مثال: <code>4</code>):\n` +
+                `<i>(القيم المسموحة: من 1 حتى 15 صفقة)</i>\n\n` +
+                `للإلغاء أرسل <b>إلغاء</b> أو اضغط الزر أدناه 👇`,
+                {
+                    parse_mode: 'HTML',
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '🔙 إلغاء والعودة للإعدادات', callback_data: 'aut_settings_hub' }]
+                        ]
+                    }
+                }
+            );
+        } catch (e: any) {
+            logger.error('Error in aut_trades_custom:', e);
+        }
+    });
+
+    // ── Leverage Mode & Value Presets & Custom ──
+    bot.action('aut_lev_dynamic', async (ctx) => {
+        orchestrator.leverageMode = 'DYNAMIC';
+        await User.updateOne({ isActive: true }, { 'autonomousSettings.leverageMode': 'DYNAMIC' }).catch(() => {});
+        await ctx.answerCbQuery('⚡ تم تفعيل الرافعة الديناميكية التلقائية').catch(() => {});
+        await renderAutonomousSettingsHub(ctx, orchestrator, true);
+    });
+
+    bot.action(/^aut_lev_(10|20|30|50)$/, async (ctx) => {
+        const val = parseInt(ctx.match[1]);
+        orchestrator.leverageMode = 'FIXED';
+        orchestrator.fixedLeverageValue = val;
+        await User.updateOne({
+            isActive: true
+        }, {
+            'autonomousSettings.leverageMode': 'FIXED',
+            'autonomousSettings.fixedLeverageValue': val
+        }).catch(() => {});
+        await ctx.answerCbQuery(`⚡ تم تثبيت الرافعة المالية على ${val}x`).catch(() => {});
+        await renderAutonomousSettingsHub(ctx, orchestrator, true);
+    });
+
+    bot.action('aut_lev_custom', async (ctx) => {
+        try {
+            await ctx.answerCbQuery().catch(() => {});
+            await User.updateOne({ isActive: true }, { botState: 'AWAITING_AUTONOMOUS_LEVERAGE' }).catch(() => {});
+            await ctx.reply(
+                `⚡ <b>تحديد رافعة مالية مخصصة (Fixed Leverage)</b>\n` +
+                `━━━━━━━━━━━━━━━━━━━━━\n` +
+                `الوضع الحالي: <b>${orchestrator.leverageMode === 'DYNAMIC' ? 'تلقائي ديناميكي' : `${orchestrator.fixedLeverageValue}x`}</b>\n\n` +
+                `✍️ يرجى إرسال مضاعف الرافعة كرقم صحيح (مثال: <code>25</code> أو <code>25x</code>):\n` +
+                `<i>(القيم المسموحة: من 1x حتى 125x)</i>\n\n` +
+                `للإلغاء أرسل <b>إلغاء</b> أو اضغط الزر أدناه 👇`,
+                {
+                    parse_mode: 'HTML',
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '🔙 إلغاء والعودة للإعدادات', callback_data: 'aut_settings_hub' }]
+                        ]
+                    }
+                }
+            );
+        } catch (e: any) {
+            logger.error('Error in aut_lev_custom:', e);
+        }
     });
 
     // ── Paper Balance & Reset Picker ──
@@ -1410,6 +1530,11 @@ async function renderPaperBalancePicker(ctx: any, isEdit = false) {
  * 12. Autonomous Advanced Settings & Risk Hub
  */
 async function renderAutonomousSettingsHub(ctx: any, orchestrator: AutonomousOrchestrator, isEdit = false) {
+    const marginStatus = `💰 ${orchestrator.positionMarginPct}% من رأس المال`;
+    const tradesStatus = `🎯 ${orchestrator.maxConcurrentTrades} صفقات كحد أقصى`;
+    const levStatus = orchestrator.leverageMode === 'DYNAMIC'
+        ? '⚡ تلقائي ديناميكي (حسب الفئة والاستراتيجية)'
+        : `⚡ ${orchestrator.fixedLeverageValue}x (رافعة ثابتة)`;
     const beStatus = orchestrator.autoBreakEvenEnabled ? '🟢 مفعل (نقل الستوب عند +0.35%)' : '⚪ معطل';
     const dirStatus = orchestrator.allowedDirection === 'BOTH'
         ? '🔄 كلا الاتجاهين (LONG & SHORT)'
@@ -1417,40 +1542,97 @@ async function renderAutonomousSettingsHub(ctx: any, orchestrator: AutonomousOrc
     const coolStatus = orchestrator.postTpCooldownMinutes > 0 ? `⏱️ ${orchestrator.postTpCooldownMinutes} دقيقة` : '⚪ بدون تهدئة';
     const slStatus = `🛑 ${orchestrator.turboSlPercentage}%`;
 
-    let msg = `⚙️ <b>لوحة إعدادات الحماية والتأمين لمنظومة التداول الذاتي</b>\n`;
+    let msg = `⚙️ <b>لوحة إعدادات الحماية وإدارة المخاطر للتداول الذاتي</b>\n`;
     msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
+    msg += `• <b>نسبة الدخول من رأس المال (Position Margin):</b>\n  👉 <b>${marginStatus}</b>\n`;
+    msg += `  <i>تحدد حجم الهامش المخصص لكل صفقة بالنسبة المئوية من الرصيد</i>\n\n`;
+
+    msg += `• <b>عدد الصفقات المسموح بها متزامنة (Max Trades):</b>\n  👉 <b>${tradesStatus}</b>\n`;
+    msg += `  <i>يمنع فتح صفقات جديدة إذا وصل عدد الصفقات النشطة لهذا الحد</i>\n\n`;
+
+    msg += `• <b>الرافعة المالية (Leverage):</b>\n  👉 <b>${levStatus}</b>\n`;
+    msg += `  <i>التلقائي يوزع الرافعة بأمان (BTC/ETH 50x، كبار العملات 30x، الفرعية 20x)</i>\n\n`;
+
     msg += `• <b>التأمين الفوري (Auto Break-Even):</b>\n  👉 <b>${beStatus}</b>\n`;
     msg += `  <i>ينقل الستوب لسعر الدخول + الرسوم فور صعود الصفقة +0.35% لضمان عدم الخسارة</i>\n\n`;
+
     msg += `• <b>الاتجاه المسموح للصفقات:</b>\n  👉 <b>${dirStatus}</b>\n\n`;
+
     msg += `• <b>وقف خسارة السكالبينج التيربو:</b>\n  👉 <b>${slStatus}</b> <i>(موازنة المخاطرة مع الهدف 0.55%)</i>\n\n`;
+
     msg += `• <b>فترة حظر العملة بعد الهدف (Anti-Peak Cooldown):</b>\n  👉 <b>${coolStatus}</b>\n`;
     msg += `  <i>تمنع إعادة الدخول في نفس العملة فور ضرب الهدف لتجنب الشراء من قمة الحركة</i>\n`;
     msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
-    msg += `👇 <b>اضغط على الأزرار لتعديل أي إعداد فوراً:</b>`;
+    msg += `👇 <b>اضغط على الخيارات السريعة أو اختر [✍️ كتابة...] لإدخال أي قيمة مخصصة:</b>`;
 
     const keyboard = {
         inline_keyboard: [
-            // Row 1: Auto Break Even Toggle
+            // Row 1: Position Margin Header & Presets
+            [
+                { text: '── 💰 نسبة الدخول من رأس المال ──', callback_data: 'aut_noop' }
+            ],
+            [
+                { text: orchestrator.positionMarginPct === 2 ? '🔘 2%' : '2%', callback_data: 'aut_margin_2' },
+                { text: orchestrator.positionMarginPct === 3 ? '🔘 3%' : '3%', callback_data: 'aut_margin_3' },
+                { text: orchestrator.positionMarginPct === 5 ? '🔘 5%' : '5%', callback_data: 'aut_margin_5' },
+                { text: orchestrator.positionMarginPct === 10 ? '🔘 10%' : '10%', callback_data: 'aut_margin_10' }
+            ],
+            [
+                { text: '✍️ كتابة نسبة مئوية مخصصة...', callback_data: 'aut_margin_custom' }
+            ],
+
+            // Row 2: Concurrent Trades Header & Presets
+            [
+                { text: '── 🎯 عدد الصفقات المسموح بها ──', callback_data: 'aut_noop' }
+            ],
+            [
+                { text: orchestrator.maxConcurrentTrades === 1 ? '🔘 1' : '1', callback_data: 'aut_trades_1' },
+                { text: orchestrator.maxConcurrentTrades === 2 ? '🔘 2' : '2', callback_data: 'aut_trades_2' },
+                { text: orchestrator.maxConcurrentTrades === 3 ? '🔘 3' : '3', callback_data: 'aut_trades_3' },
+                { text: orchestrator.maxConcurrentTrades === 5 ? '🔘 5' : '5', callback_data: 'aut_trades_5' }
+            ],
+            [
+                { text: '✍️ كتابة عدد صفقات مخصص...', callback_data: 'aut_trades_custom' }
+            ],
+
+            // Row 3: Leverage Header & Presets
+            [
+                { text: '── ⚡ الرافعة المالية ──', callback_data: 'aut_noop' }
+            ],
+            [
+                { text: orchestrator.leverageMode === 'DYNAMIC' ? '🔘 ⚡ تلقائي ديناميكي' : '⚡ تلقائي ديناميكي', callback_data: 'aut_lev_dynamic' }
+            ],
+            [
+                { text: (orchestrator.leverageMode === 'FIXED' && orchestrator.fixedLeverageValue === 10) ? '🔘 10x' : '10x', callback_data: 'aut_lev_10' },
+                { text: (orchestrator.leverageMode === 'FIXED' && orchestrator.fixedLeverageValue === 20) ? '🔘 20x' : '20x', callback_data: 'aut_lev_20' },
+                { text: (orchestrator.leverageMode === 'FIXED' && orchestrator.fixedLeverageValue === 30) ? '🔘 30x' : '30x', callback_data: 'aut_lev_30' },
+                { text: (orchestrator.leverageMode === 'FIXED' && orchestrator.fixedLeverageValue === 50) ? '🔘 50x' : '50x', callback_data: 'aut_lev_50' }
+            ],
+            [
+                { text: '✍️ كتابة رافعة مخصصة...', callback_data: 'aut_lev_custom' }
+            ],
+
+            // Row 4: Protection & Direction Header
+            [
+                { text: '── 🛡️ التأمين الفوري والاتجاه والتهدئة ──', callback_data: 'aut_noop' }
+            ],
             [
                 {
                     text: orchestrator.autoBreakEvenEnabled ? '🛡️ تأمين الأرباح (BE): مفعل 🟢' : '🛡️ تأمين الأرباح (BE): معطل ⚪',
                     callback_data: 'aut_toggle_be'
                 }
             ],
-            // Row 2: Allowed Direction
             [
                 { text: orchestrator.allowedDirection === 'BOTH' ? '🔘 🔄 كلاهما' : '🔄 كلاهما', callback_data: 'aut_dir_both' },
                 { text: orchestrator.allowedDirection === 'LONG_ONLY' ? '🔘 🟢 شراء' : '🟢 شراء', callback_data: 'aut_dir_long' },
                 { text: orchestrator.allowedDirection === 'SHORT_ONLY' ? '🔘 🔴 بيع' : '🔴 بيع', callback_data: 'aut_dir_short' }
             ],
-            // Row 3: Turbo SL selection
             [
                 { text: orchestrator.turboSlPercentage === 0.8 ? '🔘 🛑 0.8%' : '🛑 0.8%', callback_data: 'aut_turbosl_08' },
                 { text: orchestrator.turboSlPercentage === 0.9 ? '🔘 🛑 0.9%' : '🛑 0.9%', callback_data: 'aut_turbosl_09' },
                 { text: orchestrator.turboSlPercentage === 1.0 ? '🔘 🛑 1.0%' : '🛑 1.0%', callback_data: 'aut_turbosl_10' },
                 { text: orchestrator.turboSlPercentage === 1.2 ? '🔘 🛑 1.2%' : '🛑 1.2%', callback_data: 'aut_turbosl_12' }
             ],
-            // Row 4: Post-TP Cooldown selection
             [
                 { text: orchestrator.postTpCooldownMinutes === 15 ? '🔘 ⏱️ 15 د' : '⏱️ 15 د', callback_data: 'aut_cool_15' },
                 { text: orchestrator.postTpCooldownMinutes === 30 ? '🔘 ⏱️ 30 د' : '⏱️ 30 د', callback_data: 'aut_cool_30' },

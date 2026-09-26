@@ -43,6 +43,9 @@ export class AutonomousOrchestrator {
     public allowedDirection: 'BOTH' | 'LONG_ONLY' | 'SHORT_ONLY' = 'BOTH';
     public postTpCooldownMinutes: number = 30;
     public turboSlPercentage: number = 0.9; // 0.8% - 1.0%
+    public positionMarginPct: number = 3; // % of capital margin per trade
+    public leverageMode: 'DYNAMIC' | 'FIXED' = 'DYNAMIC';
+    public fixedLeverageValue: number = 20;
 
     // Cooldown map: key = `${cleanSymbol}_${direction}`, value = expireTimestamp (epoch ms)
     private recentTpCooldowns: Map<string, { direction: string; expireAt: number; symbol: string }> = new Map();
@@ -110,6 +113,10 @@ export class AutonomousOrchestrator {
                 if (admin.autonomousSettings.postTpCooldownMinutes !== undefined) this.postTpCooldownMinutes = admin.autonomousSettings.postTpCooldownMinutes;
                 if (admin.autonomousSettings.turboSlPercentage) this.turboSlPercentage = admin.autonomousSettings.turboSlPercentage;
                 if (admin.autonomousSettings.tradeStyle) this.tradeStyle = admin.autonomousSettings.tradeStyle;
+                if (admin.autonomousSettings.positionMarginPct) this.positionMarginPct = admin.autonomousSettings.positionMarginPct;
+                if (admin.autonomousSettings.maxConcurrentTrades) this.maxConcurrentTrades = admin.autonomousSettings.maxConcurrentTrades;
+                if (admin.autonomousSettings.leverageMode) this.leverageMode = admin.autonomousSettings.leverageMode;
+                if (admin.autonomousSettings.fixedLeverageValue) this.fixedLeverageValue = admin.autonomousSettings.fixedLeverageValue;
             }
             if (admin?.autoBreakEven !== undefined) {
                 this.autoBreakEvenEnabled = admin.autoBreakEven;
@@ -459,27 +466,35 @@ export class AutonomousOrchestrator {
             }
         }
 
-        // Determine dynamic leverage based on coin tier and trade style
+        // Determine dynamic or fixed leverage based on configuration
         let dynamicLeverage = 10;
-        if (isTurbo) {
-            const cleanSym = shortSymbol.toUpperCase();
-            if (['BTC', 'ETH'].includes(cleanSym)) {
-                dynamicLeverage = 50;
-            } else if (['SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'NEAR'].includes(cleanSym)) {
-                dynamicLeverage = 30;
-            } else {
-                dynamicLeverage = 20;
-            }
-        } else if (isWhale) {
-            const cleanSym = shortSymbol.toUpperCase();
-            if (['BTC', 'ETH'].includes(cleanSym)) {
-                dynamicLeverage = 25;
-            } else if (['SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'NEAR'].includes(cleanSym)) {
-                dynamicLeverage = 20;
-            } else {
-                dynamicLeverage = 15;
+        if (this.leverageMode === 'FIXED') {
+            dynamicLeverage = this.fixedLeverageValue || 20;
+        } else {
+            // Dynamic tier-based leverage
+            if (isTurbo) {
+                const cleanSym = shortSymbol.toUpperCase();
+                if (['BTC', 'ETH'].includes(cleanSym)) {
+                    dynamicLeverage = 50;
+                } else if (['SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'NEAR'].includes(cleanSym)) {
+                    dynamicLeverage = 30;
+                } else {
+                    dynamicLeverage = 20;
+                }
+            } else if (isWhale) {
+                const cleanSym = shortSymbol.toUpperCase();
+                if (['BTC', 'ETH'].includes(cleanSym)) {
+                    dynamicLeverage = 25;
+                } else if (['SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'NEAR'].includes(cleanSym)) {
+                    dynamicLeverage = 20;
+                } else {
+                    dynamicLeverage = 15;
+                }
             }
         }
+
+        // Configurable margin percentage per trade
+        const effectiveMarginPct = this.positionMarginPct || (isTurbo ? 3 : (isWhale ? 4 : 3));
 
         // 2. Portfolio Heat & Correlation Guard (Aware of Paper and Live trades)
         const corrResult = await CorrelationGuardService.validateTrade(fullSymbol, finalDirection, 1.5, this.bingx, isPaper);
@@ -517,7 +532,7 @@ export class AutonomousOrchestrator {
                 stopLoss: finalStopLoss,
                 targets: finalTargets,
                 riskPercentage: isTurbo ? undefined : (isWhale ? 2.0 : 1.5),
-                marginPercentage: isTurbo ? 3 : (isWhale ? 4 : undefined),
+                marginPercentage: effectiveMarginPct,
                 maxCapitalRiskPercentage: isTurbo ? 6 : (isWhale ? 8 : undefined),
                 leverage: dynamicLeverage,
                 isTurboScalp: isTurbo,

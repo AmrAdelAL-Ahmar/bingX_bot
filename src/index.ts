@@ -88,7 +88,7 @@ registerSniperHandlers(bot, sniperManager);
 registerRadarHandlers(bot);
 registerAnalysisHandlers(bot, tradeManager);
 registerUnifiedHandlers(bot, tradeManager);
-registerMessageHandlers(bot, tradeManager);
+registerMessageHandlers(bot, tradeManager, autonomousOrchestrator);
 registerAiHandlers(bot, tradeManager);
 registerAutonomousHandlers(bot, autonomousOrchestrator, tradeManager, bingXService);
 
