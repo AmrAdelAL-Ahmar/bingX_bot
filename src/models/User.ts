@@ -86,6 +86,8 @@ export interface IUser extends Document {
         maxConcurrentTrades?: number;
         leverageMode?: 'DYNAMIC' | 'FIXED';
         fixedLeverageValue?: number;
+        antiPeakGuardEnabled?: boolean;
+        frontRunTpEnabled?: boolean;
     };
 }
 
@@ -174,7 +176,9 @@ const UserSchema: Schema = new Schema({
         positionMarginPct: { type: Number, default: 3 },
         maxConcurrentTrades: { type: Number, default: 3 },
         leverageMode: { type: String, enum: ['DYNAMIC', 'FIXED'], default: 'DYNAMIC' },
-        fixedLeverageValue: { type: Number, default: 20 }
+        fixedLeverageValue: { type: Number, default: 20 },
+        antiPeakGuardEnabled: { type: Boolean, default: true },
+        frontRunTpEnabled: { type: Boolean, default: true }
     }
 });
 

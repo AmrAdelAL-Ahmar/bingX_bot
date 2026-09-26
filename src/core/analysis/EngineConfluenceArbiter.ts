@@ -4,6 +4,7 @@ import { getSniperEngine } from '../sniper/SniperRegistry';
 import { CoreSniperScanner } from '../sniper/CoreSniperScanner';
 import { TechnicalAnalyzer, MATRIX_TFS } from './TechnicalAnalyzer';
 import { WhaleSurgeDetector, WhaleSurgeReport } from './WhaleSurgeDetector';
+import { RSI, SMA, BollingerBands, StochasticRSI } from 'technicalindicators';
 import logger from '../../utils/logger';
 
 // ─── Interfaces ─────────────────────────────────────────────────────────────
@@ -62,6 +63,20 @@ export interface InstitutionalMarketDossier {
     enginesSummary: EngineVerdict[];
     snipersSummary: { engineId: string; readyToFire: boolean; direction: string }[];
     whaleSurge?: WhaleSurgeReport;
+    antiPeakAnalysis?: {
+        isPeak: boolean;
+        isTrough: boolean;
+        reason?: string;
+    };
+    structuralFrontRun?: {
+        nearestResistance?: number;
+        nearestSupport?: number;
+        adjustedTp1?: number;
+        adjustedTp2?: number;
+        adjustedMicroTp?: number;
+        wallLevel?: number;
+        wallType?: string;
+    };
     confluenceMetrics: {
         overallScore: number; // 0 to 100
         recommendedDirection: 'LONG' | 'SHORT' | 'NONE';
@@ -72,6 +87,8 @@ export interface InstitutionalMarketDossier {
         suggestedSL: number;
         suggestedMicroTP: number; // 50% quick scalp target
         suggestedTPs: number[];
+        suggestedFrontRunTPs?: number[];
+        suggestedFrontRunMicroTP?: number;
         riskRewardRatio: number;
     };
 }
@@ -148,6 +165,179 @@ export class EngineConfluenceArbiter {
             fibTarget1272: high + (diff * 0.272),
             fibTarget1618: high + (diff * 0.618)
         };
+    }
+
+    /**
+     * Checks if current market condition is an overextended peak (for LONG) or trough (for SHORT)
+     */
+    static checkAntiPeakConditions(
+        candles: OHLCV[],
+        direction: 'LONG' | 'SHORT' | 'NONE'
+    ): { isExtreme: boolean; reason?: string } {
+        if (!candles || candles.length < 25 || direction === 'NONE') {
+            return { isExtreme: false };
+        }
+
+        const closes = candles.map(c => c.close);
+        const highs = candles.map(c => c.high);
+        const lows = candles.map(c => c.low);
+        const lastClose = closes[closes.length - 1];
+
+        const rsiValues = RSI.calculate({ period: 14, values: closes });
+        const currentRSI = rsiValues[rsiValues.length - 1] || 50;
+
+        const bbValues = BollingerBands.calculate({ period: 20, values: closes, stdDev: 2 });
+        const currentBB = bbValues[bbValues.length - 1];
+
+        const ma20Values = SMA.calculate({ period: 20, values: closes });
+        const currentMA20 = ma20Values[ma20Values.length - 1] || lastClose;
+
+        const stochRsiValues = StochasticRSI.calculate({ values: closes, rsiPeriod: 14, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 });
+        const currentStochK = stochRsiValues[stochRsiValues.length - 1]?.k || 50;
+
+        if (direction === 'LONG') {
+            // 1. Extreme RSI + StochRSI overbought
+            if (currentRSI >= 76 && currentStochK >= 85) {
+                return {
+                    isExtreme: true,
+                    reason: `تشبع شرائي حاد (RSI: ${currentRSI.toFixed(1)} > 76، StochK: ${currentStochK.toFixed(0)})`
+                };
+            }
+
+            // 2. Piercing upper Bollinger Band significantly
+            if (currentBB && lastClose >= currentBB.upper * 1.002) {
+                return {
+                    isExtreme: true,
+                    reason: `السعر خارج الحد العلوي لبولنجر باند (Upper BB Piercing)`
+                };
+            }
+
+            // 3. Excessive distance above MA20 (overextended mean reversion gap > 2.5%)
+            const maDistPct = ((lastClose - currentMA20) / currentMA20) * 100;
+            if (maDistPct > 2.5 && currentRSI >= 70) {
+                return {
+                    isExtreme: true,
+                    reason: `تباعد سعري مفرط عن المتوسط MA20 بنسبة +${maDistPct.toFixed(1)}% دون تصحيح`
+                };
+            }
+
+            // 4. Bearish Divergence on recent candles (Price Higher High, RSI Lower High)
+            if (candles.length >= 15 && rsiValues.length >= 15) {
+                const prevHighCandle = Math.max(...highs.slice(-15, -3));
+                const recentHighCandle = Math.max(...highs.slice(-3));
+                const prevHighRsi = Math.max(...rsiValues.slice(-15, -3));
+                const recentHighRsi = Math.max(...rsiValues.slice(-3));
+                if (recentHighCandle > prevHighCandle && recentHighRsi < prevHighRsi - 4 && currentRSI >= 65) {
+                    return {
+                        isExtreme: true,
+                        reason: `دايفرجنس بيعي (Bearish Divergence) قمة سعرية أعلى مع ضعف في مؤشر القوة`
+                    };
+                }
+            }
+        } else if (direction === 'SHORT') {
+            // 1. Extreme RSI + StochRSI oversold
+            if (currentRSI <= 24 && currentStochK <= 15) {
+                return {
+                    isExtreme: true,
+                    reason: `تشبع بيعي حاد (RSI: ${currentRSI.toFixed(1)} < 24، StochK: ${currentStochK.toFixed(0)})`
+                };
+            }
+
+            // 2. Piercing lower Bollinger Band significantly
+            if (currentBB && lastClose <= currentBB.lower * 0.998) {
+                return {
+                    isExtreme: true,
+                    reason: `السعر خارج الحد السفلي لبولنجر باند (Lower BB Piercing)`
+                };
+            }
+
+            // 3. Excessive distance below MA20 (overextended drop > 2.5%)
+            const maDistPct = ((currentMA20 - lastClose) / currentMA20) * 100;
+            if (maDistPct > 2.5 && currentRSI <= 30) {
+                return {
+                    isExtreme: true,
+                    reason: `تباعد سعري مفرط هبوطاً عن المتوسط MA20 بنسبة -${maDistPct.toFixed(1)}%`
+                };
+            }
+
+            // 4. Bullish Divergence on recent candles (Price Lower Low, RSI Higher Low)
+            if (candles.length >= 15 && rsiValues.length >= 15) {
+                const prevLowCandle = Math.min(...lows.slice(-15, -3));
+                const recentLowCandle = Math.min(...lows.slice(-3));
+                const prevLowRsi = Math.min(...rsiValues.slice(-15, -3));
+                const recentLowRsi = Math.max(...rsiValues.slice(-3));
+                if (recentLowCandle < prevLowCandle && recentLowRsi > prevLowRsi + 4 && currentRSI <= 35) {
+                    return {
+                        isExtreme: true,
+                        reason: `دايفرجنس شرائي (Bullish Divergence) قاع سعري أدنى مع ارتداد في مؤشر القوة`
+                    };
+                }
+            }
+        }
+
+        return { isExtreme: false };
+    }
+
+    /**
+     * Calculates front-running target prices placed 0.20% before resistance/support walls
+     */
+    static calculateFrontRunTp(
+        currentPrice: number,
+        direction: 'LONG' | 'SHORT' | 'NONE',
+        srLevels: SupportResistanceLevels,
+        h1Candles: OHLCV[],
+        pricePrecision: number,
+        baseTp: number
+    ): { adjustedTp: number; wallLevel: number; wallType: string } {
+        if (direction === 'NONE' || currentPrice <= 0) {
+            return { adjustedTp: baseTp, wallLevel: 0, wallType: 'NONE' };
+        }
+
+        const buffer = 0.0020; // 0.20% buffer before the wall
+
+        if (direction === 'LONG') {
+            const recentHighs = h1Candles.slice(-30).map(c => c.high);
+            const swingHigh = recentHighs.length > 0 ? Math.max(...recentHighs) : 0;
+
+            const candidateResistances: { level: number; type: string }[] = [];
+            if (srLevels.r1 > currentPrice) candidateResistances.push({ level: srLevels.r1, type: 'R1' });
+            if (srLevels.r2 > currentPrice) candidateResistances.push({ level: srLevels.r2, type: 'R2' });
+            if (srLevels.pivot > currentPrice) candidateResistances.push({ level: srLevels.pivot, type: 'Pivot' });
+            if (swingHigh > currentPrice * 1.003) candidateResistances.push({ level: swingHigh, type: 'Swing High' });
+
+            candidateResistances.sort((a, b) => a.level - b.level);
+
+            for (const res of candidateResistances) {
+                const frontRunPrice = Number((res.level * (1 - buffer)).toFixed(pricePrecision));
+                if (frontRunPrice > currentPrice * 1.0035) {
+                    if (baseTp >= frontRunPrice) {
+                        return { adjustedTp: frontRunPrice, wallLevel: res.level, wallType: res.type };
+                    }
+                }
+            }
+        } else if (direction === 'SHORT') {
+            const recentLows = h1Candles.slice(-30).map(c => c.low);
+            const swingLow = recentLows.length > 0 ? Math.min(...recentLows) : 0;
+
+            const candidateSupports: { level: number; type: string }[] = [];
+            if (srLevels.s1 > 0 && srLevels.s1 < currentPrice) candidateSupports.push({ level: srLevels.s1, type: 'S1' });
+            if (srLevels.s2 > 0 && srLevels.s2 < currentPrice) candidateSupports.push({ level: srLevels.s2, type: 'S2' });
+            if (srLevels.pivot > 0 && srLevels.pivot < currentPrice) candidateSupports.push({ level: srLevels.pivot, type: 'Pivot' });
+            if (swingLow > 0 && swingLow < currentPrice * 0.997) candidateSupports.push({ level: swingLow, type: 'Swing Low' });
+
+            candidateSupports.sort((a, b) => b.level - a.level);
+
+            for (const sup of candidateSupports) {
+                const frontRunPrice = Number((sup.level * (1 + buffer)).toFixed(pricePrecision));
+                if (frontRunPrice < currentPrice * 0.9965) {
+                    if (baseTp <= frontRunPrice) {
+                        return { adjustedTp: frontRunPrice, wallLevel: sup.level, wallType: sup.type };
+                    }
+                }
+            }
+        }
+
+        return { adjustedTp: Number(baseTp.toFixed(pricePrecision)), wallLevel: 0, wallType: 'NONE' };
     }
 
     /**
@@ -418,6 +608,14 @@ export class EngineConfluenceArbiter {
             ? whaleSurgeReport.suggestedTPs[0]
             : (recDir === 'LONG' ? currentPrice + microDist : currentPrice - microDist);
 
+        // ── 4.1 Anti-Peak and Anti-Trough Guard ──
+        const antiPeakCheck = this.checkAntiPeakConditions(quickCandles, recDir);
+
+        // ── 4.2 Structural Front-Running Take-Profits ──
+        const frontRun1 = this.calculateFrontRunTp(currentPrice, recDir, srLevels, h1Candles, pricePrecision, tp1);
+        const frontRun2 = this.calculateFrontRunTp(currentPrice, recDir, srLevels, h1Candles, pricePrecision, tp2);
+        const frontRunMicro = this.calculateFrontRunTp(currentPrice, recDir, srLevels, h1Candles, pricePrecision, microTP);
+
         // ── 5. Assemble Dossier ─────────────────────────────────────────────
         return {
             symbol,
@@ -429,6 +627,20 @@ export class EngineConfluenceArbiter {
             v1Benchmark: v1Data,
             supportResistance: srLevels,
             fibonacci: fibZones,
+            antiPeakAnalysis: {
+                isPeak: antiPeakCheck.isExtreme && recDir === 'LONG',
+                isTrough: antiPeakCheck.isExtreme && recDir === 'SHORT',
+                reason: antiPeakCheck.reason
+            },
+            structuralFrontRun: {
+                nearestResistance: srLevels.r1 > currentPrice ? srLevels.r1 : (srLevels.pivot > currentPrice ? srLevels.pivot : 0),
+                nearestSupport: srLevels.s1 > 0 && srLevels.s1 < currentPrice ? srLevels.s1 : (srLevels.pivot < currentPrice ? srLevels.pivot : 0),
+                adjustedTp1: frontRun1.adjustedTp,
+                adjustedTp2: frontRun2.adjustedTp,
+                adjustedMicroTp: frontRunMicro.adjustedTp,
+                wallLevel: frontRun1.wallLevel || frontRunMicro.wallLevel,
+                wallType: frontRun1.wallType !== 'NONE' ? frontRun1.wallType : frontRunMicro.wallType
+            },
             timeframeIndicators: {
                 '15m': {
                     rsi: 50,
@@ -455,6 +667,12 @@ export class EngineConfluenceArbiter {
                     Number(tp2.toFixed(pricePrecision)),
                     Number(tp3.toFixed(pricePrecision))
                 ],
+                suggestedFrontRunTPs: [
+                    frontRun1.adjustedTp,
+                    frontRun2.adjustedTp,
+                    Number(tp3.toFixed(pricePrecision))
+                ],
+                suggestedFrontRunMicroTP: frontRunMicro.adjustedTp,
                 riskRewardRatio: rrr
             }
         };

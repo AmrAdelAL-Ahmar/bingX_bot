@@ -338,6 +338,22 @@ export const registerAutonomousHandlers = (
         await ctx.answerCbQuery().catch(() => {});
     });
 
+    bot.action('aut_toggle_antipeak', async (ctx) => {
+        orchestrator.antiPeakGuardEnabled = !orchestrator.antiPeakGuardEnabled;
+        await User.updateOne({ isActive: true }, { 'autonomousSettings.antiPeakGuardEnabled': orchestrator.antiPeakGuardEnabled }).catch(() => {});
+        const msg = orchestrator.antiPeakGuardEnabled ? '🛡️ تم تفعيل فلتر منع الشراء من القمة والبيع من القاع' : '⚪ تم تعطيل فلتر منع القمم والقيعان';
+        await ctx.answerCbQuery(msg).catch(() => {});
+        await renderAutonomousSettingsHub(ctx, orchestrator, true);
+    });
+
+    bot.action('aut_toggle_frontrun_tp', async (ctx) => {
+        orchestrator.frontRunTpEnabled = !orchestrator.frontRunTpEnabled;
+        await User.updateOne({ isActive: true }, { 'autonomousSettings.frontRunTpEnabled': orchestrator.frontRunTpEnabled }).catch(() => {});
+        const msg = orchestrator.frontRunTpEnabled ? '🎯 تم تفعيل الأهداف الاستباقية (قبل المقاومة والدعم بـ 0.20%)' : '⚪ تم تعطيل الأهداف الاستباقية';
+        await ctx.answerCbQuery(msg).catch(() => {});
+        await renderAutonomousSettingsHub(ctx, orchestrator, true);
+    });
+
     // ── Position Margin % Presets & Custom ──
     bot.action(/^aut_margin_(2|3|5|10)$/, async (ctx) => {
         const val = parseInt(ctx.match[1]);
@@ -1541,6 +1557,8 @@ async function renderAutonomousSettingsHub(ctx: any, orchestrator: AutonomousOrc
         : (orchestrator.allowedDirection === 'LONG_ONLY' ? '🟢 شراء فقط (LONG)' : '🔴 بيع فقط (SHORT)');
     const coolStatus = orchestrator.postTpCooldownMinutes > 0 ? `⏱️ ${orchestrator.postTpCooldownMinutes} دقيقة` : '⚪ بدون تهدئة';
     const slStatus = `🛑 ${orchestrator.turboSlPercentage}%`;
+    const antiPeakStatus = orchestrator.antiPeakGuardEnabled ? '🟢 مفعل (حظر الشراء من القمة والبيع من القاع)' : '⚪ معطل';
+    const frontRunStatus = orchestrator.frontRunTpEnabled ? '🟢 مفعل (وضع الأهداف قبل المقاومة/الدعم بـ 0.20%)' : '⚪ معطل';
 
     let msg = `⚙️ <b>لوحة إعدادات الحماية وإدارة المخاطر للتداول الذاتي</b>\n`;
     msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
@@ -1552,6 +1570,12 @@ async function renderAutonomousSettingsHub(ctx: any, orchestrator: AutonomousOrc
 
     msg += `• <b>الرافعة المالية (Leverage):</b>\n  👉 <b>${levStatus}</b>\n`;
     msg += `  <i>التلقائي يوزع الرافعة بأمان (BTC/ETH 50x، كبار العملات 30x، الفرعية 20x)</i>\n\n`;
+
+    msg += `• <b>فلتر منع القمم والقيعان (Anti-Peak Guard):</b>\n  👉 <b>${antiPeakStatus}</b>\n`;
+    msg += `  <i>يمنع الشراء عند القمم المشبعة تصحيحياً (RSI>76 / بولنجر علوي / تباعد MA20) ويمنع البيع عند القيعان</i>\n\n`;
+
+    msg += `• <b>الأهداف الاستباقية (Front-Running TP):</b>\n  👉 <b>${frontRunStatus}</b>\n`;
+    msg += `  <i>يضع الهدف قبل جدار المقاومة للشراء وأعلى الدعم للبيع لضمان الخروج بالربح قبل الارتداد</i>\n\n`;
 
     msg += `• <b>التأمين الفوري (Auto Break-Even):</b>\n  👉 <b>${beStatus}</b>\n`;
     msg += `  <i>ينقل الستوب لسعر الدخول + الرسوم فور صعود الصفقة +0.35% لضمان عدم الخسارة</i>\n\n`;
@@ -1612,7 +1636,24 @@ async function renderAutonomousSettingsHub(ctx: any, orchestrator: AutonomousOrc
                 { text: '✍️ كتابة رافعة مخصصة...', callback_data: 'aut_lev_custom' }
             ],
 
-            // Row 4: Protection & Direction Header
+            // Row 4: Anti-Peak & Front-Run TP Section
+            [
+                { text: '── 🛡️ حماية القمم وجدران الأهداف ──', callback_data: 'aut_noop' }
+            ],
+            [
+                {
+                    text: orchestrator.antiPeakGuardEnabled ? '🛡️ منع القمم والقيعان: مفعل 🟢' : '🛡️ منع القمم والقيعان: معطل ⚪',
+                    callback_data: 'aut_toggle_antipeak'
+                }
+            ],
+            [
+                {
+                    text: orchestrator.frontRunTpEnabled ? '🎯 استباق المقاومة/الدعم: مفعل 🟢' : '🎯 استباق المقاومة/الدعم: معطل ⚪',
+                    callback_data: 'aut_toggle_frontrun_tp'
+                }
+            ],
+
+            // Row 5: Protection & Direction Header
             [
                 { text: '── 🛡️ التأمين الفوري والاتجاه والتهدئة ──', callback_data: 'aut_noop' }
             ],
@@ -1639,7 +1680,7 @@ async function renderAutonomousSettingsHub(ctx: any, orchestrator: AutonomousOrc
                 { text: orchestrator.postTpCooldownMinutes === 45 ? '🔘 ⏱️ 45 د' : '⏱️ 45 د', callback_data: 'aut_cool_45' },
                 { text: orchestrator.postTpCooldownMinutes === 0 ? '🔘 ⚪ بدون' : '⚪ بدون', callback_data: 'aut_cool_0' }
             ],
-            // Row 5: Navigation
+            // Row 6: Navigation
             [
                 { text: '🔙 رجوع للوحة القيادة الذاتية', callback_data: 'aut_main_menu' }
             ]

@@ -46,6 +46,8 @@ export class AutonomousOrchestrator {
     public positionMarginPct: number = 3; // % of capital margin per trade
     public leverageMode: 'DYNAMIC' | 'FIXED' = 'DYNAMIC';
     public fixedLeverageValue: number = 20;
+    public antiPeakGuardEnabled: boolean = true;
+    public frontRunTpEnabled: boolean = true;
 
     // Cooldown map: key = `${cleanSymbol}_${direction}`, value = expireTimestamp (epoch ms)
     private recentTpCooldowns: Map<string, { direction: string; expireAt: number; symbol: string }> = new Map();
@@ -117,6 +119,8 @@ export class AutonomousOrchestrator {
                 if (admin.autonomousSettings.maxConcurrentTrades) this.maxConcurrentTrades = admin.autonomousSettings.maxConcurrentTrades;
                 if (admin.autonomousSettings.leverageMode) this.leverageMode = admin.autonomousSettings.leverageMode;
                 if (admin.autonomousSettings.fixedLeverageValue) this.fixedLeverageValue = admin.autonomousSettings.fixedLeverageValue;
+                if (admin.autonomousSettings.antiPeakGuardEnabled !== undefined) this.antiPeakGuardEnabled = admin.autonomousSettings.antiPeakGuardEnabled;
+                if (admin.autonomousSettings.frontRunTpEnabled !== undefined) this.frontRunTpEnabled = admin.autonomousSettings.frontRunTpEnabled;
             }
             if (admin?.autoBreakEven !== undefined) {
                 this.autoBreakEvenEnabled = admin.autoBreakEven;
@@ -334,6 +338,30 @@ export class AutonomousOrchestrator {
                         continue;
                     }
 
+                    // Anti-Peak & Anti-Trough Guard (prevent buying at overextended peaks or selling at oversold troughs)
+                    if (this.antiPeakGuardEnabled && dossier.antiPeakAnalysis) {
+                        if (recDir === 'LONG' && dossier.antiPeakAnalysis.isPeak) {
+                            evaluations.push({
+                                symbol: sym,
+                                score,
+                                direction: `مستبعد (قمة مشبعة 🛑)`,
+                                executed: false
+                            });
+                            logger.info(`[AutonomousOrchestrator] 🛑 Anti-Peak Guard triggered for ${sym} LONG: ${dossier.antiPeakAnalysis.reason}`);
+                            continue;
+                        }
+                        if (recDir === 'SHORT' && dossier.antiPeakAnalysis.isTrough) {
+                            evaluations.push({
+                                symbol: sym,
+                                score,
+                                direction: `مستبعد (قاع مشبع 🛑)`,
+                                executed: false
+                            });
+                            logger.info(`[AutonomousOrchestrator] 🛑 Anti-Trough Guard triggered for ${sym} SHORT: ${dossier.antiPeakAnalysis.reason}`);
+                            continue;
+                        }
+                    }
+
                     candidatePool.push({ shortSymbol: sym, fullSymbol, score, recDir, dossier });
                 } catch (symErr: any) {
                     logger.error(`[AutonomousOrchestrator] Error screening ${sym}: ${symErr.message}`);
@@ -431,6 +459,17 @@ export class AutonomousOrchestrator {
             finalTargets = audit.recommendedTPs && audit.recommendedTPs.length > 0 ? audit.recommendedTPs : finalTargets;
             microTP = audit.microTP || microTP;
             justification = audit.auditJustification || justification;
+        }
+
+        // Apply Structural Front-Running Take-Profits (just before resistance/support walls)
+        if (this.frontRunTpEnabled && dossier.confluenceMetrics.suggestedFrontRunTPs && dossier.confluenceMetrics.suggestedFrontRunTPs.length > 0) {
+            finalTargets = dossier.confluenceMetrics.suggestedFrontRunTPs;
+            if (dossier.confluenceMetrics.suggestedFrontRunMicroTP) {
+                microTP = dossier.confluenceMetrics.suggestedFrontRunMicroTP;
+            }
+            if (dossier.structuralFrontRun?.wallLevel) {
+                justification += ` | استباق جدار ${dossier.structuralFrontRun.wallType}`;
+            }
         }
 
         // Apply targets based on trade style and mode
