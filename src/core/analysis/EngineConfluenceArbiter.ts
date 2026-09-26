@@ -4,7 +4,7 @@ import { getSniperEngine } from '../sniper/SniperRegistry';
 import { CoreSniperScanner } from '../sniper/CoreSniperScanner';
 import { TechnicalAnalyzer, MATRIX_TFS } from './TechnicalAnalyzer';
 import { WhaleSurgeDetector, WhaleSurgeReport } from './WhaleSurgeDetector';
-import { RSI, SMA, BollingerBands, StochasticRSI } from 'technicalindicators';
+import { RSI, SMA, EMA, BollingerBands, StochasticRSI } from 'technicalindicators';
 import logger from '../../utils/logger';
 
 // ─── Interfaces ─────────────────────────────────────────────────────────────
@@ -76,6 +76,11 @@ export interface InstitutionalMarketDossier {
         adjustedMicroTp?: number;
         wallLevel?: number;
         wallType?: string;
+    };
+    pullbackRetestQuality?: {
+        hasHealthyRetest: boolean;
+        retestScore: number;
+        details: string;
     };
     confluenceMetrics: {
         overallScore: number; // 0 to 100
@@ -276,6 +281,83 @@ export class EngineConfluenceArbiter {
         }
 
         return { isExtreme: false };
+    }
+
+    /**
+     * Smart Money Pullback & Retest quality checker
+     */
+    static checkPullbackRetestQuality(
+        candles: OHLCV[],
+        direction: 'LONG' | 'SHORT' | 'NONE'
+    ): { hasHealthyRetest: boolean; retestScore: number; details: string } {
+        if (!candles || candles.length < 20 || direction === 'NONE') {
+            return { hasHealthyRetest: true, retestScore: 50, details: 'بيانات غير كافية - افتراضي' };
+        }
+
+        const closes = candles.map(c => c.close);
+        const lastCandle = candles[candles.length - 1];
+        const currentPrice = lastCandle.close;
+
+        const ema20Arr = EMA.calculate({ period: 20, values: closes });
+        const ema20 = ema20Arr[ema20Arr.length - 1] || currentPrice;
+
+        const candleRange = Math.max(0.000001, lastCandle.high - lastCandle.low);
+        const lowerWick = Math.min(lastCandle.open, lastCandle.close) - lastCandle.low;
+        const upperWick = lastCandle.high - Math.max(lastCandle.open, lastCandle.close);
+        const lowerWickRatio = lowerWick / candleRange;
+        const upperWickRatio = upperWick / candleRange;
+
+        if (direction === 'LONG') {
+            const distFromEmaPct = ((currentPrice - ema20) / ema20) * 100;
+            const touchedEma = lastCandle.low <= ema20 * 1.004 && currentPrice >= ema20 * 0.996;
+            const hasRejectionWick = lowerWickRatio >= 0.25;
+
+            if (distFromEmaPct >= -0.5 && distFromEmaPct <= 1.2 && (touchedEma || hasRejectionWick)) {
+                return {
+                    hasHealthyRetest: true,
+                    retestScore: 90,
+                    details: `ارتداد ممتاز من متوسط EMA20 (تباعد ${distFromEmaPct.toFixed(2)}% مع ذيل رفض سفلي ${(lowerWickRatio * 100).toFixed(0)}%)`
+                };
+            } else if (distFromEmaPct > 2.0) {
+                return {
+                    hasHealthyRetest: false,
+                    retestScore: 30,
+                    details: `اندفاع متباعد (+${distFromEmaPct.toFixed(1)}% فوق EMA20) يحتاج تصحيحاً هادئاً أولاً`
+                };
+            }
+
+            return {
+                hasHealthyRetest: true,
+                retestScore: 70,
+                details: `تصحيح مقبول (تباعد +${distFromEmaPct.toFixed(1)}% عن EMA20)`
+            };
+        } else if (direction === 'SHORT') {
+            const distFromEmaPct = ((ema20 - currentPrice) / ema20) * 100;
+            const touchedEma = lastCandle.high >= ema20 * 0.996 && currentPrice <= ema20 * 1.004;
+            const hasRejectionWick = upperWickRatio >= 0.25;
+
+            if (distFromEmaPct >= -0.5 && distFromEmaPct <= 1.2 && (touchedEma || hasRejectionWick)) {
+                return {
+                    hasHealthyRetest: true,
+                    retestScore: 90,
+                    details: `ارتداد بيعي ممتاز من متوسط EMA20 (تباعد ${distFromEmaPct.toFixed(2)}% مع ذيل رفض علوي ${(upperWickRatio * 100).toFixed(0)}%)`
+                };
+            } else if (distFromEmaPct > 2.0) {
+                return {
+                    hasHealthyRetest: false,
+                    retestScore: 30,
+                    details: `هبوط حاد متباعد (-${distFromEmaPct.toFixed(1)}% تحت EMA20) يحتاج تصحيحاً صاعداً أولاً`
+                };
+            }
+
+            return {
+                hasHealthyRetest: true,
+                retestScore: 70,
+                details: `تصحيح بيعي مقبول (تباعد -${distFromEmaPct.toFixed(1)}% عن EMA20)`
+            };
+        }
+
+        return { hasHealthyRetest: true, retestScore: 50, details: 'محايد' };
     }
 
     /**
@@ -611,7 +693,15 @@ export class EngineConfluenceArbiter {
         // ── 4.1 Anti-Peak and Anti-Trough Guard ──
         const antiPeakCheck = this.checkAntiPeakConditions(quickCandles, recDir);
 
-        // ── 4.2 Structural Front-Running Take-Profits ──
+        // ── 4.2 Pullback & Retest Quality Check ──
+        const retestQuality = this.checkPullbackRetestQuality(quickCandles, recDir);
+        if (retestQuality.hasHealthyRetest && retestQuality.retestScore >= 85) {
+            dominantScore = Math.min(98, dominantScore + 4);
+        } else if (!retestQuality.hasHealthyRetest && !isWhaleSurge) {
+            dominantScore = Math.max(40, dominantScore - 8);
+        }
+
+        // ── 4.3 Structural Front-Running Take-Profits ──
         const frontRun1 = this.calculateFrontRunTp(currentPrice, recDir, srLevels, h1Candles, pricePrecision, tp1);
         const frontRun2 = this.calculateFrontRunTp(currentPrice, recDir, srLevels, h1Candles, pricePrecision, tp2);
         const frontRunMicro = this.calculateFrontRunTp(currentPrice, recDir, srLevels, h1Candles, pricePrecision, microTP);
@@ -641,6 +731,7 @@ export class EngineConfluenceArbiter {
                 wallLevel: frontRun1.wallLevel || frontRunMicro.wallLevel,
                 wallType: frontRun1.wallType !== 'NONE' ? frontRun1.wallType : frontRunMicro.wallType
             },
+            pullbackRetestQuality: retestQuality,
             timeframeIndicators: {
                 '15m': {
                     rsi: 50,

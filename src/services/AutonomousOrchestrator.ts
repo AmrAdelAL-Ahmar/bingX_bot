@@ -13,6 +13,7 @@ import { OHLCV } from '../core/shared/types';
 import User from '../models/User';
 import Trade from '../models/Trade';
 import { TradingMemoryService } from './TradingMemoryService';
+import { BtcMarketCompass } from '../core/analysis/BtcMarketCompass';
 
 export type AutonomousMode = 'PAPER_TRADING' | 'SEMI_AUTO' | 'FULL_AUTO';
 
@@ -198,18 +199,18 @@ export class AutonomousOrchestrator {
      */
     async refreshWatchlist(): Promise<void> {
         try {
-            logger.info('[AutonomousOrchestrator] Refreshing top watchlist via SymbolPickerService...');
-            const results = await this.pickerService.refreshScan(15);
+            logger.info('[AutonomousOrchestrator] Refreshing top watchlist via Live Market CCXT Scanner...');
+            const results = await this.pickerService.refreshScan(25, 'ccxt');
             if (results && results.length > 0) {
-                // Pick top 8 ready or watch coins
+                // Pick top 20 active liquid coins with high market momentum
                 const top = results
                     .filter(r => r.label !== 'AVOID')
-                    .slice(0, 8)
+                    .slice(0, 20)
                     .map(r => r.shortName);
 
                 if (top.length >= 4) {
                     this.activeWatchlist = top;
-                    logger.info(`[AutonomousOrchestrator] Active watchlist updated: [${this.activeWatchlist.join(', ')}]`);
+                    logger.info(`[AutonomousOrchestrator] Active watchlist updated (${this.activeWatchlist.length} coins): [${this.activeWatchlist.join(', ')}]`);
                 }
             }
         } catch (e: any) {
@@ -250,6 +251,14 @@ export class AutonomousOrchestrator {
                 logger.error(`[AutonomousOrchestrator] Cycle halted: Circuit Breaker active! (${cbStatus.tripReason})`);
                 return;
             }
+
+            // D. BTC Macro Market Compass & Flash Dump Filter
+            const btcCompass = await BtcMarketCompass.getMarketCompass(this.bingx);
+            if (btcCompass.isBlackout) {
+                logger.warn(`[AutonomousOrchestrator] 🚨 Cycle skipped: BTC Flash Dump Blackout active! (${btcCompass.macroTrend} - ${btcCompass.blackoutReason})`);
+                return;
+            }
+            logger.info(`[AutonomousOrchestrator] 🧭 BTC Compass: ${btcCompass.macroTrend} (15m Change: ${btcCompass.change15mPct.toFixed(2)}%, EMA20: ${btcCompass.ema20.toFixed(1)}) | Longs: ${btcCompass.allowLongs ? '✅' : '❌'}, Shorts: ${btcCompass.allowShorts ? '✅' : '❌'}`);
 
             // ── 1. Check Existing Active Positions & Active Symbols ───────────────────
             const isPaper = this.currentMode === 'PAPER_TRADING';
@@ -326,6 +335,28 @@ export class AutonomousOrchestrator {
                         continue;
                     }
 
+                    // BTC Market Compass Direction Permission for Altcoins
+                    if (cleanSym !== 'BTC') {
+                        if (recDir === 'LONG' && !btcCompass.allowLongs) {
+                            evaluations.push({
+                                symbol: sym,
+                                score,
+                                direction: `مستبعد (بوصلة البيتكوين هابطة 📉)`,
+                                executed: false
+                            });
+                            continue;
+                        }
+                        if (recDir === 'SHORT' && !btcCompass.allowShorts) {
+                            evaluations.push({
+                                symbol: sym,
+                                score,
+                                direction: `مستبعد (بوصلة البيتكوين صاعدة 📈)`,
+                                executed: false
+                            });
+                            continue;
+                        }
+                    }
+
                     // Post-TP Cooldown Filter (prevent buying the top after TP)
                     const cooldownCheck = await this.isSymbolInCooldown(cleanSym, recDir);
                     if (cooldownCheck.inCooldown) {
@@ -373,7 +404,9 @@ export class AutonomousOrchestrator {
             candidatePool.sort((a, b) => b.score - a.score);
 
             const availableSlots = Math.max(0, this.maxConcurrentTrades - openPositionsCount);
-            const slotsToExecute = Math.min(availableSlots, this.maxNewTradesPerCycle);
+            // Concurrency Scaler: Allow opening up to 2 trades per cycle if maxConcurrentTrades >= 5 and slots >= 2
+            const cyclePacingLimit = (this.maxConcurrentTrades >= 5 && availableSlots >= 2) ? 2 : this.maxNewTradesPerCycle;
+            const slotsToExecute = Math.min(availableSlots, cyclePacingLimit);
 
             if (candidatePool.length > 0 && slotsToExecute <= 0) {
                 logger.info(`[AutonomousOrchestrator] 🔒 سقف المراكز النشطة مكتمل (${openPositionsCount}/${this.maxConcurrentTrades}). لن يتم فتح صفقات جديدة.`);

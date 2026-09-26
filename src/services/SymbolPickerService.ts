@@ -64,7 +64,7 @@ export class SymbolPickerService {
      */
     async refreshScan(
         limit: number = 20,
-        engineType: 'multicriteria' | 'ccxt' = 'multicriteria',
+        engineType: 'multicriteria' | 'ccxt' = 'ccxt',
         onProgress?: (done: number, total: number) => void
     ): Promise<PickerResult[]> {
         if (this.isScanning) {
@@ -73,44 +73,20 @@ export class SymbolPickerService {
         }
 
         this.isScanning = true;
-        logger.info(`[SymbolPickerService] Starting market scan for top ${limit} symbols using ${engineType} engine...`);
+        logger.info(`[SymbolPickerService] Starting live market scan for top ${limit} symbols using ${engineType} engine...`);
 
         let ranked: PickerResult[] = [];
 
         try {
             if (engineType === 'ccxt') {
                 ranked = await this.ccxtEngine.run(limit, onProgress);
-            } else {
-                const results: PickerResult[] = [];
-                let done = 0;
-                const total = SCAN_SYMBOLS.length;
-
-                // فحص العملات بشكل متوازٍ (على دفعات لتجنب rate limits)
-                const BATCH_SIZE = 5;
-
-                for (let i = 0; i < SCAN_SYMBOLS.length; i += BATCH_SIZE) {
-                    const batch = SCAN_SYMBOLS.slice(i, i + BATCH_SIZE);
-
-                    const batchResults = await Promise.allSettled(
-                        batch.map(sym => this.scanSingleSymbol(sym))
-                    );
-
-                    for (const res of batchResults) {
-                        if (res.status === 'fulfilled' && res.value !== null) {
-                            results.push(res.value);
-                        }
-                        done++;
-                        onProgress?.(done, total);
-                    }
-
-                    // تأخير بسيط بين الدفعات لتجنب rate limit
-                    if (i + BATCH_SIZE < SCAN_SYMBOLS.length) {
-                        await new Promise(r => setTimeout(r, 300));
-                    }
+                // Fallback to multicriteria if CCXT returned empty
+                if (!ranked || ranked.length === 0) {
+                    logger.warn('[SymbolPickerService] CCXT dynamic scan returned 0 pairs, falling back to multicriteria scan...');
+                    ranked = await this.runMulticriteriaScan(limit, onProgress);
                 }
-
-                // ترتيب النتائج وأخذ أفضل N
-                ranked = this.engine.rankResults(results).slice(0, limit);
+            } else {
+                ranked = await this.runMulticriteriaScan(limit, onProgress);
             }
 
             // تحديث الكاش
@@ -124,6 +100,37 @@ export class SymbolPickerService {
 
         logger.info(`[SymbolPickerService] Scan complete. Top ${ranked.length} symbols found.`);
         return ranked;
+    }
+
+    /**
+     * Executes the multicriteria scan across static SCAN_SYMBOLS pool
+     */
+    private async runMulticriteriaScan(limit: number, onProgress?: (done: number, total: number) => void): Promise<PickerResult[]> {
+        const results: PickerResult[] = [];
+        let done = 0;
+        const total = SCAN_SYMBOLS.length;
+        const BATCH_SIZE = 5;
+
+        for (let i = 0; i < SCAN_SYMBOLS.length; i += BATCH_SIZE) {
+            const batch = SCAN_SYMBOLS.slice(i, i + BATCH_SIZE);
+            const batchResults = await Promise.allSettled(
+                batch.map(sym => this.scanSingleSymbol(sym))
+            );
+
+            for (const res of batchResults) {
+                if (res.status === 'fulfilled' && res.value !== null) {
+                    results.push(res.value);
+                }
+                done++;
+                onProgress?.(done, total);
+            }
+
+            if (i + BATCH_SIZE < SCAN_SYMBOLS.length) {
+                await new Promise(r => setTimeout(r, 200));
+            }
+        }
+
+        return this.engine.rankResults(results).slice(0, limit);
     }
 
     /**

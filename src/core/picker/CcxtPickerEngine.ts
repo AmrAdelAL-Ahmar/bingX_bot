@@ -1,4 +1,5 @@
 import * as ccxt from 'ccxt';
+import mongoose from 'mongoose';
 import MarketScanner from '../../models/MarketScannerModel';
 import { PickerResult } from './CurrencyPickerEngine';
 import logger from '../../utils/logger';
@@ -109,22 +110,24 @@ export class CcxtPickerEngine {
 
                             const totalScore = structureResult.score + atrScore + fundamentalScore;
 
-                            // Save results to MongoDB
-                            const updatedDoc = await MarketScanner.findOneAndUpdate(
-                                { symbol: symbol },
-                                {
-                                    symbol: symbol,
-                                    marketType: 'CRYPTO',
-                                    volume24h: volume24h,
-                                    structure1D: structureResult.trend1D,
-                                    structure4H: structureResult.trend4H,
-                                    atr14_1D: atr14,
-                                    atrPercentage: atrPercentage,
-                                    finalScore: totalScore,
-                                    lastUpdated: new Date()
-                                },
-                                { upsert: true, new: true }
-                            );
+                            // Save results to MongoDB (non-blocking / resilient)
+                            if (mongoose.connection && mongoose.connection.readyState === 1) {
+                                MarketScanner.findOneAndUpdate(
+                                    { symbol: symbol },
+                                    {
+                                        symbol: symbol,
+                                        marketType: 'CRYPTO',
+                                        volume24h: volume24h,
+                                        structure1D: structureResult.trend1D,
+                                        structure4H: structureResult.trend4H,
+                                        atr14_1D: atr14,
+                                        atrPercentage: atrPercentage,
+                                        finalScore: totalScore,
+                                        lastUpdated: new Date()
+                                    },
+                                    { upsert: true, new: true }
+                                ).catch(dbErr => logger.debug(`[CcxtPickerEngine] DB cache save error: ${dbErr.message}`));
+                            }
 
                             // Calculate RSI from 4H candles to show in UI
                             const rsi4h = this.calculateRSI(ohlcv4H, 14);
