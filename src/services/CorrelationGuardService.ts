@@ -60,7 +60,8 @@ export class CorrelationGuardService {
         candidateDirection: 'LONG' | 'SHORT',
         candidateRiskPct: number,
         bingx: BingXService,
-        isPaperMode: boolean = false
+        isPaperMode: boolean = false,
+        maxConcurrentTrades: number = 5
     ): Promise<CorrelationCheckResult> {
         try {
             let positionsToCheck: { symbol: string; side: string }[] = [];
@@ -92,11 +93,12 @@ export class CorrelationGuardService {
                 };
             }
 
-            // 1. Calculate current portfolio heat
+            // 1. Calculate current portfolio heat dynamically based on user's max concurrent trades
+            const effectiveMaxHeat = Math.max(this.MAX_PORTFOLIO_HEAT_PCT, maxConcurrentTrades * 2.0);
             let currentHeat = positionsToCheck.length * 2.0;
 
-            if (currentHeat + candidateRiskPct > this.MAX_PORTFOLIO_HEAT_PCT) {
-                const msg = `🚨 تم تجاوز سقف حرارة المحفظة الإجمالي: (${(currentHeat + candidateRiskPct).toFixed(1)}% > ${this.MAX_PORTFOLIO_HEAT_PCT}%). يرجى انتظار إغلاق بعض الصفقات.`;
+            if (currentHeat + candidateRiskPct > effectiveMaxHeat) {
+                const msg = `🚨 تم تجاوز سقف حرارة المحفظة الإجمالي: (${(currentHeat + candidateRiskPct).toFixed(1)}% > ${effectiveMaxHeat}%). يرجى انتظار إغلاق بعض الصفقات.`;
                 logger.warn(`[CorrelationGuard] ${msg}`);
                 return {
                     allowed: false,

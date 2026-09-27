@@ -569,7 +569,7 @@ export class AutonomousOrchestrator {
         const effectiveMarginPct = this.positionMarginPct || (isTurbo ? 3 : (isWhale ? 4 : 3));
 
         // 2. Portfolio Heat & Correlation Guard (Aware of Paper and Live trades)
-        const corrResult = await CorrelationGuardService.validateTrade(fullSymbol, finalDirection, 1.5, this.bingx, isPaper);
+        const corrResult = await CorrelationGuardService.validateTrade(fullSymbol, finalDirection, 1.5, this.bingx, isPaper, this.maxConcurrentTrades);
         if (!corrResult.allowed) {
             logger.warn(`[AutonomousOrchestrator] Correlation guard rejected ${shortSymbol}: ${corrResult.reason}`);
             return { symbol: shortSymbol, score, direction: `حظر الارتباط (${corrResult.reason})`, executed: false };
