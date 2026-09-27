@@ -23,42 +23,52 @@ export interface BtcCompassReport {
 }
 
 export class BtcMarketCompass {
-    private static cachedReport: BtcCompassReport | null = null;
-    private static lastCheckTime: number = 0;
-    private static readonly CACHE_TTL_MS = 60 * 1000; // 1-minute cache
+    private static cachedReports: Map<string, { report: BtcCompassReport; timestamp: number }> = new Map();
+    private static readonly CACHE_TTL_MS = 45 * 1000; // 45-second cache
 
     /**
-     * Analyzes Bitcoin (BTC/USDT) to establish the macro market compass
+     * Analyzes Bitcoin (BTC/USDT) to establish the macro market compass on specified timeframe
      */
-    static async getMarketCompass(bingx: BingXService, forceRefresh = false): Promise<BtcCompassReport> {
+    static async getMarketCompass(
+        bingx: BingXService,
+        forceRefresh = false,
+        timeframe: '5m' | '15m' | '1h' | '4h' = '15m'
+    ): Promise<BtcCompassReport> {
         const now = Date.now();
-        if (!forceRefresh && this.cachedReport && (now - this.lastCheckTime < this.CACHE_TTL_MS)) {
-            return this.cachedReport;
+        const cacheEntry = this.cachedReports.get(timeframe);
+        if (!forceRefresh && cacheEntry && (now - cacheEntry.timestamp < this.CACHE_TTL_MS)) {
+            return cacheEntry.report;
         }
 
         const btcSymbol = 'BTC/USDT:USDT';
 
         try {
-            const [candles15m, candles1h, candles1d] = await Promise.all([
-                bingx.fetchOHLCV(btcSymbol, '15m', 50).catch(() => [] as OHLCV[]),
+            const [candlesTf, candles1h, candles1d] = await Promise.all([
+                bingx.fetchOHLCV(btcSymbol, timeframe, 50).catch(() => [] as OHLCV[]),
                 bingx.fetchOHLCV(btcSymbol, '1h', 50).catch(() => [] as OHLCV[]),
                 bingx.fetchOHLCV(btcSymbol, '1d', 30).catch(() => [] as OHLCV[])
             ]);
 
-            if (!candles15m || candles15m.length < 25) {
+            if (!candlesTf || candlesTf.length < 25) {
                 return this.createFallbackReport();
             }
 
-            const currentPrice = candles15m[candles15m.length - 1].close;
-            const prev15mClose = candles15m[candles15m.length - 2].close;
-            const btcChange15m = ((currentPrice - prev15mClose) / prev15mClose) * 100;
+            const currentPrice = candlesTf[candlesTf.length - 1].close;
+            const prevTfClose = candlesTf[candlesTf.length - 2].close;
+            const btcChangeTf = ((currentPrice - prevTfClose) / prevTfClose) * 100;
 
             const prev1hClose = candles1h && candles1h.length >= 2 ? candles1h[candles1h.length - 2].close : currentPrice;
             const btcChange1h = ((currentPrice - prev1hClose) / prev1hClose) * 100;
 
-            // 1. Check for Sudden Crash / Violent Blackout (Drop > 1.2% in 15m)
-            const isBlackout = btcChange15m <= -1.20 || btcChange1h <= -2.50;
-            const blackoutReason = isBlackout ? `هبوط عنيف في البيتكوين (${btcChange15m.toFixed(2)}% في 15 دقيقة)` : undefined;
+            // 1. Check for Sudden Crash / Violent Blackout (dynamic threshold per timeframe)
+            let blackoutThreshold = -1.20;
+            if (timeframe === '5m') blackoutThreshold = -0.80;
+            else if (timeframe === '15m') blackoutThreshold = -1.20;
+            else if (timeframe === '1h') blackoutThreshold = -2.20;
+            else if (timeframe === '4h') blackoutThreshold = -3.50;
+
+            const isBlackout = btcChangeTf <= blackoutThreshold || btcChange1h <= -2.50;
+            const blackoutReason = isBlackout ? `هبوط عنيف في البيتكوين (${btcChangeTf.toFixed(2)}% على فريم ${timeframe})` : undefined;
 
             // 2. Institutional VWAP positioning
             const vwap = candles1d && candles1d.length > 0
@@ -66,10 +76,10 @@ export class BtcMarketCompass {
                 : currentPrice;
             const isAboveVwap = currentPrice >= vwap;
 
-            // 3. 15m Exponential Moving Averages (EMA 20 vs EMA 50)
-            const closes15m = candles15m.map((c: OHLCV) => c.close);
-            const ema20Arr = EMA.calculate({ period: 20, values: closes15m });
-            const ema50Arr = EMA.calculate({ period: 50, values: closes15m });
+            // 3. Exponential Moving Averages on chosen timeframe (EMA 20 vs EMA 50)
+            const closesTf = candlesTf.map((c: OHLCV) => c.close);
+            const ema20Arr = EMA.calculate({ period: 20, values: closesTf });
+            const ema50Arr = EMA.calculate({ period: 50, values: closesTf });
             const ema20 = ema20Arr[ema20Arr.length - 1] || currentPrice;
             const ema50 = ema50Arr[ema50Arr.length - 1] || currentPrice;
 
@@ -88,19 +98,19 @@ export class BtcMarketCompass {
             if (isBlackout) {
                 allowLongs = false;
                 allowShorts = false;
-                statusSummary = `🚨 حظر انهيار البيتكوين (تغير ${btcChange15m.toFixed(2)}% في 15 دقيقة) - تجميد الصفقات مؤقتاً`;
+                statusSummary = `🚨 حظر انهيار البيتكوين (${btcChangeTf.toFixed(2)}% على فريم ${timeframe}) - تجميد الصفقات مؤقتاً`;
             } else if (trend15m === 'BULLISH' && isAboveVwap) {
                 allowLongs = true;
                 allowShorts = false;
-                statusSummary = `🟢 بيتكوين صاعد بقوة (فوق VWAP بـ $${currentPrice.toFixed(0)}) | السماح بالشراء LONG فقط`;
+                statusSummary = `🟢 بيتكوين صاعد بقوة [فريم ${timeframe}] (فوق VWAP بـ $${currentPrice.toFixed(0)}) | السماح بالشراء LONG فقط`;
             } else if (trend15m === 'BEARISH' || !isAboveVwap) {
                 allowLongs = false;
                 allowShorts = true;
-                statusSummary = `🔴 بيتكوين هابط/تحت VWAP ($${currentPrice.toFixed(0)}) | حظر الشراء وتوجيه الصفقات للبيع SHORT`;
+                statusSummary = `🔴 بيتكوين هابط/تحت VWAP [فريم ${timeframe}] ($${currentPrice.toFixed(0)}) | حظر الشراء وتوجيه الصفقات للبيع SHORT`;
             } else {
                 allowLongs = currentPrice >= ema20;
                 allowShorts = currentPrice <= ema20;
-                statusSummary = `⚪ بيتكوين في تذبذب عرضي ($${currentPrice.toFixed(0)}) | السماح بكلا الاتجاهين بحذر`;
+                statusSummary = `⚪ بيتكوين في تذبذب عرضي [فريم ${timeframe}] ($${currentPrice.toFixed(0)}) | السماح بكلا الاتجاهين بحذر`;
             }
 
             const report: BtcCompassReport = {
@@ -113,16 +123,15 @@ export class BtcMarketCompass {
                 blackoutReason,
                 allowLongs,
                 allowShorts,
-                btcChange15m,
-                change15mPct: btcChange15m,
+                btcChange15m: btcChangeTf,
+                change15mPct: btcChangeTf,
                 btcChange1h,
                 ema20,
                 ema50,
                 statusSummary
             };
 
-            this.cachedReport = report;
-            this.lastCheckTime = now;
+            this.cachedReports.set(timeframe, { report, timestamp: now });
             return report;
         } catch (error: any) {
             logger.warn(`[BtcMarketCompass] Failed to evaluate BTC compass: ${error.message}`);

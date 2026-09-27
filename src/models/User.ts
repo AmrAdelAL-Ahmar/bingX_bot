@@ -88,6 +88,8 @@ export interface IUser extends Document {
         fixedLeverageValue?: number;
         antiPeakGuardEnabled?: boolean;
         frontRunTpEnabled?: boolean;
+        btcCompassEnabled?: boolean;
+        btcCompassTimeframe?: '5m' | '15m' | '1h' | '4h';
     };
 }
 
@@ -178,7 +180,9 @@ const UserSchema: Schema = new Schema({
         leverageMode: { type: String, enum: ['DYNAMIC', 'FIXED'], default: 'DYNAMIC' },
         fixedLeverageValue: { type: Number, default: 20 },
         antiPeakGuardEnabled: { type: Boolean, default: true },
-        frontRunTpEnabled: { type: Boolean, default: true }
+        frontRunTpEnabled: { type: Boolean, default: true },
+        btcCompassEnabled: { type: Boolean, default: true },
+        btcCompassTimeframe: { type: String, enum: ['5m', '15m', '1h', '4h'], default: '15m' }
     }
 });
 

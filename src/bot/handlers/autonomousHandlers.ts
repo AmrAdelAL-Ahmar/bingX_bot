@@ -354,6 +354,22 @@ export const registerAutonomousHandlers = (
         await renderAutonomousSettingsHub(ctx, orchestrator, true);
     });
 
+    bot.action('aut_toggle_btc_compass', async (ctx) => {
+        orchestrator.btcCompassEnabled = !orchestrator.btcCompassEnabled;
+        await User.updateOne({ isActive: true }, { 'autonomousSettings.btcCompassEnabled': orchestrator.btcCompassEnabled }).catch(() => {});
+        const msg = orchestrator.btcCompassEnabled ? '🧭 تم تفعيل شرط بوصلة البيتكوين' : '⚪ تم تعطيل شرط بوصلة البيتكوين (تداول حر ومستقل)';
+        await ctx.answerCbQuery(msg).catch(() => {});
+        await renderAutonomousSettingsHub(ctx, orchestrator, true);
+    });
+
+    bot.action(/^aut_btc_tf_(5m|15m|1h|4h)$/, async (ctx) => {
+        const tf = ctx.match[1] as '5m' | '15m' | '1h' | '4h';
+        orchestrator.btcCompassTimeframe = tf;
+        await User.updateOne({ isActive: true }, { 'autonomousSettings.btcCompassTimeframe': tf }).catch(() => {});
+        await ctx.answerCbQuery(`⏱️ تم ضبط فريم بوصلة البيتكوين على ${tf}`).catch(() => {});
+        await renderAutonomousSettingsHub(ctx, orchestrator, true);
+    });
+
     // ── Position Margin % Presets & Custom ──
     bot.action(/^aut_margin_(2|3|5|10)$/, async (ctx) => {
         const val = parseInt(ctx.match[1]);
@@ -1559,6 +1575,9 @@ async function renderAutonomousSettingsHub(ctx: any, orchestrator: AutonomousOrc
     const slStatus = `🛑 ${orchestrator.turboSlPercentage}%`;
     const antiPeakStatus = orchestrator.antiPeakGuardEnabled ? '🟢 مفعل (حظر الشراء من القمة والبيع من القاع)' : '⚪ معطل';
     const frontRunStatus = orchestrator.frontRunTpEnabled ? '🟢 مفعل (وضع الأهداف قبل المقاومة/الدعم بـ 0.20%)' : '⚪ معطل';
+    const btcCompassStatus = orchestrator.btcCompassEnabled
+        ? `🟢 مفعل (فلترة الصفقات حسب اتجاه البيتكوين على فريم ${orchestrator.btcCompassTimeframe})`
+        : '⚪ معطل (تداول حر ومستقل للعملات البديلة)';
 
     let msg = `⚙️ <b>لوحة إعدادات الحماية وإدارة المخاطر للتداول الذاتي</b>\n`;
     msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
@@ -1570,6 +1589,9 @@ async function renderAutonomousSettingsHub(ctx: any, orchestrator: AutonomousOrc
 
     msg += `• <b>الرافعة المالية (Leverage):</b>\n  👉 <b>${levStatus}</b>\n`;
     msg += `  <i>التلقائي يوزع الرافعة بأمان (BTC/ETH 50x، كبار العملات 30x، الفرعية 20x)</i>\n\n`;
+
+    msg += `• <b>شرط بوصلة البيتكوين والتوقيت (BTC Compass):</b>\n  👉 <b>${btcCompassStatus}</b>\n`;
+    msg += `  <i>يمنع شراء العملات البديلة عند هبوط البيتكوين ويمنع البيع عند صعوده</i>\n\n`;
 
     msg += `• <b>فلتر منع القمم والقيعان (Anti-Peak Guard):</b>\n  👉 <b>${antiPeakStatus}</b>\n`;
     msg += `  <i>يمنع الشراء عند القمم المشبعة تصحيحياً (RSI>76 / بولنجر علوي / تباعد MA20) ويمنع البيع عند القيعان</i>\n\n`;
@@ -1651,6 +1673,23 @@ async function renderAutonomousSettingsHub(ctx: any, orchestrator: AutonomousOrc
                     text: orchestrator.frontRunTpEnabled ? '🎯 استباق المقاومة/الدعم: مفعل 🟢' : '🎯 استباق المقاومة/الدعم: معطل ⚪',
                     callback_data: 'aut_toggle_frontrun_tp'
                 }
+            ],
+
+            // Row 5: BTC Compass Controls & Timeframe Selection
+            [
+                { text: '── 🧭 شرط بوصلة البيتكوين وفريم المراقبة ──', callback_data: 'aut_noop' }
+            ],
+            [
+                {
+                    text: orchestrator.btcCompassEnabled ? '🧭 شرط بوصلة البيتكوين: مفعل 🟢' : '🧭 شرط بوصلة البيتكوين: معطل ⚪',
+                    callback_data: 'aut_toggle_btc_compass'
+                }
+            ],
+            [
+                { text: orchestrator.btcCompassTimeframe === '5m' ? '🔘 5m' : '5m', callback_data: 'aut_btc_tf_5m' },
+                { text: orchestrator.btcCompassTimeframe === '15m' ? '🔘 15m' : '15m', callback_data: 'aut_btc_tf_15m' },
+                { text: orchestrator.btcCompassTimeframe === '1h' ? '🔘 1h' : '1h', callback_data: 'aut_btc_tf_1h' },
+                { text: orchestrator.btcCompassTimeframe === '4h' ? '🔘 4h' : '4h', callback_data: 'aut_btc_tf_4h' }
             ],
 
             // Row 5: Protection & Direction Header

@@ -49,6 +49,8 @@ export class AutonomousOrchestrator {
     public fixedLeverageValue: number = 20;
     public antiPeakGuardEnabled: boolean = true;
     public frontRunTpEnabled: boolean = true;
+    public btcCompassEnabled: boolean = true;
+    public btcCompassTimeframe: '5m' | '15m' | '1h' | '4h' = '15m';
 
     // Cooldown map: key = `${cleanSymbol}_${direction}`, value = expireTimestamp (epoch ms)
     private recentTpCooldowns: Map<string, { direction: string; expireAt: number; symbol: string }> = new Map();
@@ -122,6 +124,8 @@ export class AutonomousOrchestrator {
                 if (admin.autonomousSettings.fixedLeverageValue) this.fixedLeverageValue = admin.autonomousSettings.fixedLeverageValue;
                 if (admin.autonomousSettings.antiPeakGuardEnabled !== undefined) this.antiPeakGuardEnabled = admin.autonomousSettings.antiPeakGuardEnabled;
                 if (admin.autonomousSettings.frontRunTpEnabled !== undefined) this.frontRunTpEnabled = admin.autonomousSettings.frontRunTpEnabled;
+                if (admin.autonomousSettings.btcCompassEnabled !== undefined) this.btcCompassEnabled = admin.autonomousSettings.btcCompassEnabled;
+                if (admin.autonomousSettings.btcCompassTimeframe) this.btcCompassTimeframe = admin.autonomousSettings.btcCompassTimeframe;
             }
             if (admin?.autoBreakEven !== undefined) {
                 this.autoBreakEvenEnabled = admin.autoBreakEven;
@@ -252,13 +256,18 @@ export class AutonomousOrchestrator {
                 return;
             }
 
-            // D. BTC Macro Market Compass & Flash Dump Filter
-            const btcCompass = await BtcMarketCompass.getMarketCompass(this.bingx);
-            if (btcCompass.isBlackout) {
-                logger.warn(`[AutonomousOrchestrator] 🚨 Cycle skipped: BTC Flash Dump Blackout active! (${btcCompass.macroTrend} - ${btcCompass.blackoutReason})`);
-                return;
+            // D. BTC Macro Market Compass & Flash Dump Filter (if enabled)
+            let btcCompass: any = null;
+            if (this.btcCompassEnabled) {
+                btcCompass = await BtcMarketCompass.getMarketCompass(this.bingx, false, this.btcCompassTimeframe);
+                if (btcCompass.isBlackout) {
+                    logger.warn(`[AutonomousOrchestrator] 🚨 Cycle skipped: BTC Flash Dump Blackout active! (${btcCompass.macroTrend} - ${btcCompass.blackoutReason})`);
+                    return;
+                }
+                logger.info(`[AutonomousOrchestrator] 🧭 BTC Compass [${this.btcCompassTimeframe}]: ${btcCompass.macroTrend} (Change: ${btcCompass.change15mPct.toFixed(2)}%, EMA20: ${btcCompass.ema20.toFixed(1)}) | Longs: ${btcCompass.allowLongs ? '✅' : '❌'}, Shorts: ${btcCompass.allowShorts ? '✅' : '❌'}`);
+            } else {
+                logger.info(`[AutonomousOrchestrator] 🧭 شرط بوصلة البيتكوين: معطل (تداول العملات باستقلالية تامة) ⚪`);
             }
-            logger.info(`[AutonomousOrchestrator] 🧭 BTC Compass: ${btcCompass.macroTrend} (15m Change: ${btcCompass.change15mPct.toFixed(2)}%, EMA20: ${btcCompass.ema20.toFixed(1)}) | Longs: ${btcCompass.allowLongs ? '✅' : '❌'}, Shorts: ${btcCompass.allowShorts ? '✅' : '❌'}`);
 
             // ── 1. Check Existing Active Positions & Active Symbols ───────────────────
             const isPaper = this.currentMode === 'PAPER_TRADING';
@@ -335,13 +344,13 @@ export class AutonomousOrchestrator {
                         continue;
                     }
 
-                    // BTC Market Compass Direction Permission for Altcoins
-                    if (cleanSym !== 'BTC') {
+                    // BTC Market Compass Direction Permission for Altcoins (only if enabled)
+                    if (this.btcCompassEnabled && btcCompass && cleanSym !== 'BTC') {
                         if (recDir === 'LONG' && !btcCompass.allowLongs) {
                             evaluations.push({
                                 symbol: sym,
                                 score,
-                                direction: `مستبعد (بوصلة البيتكوين هابطة 📉)`,
+                                direction: `مستبعد (بوصلة البيتكوين [${this.btcCompassTimeframe}] هابطة 📉)`,
                                 executed: false
                             });
                             continue;
@@ -350,7 +359,7 @@ export class AutonomousOrchestrator {
                             evaluations.push({
                                 symbol: sym,
                                 score,
-                                direction: `مستبعد (بوصلة البيتكوين صاعدة 📈)`,
+                                direction: `مستبعد (بوصلة البيتكوين [${this.btcCompassTimeframe}] صاعدة 📈)`,
                                 executed: false
                             });
                             continue;
