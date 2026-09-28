@@ -5,7 +5,8 @@ import { PickerResult } from './CurrencyPickerEngine';
 import logger from '../../utils/logger';
 
 export const JUNK_AND_COMMODITY_BLACKLIST = new Set([
-    'PUMP', 'NCCO1OILBRENT2USD', 'NCCOGOLD2USD', 'NCCOSILVER2USD', 'OIL', 'BRENT', 'GOLD', 'SILVER',
+    'PUMP', 'NCCO1OILBRENT2USD', 'NCCOGOLD2USD', 'NCCOSILVER2USD', 'NCCOXAG2USD', 'NCCO1OILWTI2USD',
+    'OIL', 'BRENT', 'GOLD', 'SILVER', 'XAUT', 'PAXG', 'XAU', 'XAG',
     'LUNA', 'LUNC', 'FTT', 'USTC'
 ]);
 

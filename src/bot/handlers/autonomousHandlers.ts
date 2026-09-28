@@ -1454,7 +1454,11 @@ async function renderMathematicalAnalysis(
         const topEngines = dossier.enginesSummary.slice(0, 5);
         for (const eng of topEngines) {
             const eEmoji = eng.direction === 'LONG' ? '🟢' : eng.direction === 'SHORT' ? '🔴' : '⚪';
-            msg += `   ${eEmoji} <b>[${eng.engineId}]:</b> ${eng.direction} (${eng.confidence}%) - <i>${eng.reason}</i>\n`;
+            const safeReason = (eng.reason || '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+            msg += `   ${eEmoji} <b>[${eng.engineId}]:</b> ${eng.direction} (${eng.confidence}%) - <i>${safeReason}</i>\n`;
         }
         msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
         msg += `👇 <i>اختر الإجراء المطلوب لهذه العملة:</i>`;
