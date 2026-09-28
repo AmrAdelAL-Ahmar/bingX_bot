@@ -65,7 +65,8 @@ export class SymbolPickerService {
     async refreshScan(
         limit: number = 20,
         engineType: 'multicriteria' | 'ccxt' = 'ccxt',
-        onProgress?: (done: number, total: number) => void
+        onProgress?: (done: number, total: number) => void,
+        filterJunk: boolean = true
     ): Promise<PickerResult[]> {
         if (this.isScanning) {
             logger.warn('[SymbolPickerService] Scan already running, returning cached results');
@@ -73,13 +74,13 @@ export class SymbolPickerService {
         }
 
         this.isScanning = true;
-        logger.info(`[SymbolPickerService] Starting live market scan for top ${limit} symbols using ${engineType} engine...`);
+        logger.info(`[SymbolPickerService] Starting live market scan for top ${limit} symbols using ${engineType} engine (filterJunk: ${filterJunk})...`);
 
         let ranked: PickerResult[] = [];
 
         try {
             if (engineType === 'ccxt') {
-                ranked = await this.ccxtEngine.run(limit, onProgress);
+                ranked = await this.ccxtEngine.run(limit, onProgress, filterJunk);
                 // Fallback to multicriteria if CCXT returned empty
                 if (!ranked || ranked.length === 0) {
                     logger.warn('[SymbolPickerService] CCXT dynamic scan returned 0 pairs, falling back to multicriteria scan...');

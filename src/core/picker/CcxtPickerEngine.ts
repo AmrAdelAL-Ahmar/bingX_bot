@@ -4,6 +4,11 @@ import MarketScanner from '../../models/MarketScannerModel';
 import { PickerResult } from './CurrencyPickerEngine';
 import logger from '../../utils/logger';
 
+export const JUNK_AND_COMMODITY_BLACKLIST = new Set([
+    'PUMP', 'NCCO1OILBRENT2USD', 'NCCOGOLD2USD', 'NCCOSILVER2USD', 'OIL', 'BRENT', 'GOLD', 'SILVER',
+    'LUNA', 'LUNC', 'FTT', 'USTC'
+]);
+
 export class CcxtPickerEngine {
     private exchange: ccxt.Exchange;
 
@@ -17,16 +22,24 @@ export class CcxtPickerEngine {
     /**
      * Runs the professional CCXT-based market scan
      */
-    async run(limit: number = 20, onProgress?: (done: number, total: number) => void): Promise<PickerResult[]> {
+    async run(limit: number = 20, onProgress?: (done: number, total: number) => void, filterJunk: boolean = true): Promise<PickerResult[]> {
         try {
             logger.info('🔄 [CcxtPickerEngine] Loading markets and fetching tickers from bingx...');
             await this.exchange.loadMarkets();
             const allTickers = await this.exchange.fetchTickers();
 
-            // Filter for USDT perpetual contracts
-            const symbols = Object.keys(allTickers).filter(symbol =>
-                symbol.endsWith('/USDT:USDT') || (symbol.endsWith('USDT') && !symbol.includes('/'))
-            );
+            // Filter for USDT perpetual contracts (and exclude junk meme coins/commodities if filterJunk is true)
+            const symbols = Object.keys(allTickers).filter(symbol => {
+                const isUsdtSwap = symbol.endsWith('/USDT:USDT') || (symbol.endsWith('USDT') && !symbol.includes('/'));
+                if (!isUsdtSwap) return false;
+                if (filterJunk) {
+                    const cleanBase = symbol.split('/')[0].split(':')[0].toUpperCase();
+                    if (JUNK_AND_COMMODITY_BLACKLIST.has(cleanBase) || cleanBase.startsWith('NCCO')) {
+                        return false;
+                    }
+                }
+                return true;
+            });
 
             if (symbols.length === 0) {
                 logger.warn('[CcxtPickerEngine] No USDT perpetual symbols found on bingx');

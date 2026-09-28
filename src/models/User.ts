@@ -81,7 +81,7 @@ export interface IUser extends Document {
         turboSlPercentage: number;
         breakEvenTriggerPct: number;
         microTpPercentage: number;
-        tradeStyle?: 'HYBRID' | 'SCALP' | 'SWING' | 'SCALP_TURBO' | 'WHALE_SURGE';
+        tradeStyle?: 'HYBRID' | 'SCALP' | 'SWING' | 'SCALP_TURBO' | 'WHALE_SURGE' | 'STALKER_SNIPER';
         positionMarginPct?: number;
         maxConcurrentTrades?: number;
         leverageMode?: 'DYNAMIC' | 'FIXED';
@@ -90,6 +90,13 @@ export interface IUser extends Document {
         frontRunTpEnabled?: boolean;
         btcCompassEnabled?: boolean;
         btcCompassTimeframe?: '5m' | '15m' | '1h' | '4h';
+        cleanCryptoOnlyEnabled?: boolean;
+        optimizedWeightsEnabled?: boolean;
+        stalkerEnabled?: boolean;
+        stalkerMaxPairs?: number;
+        stalkerTimeoutMinutes?: number;
+        volumeBurstThreshold?: number;
+        minBuyVolumeRatio?: number;
     };
 }
 
@@ -174,7 +181,7 @@ const UserSchema: Schema = new Schema({
         turboSlPercentage: { type: Number, default: 0.9 },
         breakEvenTriggerPct: { type: Number, default: 0.35 },
         microTpPercentage: { type: Number, default: 0.55 },
-        tradeStyle: { type: String, enum: ['HYBRID', 'SCALP', 'SWING', 'SCALP_TURBO', 'WHALE_SURGE'], default: 'HYBRID' },
+        tradeStyle: { type: String, enum: ['HYBRID', 'SCALP', 'SWING', 'SCALP_TURBO', 'WHALE_SURGE', 'STALKER_SNIPER'], default: 'HYBRID' },
         positionMarginPct: { type: Number, default: 3 },
         maxConcurrentTrades: { type: Number, default: 3 },
         leverageMode: { type: String, enum: ['DYNAMIC', 'FIXED'], default: 'DYNAMIC' },
@@ -182,7 +189,14 @@ const UserSchema: Schema = new Schema({
         antiPeakGuardEnabled: { type: Boolean, default: true },
         frontRunTpEnabled: { type: Boolean, default: true },
         btcCompassEnabled: { type: Boolean, default: true },
-        btcCompassTimeframe: { type: String, enum: ['5m', '15m', '1h', '4h'], default: '15m' }
+        btcCompassTimeframe: { type: String, enum: ['5m', '15m', '1h', '4h'], default: '15m' },
+        cleanCryptoOnlyEnabled: { type: Boolean, default: true },
+        optimizedWeightsEnabled: { type: Boolean, default: true },
+        stalkerEnabled: { type: Boolean, default: true },
+        stalkerMaxPairs: { type: Number, default: 3 },
+        stalkerTimeoutMinutes: { type: Number, default: 30 },
+        volumeBurstThreshold: { type: Number, default: 2.0 },
+        minBuyVolumeRatio: { type: Number, default: 65 }
     }
 });
 

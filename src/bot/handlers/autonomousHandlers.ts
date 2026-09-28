@@ -263,6 +263,19 @@ export const registerAutonomousHandlers = (
         await renderAutonomousDashboard(ctx, orchestrator, true);
     });
 
+    bot.action('aut_style_stalker', async (ctx) => {
+        orchestrator.tradeStyle = 'STALKER_SNIPER';
+        orchestrator.stalkerEnabled = true;
+        await User.updateOne({
+            isActive: true
+        }, {
+            'autonomousSettings.tradeStyle': 'STALKER_SNIPER',
+            'autonomousSettings.stalkerEnabled': true
+        }).catch(() => {});
+        await ctx.answerCbQuery('🎯 تم تفعيل نمط قناص التربص (مراقبة 15 ثانية + فحص فوليوم 1m)').catch(() => {});
+        await renderAutonomousDashboard(ctx, orchestrator, true);
+    });
+
     // ── TP Execution Mode Controls ──
     bot.action('aut_tp_single', async (ctx) => {
         orchestrator.tpExecutionMode = 'single';
@@ -368,6 +381,97 @@ export const registerAutonomousHandlers = (
         await User.updateOne({ isActive: true }, { 'autonomousSettings.btcCompassTimeframe': tf }).catch(() => {});
         await ctx.answerCbQuery(`⏱️ تم ضبط فريم بوصلة البيتكوين على ${tf}`).catch(() => {});
         await renderAutonomousSettingsHub(ctx, orchestrator, true);
+    });
+
+    // ── Clean Crypto (Blacklist Junk & Commodities) ──
+    bot.action('aut_toggle_clean_crypto', async (ctx) => {
+        orchestrator.cleanCryptoOnlyEnabled = !orchestrator.cleanCryptoOnlyEnabled;
+        await User.updateOne({ isActive: true }, { 'autonomousSettings.cleanCryptoOnlyEnabled': orchestrator.cleanCryptoOnlyEnabled }).catch(() => {});
+        const msg = orchestrator.cleanCryptoOnlyEnabled ? '🛡️ تم تفعيل حظر الميم (PUMP) والسلع (النفط/الذهب)' : '⚪ تم إتاحة جميع العملات';
+        await ctx.answerCbQuery(msg).catch(() => {});
+        await renderAutonomousSettingsHub(ctx, orchestrator, true);
+    });
+
+    // ── Engine Weight Optimization ──
+    bot.action('aut_toggle_optimized_weights', async (ctx) => {
+        orchestrator.optimizedWeightsEnabled = !orchestrator.optimizedWeightsEnabled;
+        await User.updateOne({ isActive: true }, { 'autonomousSettings.optimizedWeightsEnabled': orchestrator.optimizedWeightsEnabled }).catch(() => {});
+        const msg = orchestrator.optimizedWeightsEnabled ? '⚖️ تم تفعيل موازنة المحركات (رفع V11 وهارمونيك، وخفض V8 و V17)' : '⚪ تم اعتماد الأوزان الافتراضية';
+        await ctx.answerCbQuery(msg).catch(() => {});
+        await renderAutonomousSettingsHub(ctx, orchestrator, true);
+    });
+
+    // ── Opportunity Stalker & 1m Volume Burst Trigger ──
+    bot.action('aut_toggle_stalker', async (ctx) => {
+        orchestrator.stalkerEnabled = !orchestrator.stalkerEnabled;
+        await User.updateOne({ isActive: true }, { 'autonomousSettings.stalkerEnabled': orchestrator.stalkerEnabled }).catch(() => {});
+        const msg = orchestrator.stalkerEnabled ? '🎯 تم تفعيل نظام التربص وقناص الفوليوم 1m' : '⚪ تم تعطيل نظام التربص (دخول فوري مباشر)';
+        await ctx.answerCbQuery(msg).catch(() => {});
+        await renderAutonomousSettingsHub(ctx, orchestrator, true);
+    });
+
+    bot.action(/^aut_stalker_pairs_(2|3|5)$/, async (ctx) => {
+        const val = parseInt(ctx.match[1]);
+        orchestrator.stalkerMaxPairs = val;
+        await User.updateOne({ isActive: true }, { 'autonomousSettings.stalkerMaxPairs': val }).catch(() => {});
+        await ctx.answerCbQuery(`🎯 سقف أزواج التربص: ${val} عملات`).catch(() => {});
+        await renderAutonomousSettingsHub(ctx, orchestrator, true);
+    });
+
+    bot.action(/^aut_stalker_timeout_(15|30|45|60)$/, async (ctx) => {
+        const val = parseInt(ctx.match[1]);
+        orchestrator.stalkerTimeoutMinutes = val;
+        await User.updateOne({ isActive: true }, { 'autonomousSettings.stalkerTimeoutMinutes': val }).catch(() => {});
+        await ctx.answerCbQuery(`⏱️ مدة مهلة التربص: ${val} دقيقة`).catch(() => {});
+        await renderAutonomousSettingsHub(ctx, orchestrator, true);
+    });
+
+    bot.action(/^aut_stalker_spike_(15|20|25|30)$/, async (ctx) => {
+        const factorMap: Record<string, number> = { '15': 1.5, '20': 2.0, '25': 2.5, '30': 3.0 };
+        const val = factorMap[ctx.match[1]] || 2.0;
+        orchestrator.volumeBurstThreshold = val;
+        await User.updateOne({ isActive: true }, { 'autonomousSettings.volumeBurstThreshold': val }).catch(() => {});
+        await ctx.answerCbQuery(`🚀 مضاعف فوليوم 1m: ${val}x`).catch(() => {});
+        await renderAutonomousSettingsHub(ctx, orchestrator, true);
+    });
+
+    bot.action(/^aut_stalker_buyvol_(60|65|70|75)$/, async (ctx) => {
+        const val = parseInt(ctx.match[1]);
+        orchestrator.minBuyVolumeRatio = val;
+        await User.updateOne({ isActive: true }, { 'autonomousSettings.minBuyVolumeRatio': val }).catch(() => {});
+        await ctx.answerCbQuery(`📊 نسبة السيولة المطلوبة: ${val}%`).catch(() => {});
+        await renderAutonomousSettingsHub(ctx, orchestrator, true);
+    });
+
+    bot.action('aut_clear_stalker', async (ctx) => {
+        orchestrator.opportunityStalker?.clear();
+        await ctx.answerCbQuery('🗑️ تم تفريغ قائمة العملات المتربص بها').catch(() => {});
+        await renderAutonomousSettingsHub(ctx, orchestrator, true);
+    });
+
+    bot.action('aut_view_stalker', async (ctx) => {
+        await ctx.answerCbQuery().catch(() => {});
+        const active = orchestrator.opportunityStalker?.getActiveCandidates() || [];
+        if (active.length === 0) {
+            await ctx.reply('📭 <b>قائمة التربص فارغة حالياً.</b>\nالمنظومة ستضيف الفرص المرشحة تلقائياً عند فحص إغلاق الشمعة.', { parse_mode: 'HTML' }).catch(() => {});
+            return;
+        }
+        let report = `🎯 <b>العملات المتربص بها حالياً في الذاكرة (${active.length}):</b>\n━━━━━━━━━━━━━━━━━━━━━\n`;
+        for (const item of active) {
+            const remMins = Math.max(0, Math.ceil((item.expiresAt - Date.now()) / 60000));
+            report += `• <b>${item.symbol}</b> (${item.direction}) | توافق: <b>${item.confluenceScore}%</b>\n`;
+            report += `  - سعر الدخول المستهدف: <code>${item.targetEntry}</code>\n`;
+            report += `  - آخر سعر تم فحصه: <code>${item.lastCheckedPrice || 'في الانتظار'}</code>\n`;
+            report += `  - تقرير الفوليوم 1m: <i>${item.lastFlowReport?.reason || 'جاري الفحص كل 15 ثانية...'}</i>\n`;
+            report += `  - مهلة الصلاحية: باقي <b>${remMins} دقيقة</b>\n\n`;
+        }
+        report += `━━━━━━━━━━━━━━━━━━━━━\n<i>يتم فحص كل عملة كل 15 ثانية وتُطلق الصفقة فور رصد انفجار فوليوم 1m!</i>`;
+        await ctx.reply(report, {
+            parse_mode: 'HTML',
+            reply_markup: {
+                inline_keyboard: [[{ text: '🔙 رجوع لإعدادات الحماية', callback_data: 'aut_settings_hub' }]]
+            }
+        }).catch(() => {});
     });
 
     // ── Position Margin % Presets & Custom ──
@@ -726,15 +830,17 @@ async function renderAutonomousDashboard(ctx: any, orchestrator: AutonomousOrche
             ? '🟡 نصف تلقائي (تأكيد عبر تيليجرام 60 ثانية)'
             : '🟢 تلقائي كامل على المحفظة الحقيقية (BingX Real Balance)';
 
-    const styleLabel = orchestrator.tradeStyle === 'WHALE_SURGE'
-        ? '💥 صفقات انفجارية (سحب سيولة V8 + كسر هيكل V9 + تدفق حجم 2.5x)'
-        : orchestrator.tradeStyle === 'SCALP_TURBO'
-            ? '🚀 تيربو سريع (رافعة 20-50x | مارجن 3% | هدف 50% خاطف)'
-            : orchestrator.tradeStyle === 'SCALP'
-                ? '⚡ سكالب سريع (5m/15m)'
-                : orchestrator.tradeStyle === 'SWING'
-                    ? '🌊 سوينغ اتجاهي (15m/4h)'
-                    : '🔄 هجين متوازن (تلقائي)';
+    const styleLabel = orchestrator.tradeStyle === 'STALKER_SNIPER'
+        ? '🎯 قناص التربص (مراقبة الارتداد + انفجار فوليوم 1m دقيق)'
+        : orchestrator.tradeStyle === 'WHALE_SURGE'
+            ? '💥 صفقات انفجارية (سحب سيولة V8 + كسر هيكل V9 + تدفق حجم 2.5x)'
+            : orchestrator.tradeStyle === 'SCALP_TURBO'
+                ? '🚀 تيربو سريع (رافعة 20-50x | مارجن 3% | هدف 50% خاطف)'
+                : orchestrator.tradeStyle === 'SCALP'
+                    ? '⚡ سكالب سريع (5m/15m)'
+                    : orchestrator.tradeStyle === 'SWING'
+                        ? '🌊 سوينغ اتجاهي (15m/4h)'
+                        : '🔄 هجين متوازن (تلقائي)';
 
     const tpLabel = orchestrator.tpExecutionMode === 'single'
         ? '🎯 الهدف الأول فقط (خروج 100% عند TP1)'
@@ -746,7 +852,9 @@ async function renderAutonomousDashboard(ctx: any, orchestrator: AutonomousOrche
 
     const candleSyncText = orchestrator.tradeStyle === 'SCALP_TURBO'
         ? '⏰ <i>كل 5 دقائق فور إغلاق الشمعة (5M Candle Close)</i>'
-        : '⏰ <i>كل 15 دقيقة فور إغلاق الشمعة (:00، :15، :30، :45)</i>';
+        : orchestrator.tradeStyle === 'STALKER_SNIPER'
+            ? '⏰ <i>تربص مستمر كل 15 ثانية فور اكتمال شروط 1m</i>'
+            : '⏰ <i>كل 15 دقيقة فور إغلاق الشمعة (:00، :15، :30، :45)</i>';
 
     const beBadge = orchestrator.autoBreakEvenEnabled ? '🛡️ تأمين عند +0.35%' : '⚪ معطل';
     const dirBadge = orchestrator.allowedDirection === 'BOTH' ? '🔄 كلاهما (L&S)' : (orchestrator.allowedDirection === 'LONG_ONLY' ? '🟢 شراء فقط' : '🔴 بيع فقط');
@@ -777,10 +885,11 @@ async function renderAutonomousDashboard(ctx: any, orchestrator: AutonomousOrche
                 { text: mode === 'SEMI_AUTO' ? '🔘 [نشط] نصف تلقائي 🟡' : '🟡 نصف تلقائي', callback_data: 'aut_set_semi' },
                 { text: mode === 'FULL_AUTO' ? '🔘 [نشط] حقيقي 🟢' : '🚀 حقيقي (Live)', callback_data: 'aut_set_full' }
             ],
-            // Trade Style Selectors (Turbo vs Whale Surge vs Hybrid vs Swing)
+            // Trade Style Selectors (Turbo vs Whale Surge vs Stalker vs Hybrid vs Swing)
             [
                 { text: orchestrator.tradeStyle === 'SCALP_TURBO' ? '🔘 🚀 تيربو سريع (3%)' : '🚀 تيربو سريع (3%)', callback_data: 'aut_style_turbo' },
-                { text: orchestrator.tradeStyle === 'WHALE_SURGE' ? '🔘 💥 انفجارية (SMC)' : '💥 انفجارية (SMC)', callback_data: 'aut_style_whale' }
+                { text: orchestrator.tradeStyle === 'WHALE_SURGE' ? '🔘 💥 انفجارية (SMC)' : '💥 انفجارية (SMC)', callback_data: 'aut_style_whale' },
+                { text: orchestrator.tradeStyle === 'STALKER_SNIPER' ? '🔘 🎯 قناص التربص' : '🎯 قناص التربص', callback_data: 'aut_style_stalker' }
             ],
             [
                 { text: orchestrator.tradeStyle === 'HYBRID' ? '🔘 🔄 هجين' : '🔄 هجين', callback_data: 'aut_style_hybrid' },
@@ -1579,6 +1688,20 @@ async function renderAutonomousSettingsHub(ctx: any, orchestrator: AutonomousOrc
         ? `🟢 مفعل (فلترة الصفقات حسب اتجاه البيتكوين على فريم ${orchestrator.btcCompassTimeframe})`
         : '⚪ معطل (تداول حر ومستقل للعملات البديلة)';
 
+    const cleanCryptoStatus = orchestrator.cleanCryptoOnlyEnabled
+        ? '🟢 مفعل (حظر PUMP والسلع النفط/الذهب)'
+        : '⚪ معطل (شامل لكافة الأصول)';
+    const weightsStatus = orchestrator.optimizedWeightsEnabled
+        ? '🟢 مفعل (تعزيز V11 وهارمونيك 1.6x، وخفض V8 و V17)'
+        : '⚪ معطل (أوزان قياسية)';
+    const stalkerStatus = orchestrator.stalkerEnabled
+        ? `🟢 مفعل (سقف ${orchestrator.stalkerMaxPairs} أزواج | فوليوم ${orchestrator.volumeBurstThreshold}x | سيولة ${orchestrator.minBuyVolumeRatio}%)`
+        : '⚪ معطل (دخول فوري مباشر عند إغلاق الشمعة)';
+    const stalkedCoins = orchestrator.opportunityStalker?.getActiveCandidates() || [];
+    const stalkedInfo = stalkedCoins.length > 0
+        ? `[${stalkedCoins.map(c => `${c.symbol} ${c.direction}`).join(' • ')}]`
+        : 'لا يوجد حالياً (فارغ)';
+
     let msg = `⚙️ <b>لوحة إعدادات الحماية وإدارة المخاطر للتداول الذاتي</b>\n`;
     msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
     msg += `• <b>نسبة الدخول من رأس المال (Position Margin):</b>\n  👉 <b>${marginStatus}</b>\n`;
@@ -1589,6 +1712,16 @@ async function renderAutonomousSettingsHub(ctx: any, orchestrator: AutonomousOrc
 
     msg += `• <b>الرافعة المالية (Leverage):</b>\n  👉 <b>${levStatus}</b>\n`;
     msg += `  <i>التلقائي يوزع الرافعة بأمان (BTC/ETH 50x، كبار العملات 30x، الفرعية 20x)</i>\n\n`;
+
+    msg += `• <b>حظر عملات الميم والسلع (Clean Crypto Filter):</b>\n  👉 <b>${cleanCryptoStatus}</b>\n`;
+    msg += `  <i>يستبعد PUMP والنفط والذهب لتفادي الذيول الوهمية والتذبذب العشوائي</i>\n\n`;
+
+    msg += `• <b>موازنة أوزان المحركات الذكية (Engine Rebalance):</b>\n  👉 <b>${weightsStatus}</b>\n`;
+    msg += `  <i>يعزز المحركات الأكثر ربحية V11 وهارمونيك، ويخفض وزن V8 و V17</i>\n\n`;
+
+    msg += `• <b>نظام التربص وقناص الفوليوم (Opportunity Stalker & 1m Burst):</b>\n  👉 <b>${stalkerStatus}</b>\n`;
+    msg += `  🎯 العملات المتربص بها الآن: <b>${stalkedInfo}</b>\n`;
+    msg += `  <i>يتربص بالفرص عند مناطق الارتداد ويفحص فوليوم 1m كل 15 ثانية لدخول فوري دقيق</i>\n\n`;
 
     msg += `• <b>شرط بوصلة البيتكوين والتوقيت (BTC Compass):</b>\n  👉 <b>${btcCompassStatus}</b>\n`;
     msg += `  <i>يمنع شراء العملات البديلة عند هبوط البيتكوين ويمنع البيع عند صعوده</i>\n\n`;
@@ -1658,7 +1791,66 @@ async function renderAutonomousSettingsHub(ctx: any, orchestrator: AutonomousOrc
                 { text: '✍️ كتابة رافعة مخصصة...', callback_data: 'aut_lev_custom' }
             ],
 
-            // Row 4: Anti-Peak & Front-Run TP Section
+            // Row 4: Clean Crypto & Engine Weights
+            [
+                { text: '── 🛡️ فلترة العملات وموازنة المحركات ──', callback_data: 'aut_noop' }
+            ],
+            [
+                {
+                    text: orchestrator.cleanCryptoOnlyEnabled ? '🛡️ حظر الميم والسلع: مفعل 🟢' : '🛡️ حظر الميم والسلع: معطل ⚪',
+                    callback_data: 'aut_toggle_clean_crypto'
+                }
+            ],
+            [
+                {
+                    text: orchestrator.optimizedWeightsEnabled ? '⚖️ موازنة المحركات الموزونة: مفعل 🟢' : '⚖️ موازنة المحركات: معطل ⚪',
+                    callback_data: 'aut_toggle_optimized_weights'
+                }
+            ],
+
+            // Row 5: Opportunity Stalker & 1m Volume Burst
+            [
+                { text: '── 🎯 نظام التربص وقناص الفوليوم 1m ──', callback_data: 'aut_noop' }
+            ],
+            [
+                {
+                    text: orchestrator.stalkerEnabled ? '🎯 نظام التربص: مفعل 🟢' : '🎯 نظام التربص: معطل ⚪',
+                    callback_data: 'aut_toggle_stalker'
+                }
+            ],
+            [
+                { text: 'سقف أزواج التربص:', callback_data: 'aut_noop' },
+                { text: orchestrator.stalkerMaxPairs === 2 ? '🔘 2' : '2', callback_data: 'aut_stalker_pairs_2' },
+                { text: orchestrator.stalkerMaxPairs === 3 ? '🔘 3' : '3', callback_data: 'aut_stalker_pairs_3' },
+                { text: orchestrator.stalkerMaxPairs === 5 ? '🔘 5' : '5', callback_data: 'aut_stalker_pairs_5' }
+            ],
+            [
+                { text: 'فترة مهلة التربص:', callback_data: 'aut_noop' },
+                { text: orchestrator.stalkerTimeoutMinutes === 15 ? '🔘 15د' : '15د', callback_data: 'aut_stalker_timeout_15' },
+                { text: orchestrator.stalkerTimeoutMinutes === 30 ? '🔘 30د' : '30د', callback_data: 'aut_stalker_timeout_30' },
+                { text: orchestrator.stalkerTimeoutMinutes === 45 ? '🔘 45د' : '45د', callback_data: 'aut_stalker_timeout_45' },
+                { text: orchestrator.stalkerTimeoutMinutes === 60 ? '🔘 60د' : '60د', callback_data: 'aut_stalker_timeout_60' }
+            ],
+            [
+                { text: 'مضاعف فوليوم 1m:', callback_data: 'aut_noop' },
+                { text: orchestrator.volumeBurstThreshold === 1.5 ? '🔘 1.5x' : '1.5x', callback_data: 'aut_stalker_spike_15' },
+                { text: orchestrator.volumeBurstThreshold === 2.0 ? '🔘 2.0x' : '2.0x', callback_data: 'aut_stalker_spike_20' },
+                { text: orchestrator.volumeBurstThreshold === 2.5 ? '🔘 2.5x' : '2.5x', callback_data: 'aut_stalker_spike_25' },
+                { text: orchestrator.volumeBurstThreshold === 3.0 ? '🔘 3.0x' : '3.0x', callback_data: 'aut_stalker_spike_30' }
+            ],
+            [
+                { text: 'نسبة سيولة الشراء/البيع:', callback_data: 'aut_noop' },
+                { text: orchestrator.minBuyVolumeRatio === 60 ? '🔘 60%' : '60%', callback_data: 'aut_stalker_buyvol_60' },
+                { text: orchestrator.minBuyVolumeRatio === 65 ? '🔘 65%' : '65%', callback_data: 'aut_stalker_buyvol_65' },
+                { text: orchestrator.minBuyVolumeRatio === 70 ? '🔘 70%' : '70%', callback_data: 'aut_stalker_buyvol_70' },
+                { text: orchestrator.minBuyVolumeRatio === 75 ? '🔘 75%' : '75%', callback_data: 'aut_stalker_buyvol_75' }
+            ],
+            [
+                { text: '🔍 فحص قائمة التربص الحالية', callback_data: 'aut_view_stalker' },
+                { text: '🗑️ تفريغ قائمة التربص', callback_data: 'aut_clear_stalker' }
+            ],
+
+            // Row 6: Anti-Peak & Front-Run TP Section
             [
                 { text: '── 🛡️ حماية القمم وجدران الأهداف ──', callback_data: 'aut_noop' }
             ],
@@ -1675,7 +1867,7 @@ async function renderAutonomousSettingsHub(ctx: any, orchestrator: AutonomousOrc
                 }
             ],
 
-            // Row 5: BTC Compass Controls & Timeframe Selection
+            // Row 7: BTC Compass Controls & Timeframe Selection
             [
                 { text: '── 🧭 شرط بوصلة البيتكوين وفريم المراقبة ──', callback_data: 'aut_noop' }
             ],
@@ -1692,7 +1884,7 @@ async function renderAutonomousSettingsHub(ctx: any, orchestrator: AutonomousOrc
                 { text: orchestrator.btcCompassTimeframe === '4h' ? '🔘 4h' : '4h', callback_data: 'aut_btc_tf_4h' }
             ],
 
-            // Row 5: Protection & Direction Header
+            // Row 8: Protection & Direction Header
             [
                 { text: '── 🛡️ التأمين الفوري والاتجاه والتهدئة ──', callback_data: 'aut_noop' }
             ],
@@ -1719,7 +1911,7 @@ async function renderAutonomousSettingsHub(ctx: any, orchestrator: AutonomousOrc
                 { text: orchestrator.postTpCooldownMinutes === 45 ? '🔘 ⏱️ 45 د' : '⏱️ 45 د', callback_data: 'aut_cool_45' },
                 { text: orchestrator.postTpCooldownMinutes === 0 ? '🔘 ⚪ بدون' : '⚪ بدون', callback_data: 'aut_cool_0' }
             ],
-            // Row 6: Navigation
+            // Row 9: Navigation
             [
                 { text: '🔙 رجوع للوحة القيادة الذاتية', callback_data: 'aut_main_menu' }
             ]

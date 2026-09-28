@@ -100,7 +100,7 @@ export interface InstitutionalMarketDossier {
 
 // ─── Engine Trust Weights ───────────────────────────────────────────────────
 
-const ENGINE_WEIGHTS: Record<string, number> = {
+export const DEFAULT_ENGINE_WEIGHTS: Record<string, number> = {
     'HARMONIC': 1.35, // 11 Harmonic Patterns PRZ (Golden Ratio Reversals)
     'V16': 1.35,      // Master Hybrid Matrix
     'V1': 1.30,       // V1 Benchmark (VWAP & Multi-TF Core Matrix)
@@ -120,6 +120,28 @@ const ENGINE_WEIGHTS: Record<string, number> = {
     'V5': 0.85,
     'V2': 0.85,
     'V4': 0.80
+};
+
+export const OPTIMIZED_ENGINE_WEIGHTS: Record<string, number> = {
+    'V11': 1.60,      // +$2.65 USDT PnL, highest empirical win rate (Orderflow & Volume Regime)
+    'HARMONIC': 1.45, // +50% Win Rate, PRZ Golden Ratio Reversals
+    'V16': 1.35,      // Master Hybrid Matrix
+    'V1': 1.30,       // V1 Benchmark
+    'V18': 1.25,      // Order Book L2 Imbalance
+    'V12': 1.25,      // Order Flow CVD Delta
+    'V6': 1.20,       // Momentum Confluence
+    'V15': 1.15,      // Chan Pen & Harmonic Bat
+    'V10': 1.15,      // Institutional Heikin-Ashi
+    'V13': 1.15,      // Wyckoff Accumulation
+    'V14': 1.10,      // Adaptive Renko Cloud
+    'V9': 1.10,       // SMC Order Block
+    'V7': 1.05,       // Hybrid Sniper
+    'V3': 0.90,
+    'V5': 0.85,
+    'V2': 0.85,
+    'V4': 0.80,
+    'V17': 0.70,      // Nerfed: -$4.76 PnL due to chasing late breakouts
+    'V8': 0.60        // Nerfed: -$4.87 PnL & 23% Win Rate due to falling knife liquidity sweeps
 };
 
 export class EngineConfluenceArbiter {
@@ -429,11 +451,17 @@ export class EngineConfluenceArbiter {
         symbol: string,
         pricePrecision: number,
         mtfOHLCV: Record<string, OHLCV[]>,
-        options: { quickTF?: string; longTF?: string; tradeStyle?: 'HYBRID' | 'SCALP' | 'SWING' | 'SCALP_TURBO' | 'WHALE_SURGE' } = {}
+        options: {
+            quickTF?: string;
+            longTF?: string;
+            tradeStyle?: 'HYBRID' | 'SCALP' | 'SWING' | 'SCALP_TURBO' | 'WHALE_SURGE' | 'STALKER_SNIPER';
+            optimizedWeights?: boolean;
+        } = {}
     ): InstitutionalMarketDossier {
         const quickTF = options.quickTF || '15m';
         const longTF = options.longTF || '1h';
         const tradeStyle = options.tradeStyle || 'HYBRID';
+        const engineWeights = options.optimizedWeights !== false ? OPTIMIZED_ENGINE_WEIGHTS : DEFAULT_ENGINE_WEIGHTS;
 
         const quickCandles = mtfOHLCV[quickTF] || mtfOHLCV['15m'] || mtfOHLCV['5m'] || [];
         const dailyCandles = mtfOHLCV['1d'] || [];
@@ -490,14 +518,14 @@ export class EngineConfluenceArbiter {
                     limit: 200
                 });
 
-                const isScalp = tradeStyle === 'SCALP' || tradeStyle === 'SCALP_TURBO';
+                const isScalp = tradeStyle === 'SCALP' || tradeStyle === 'SCALP_TURBO' || tradeStyle === 'STALKER_SNIPER';
                 const activeRec = isScalp
                     ? (res.scalp.type !== 'NONE' ? res.scalp : null)
                     : tradeStyle === 'SWING'
                         ? (res.swing.type !== 'NONE' ? res.swing : null)
                         : (res.scalp.type !== 'NONE' ? res.scalp : (res.swing.type !== 'NONE' ? res.swing : null));
                 const dir: 'LONG' | 'SHORT' | 'NONE' = activeRec ? activeRec.type : 'NONE';
-                const weight = ENGINE_WEIGHTS[engId] || 1.0;
+                const weight = engineWeights[engId] || 1.0;
 
                 const matrixScore = res.matrix?.percentage || 50;
                 weightedMatrixSum += matrixScore * weight;
@@ -620,16 +648,22 @@ export class EngineConfluenceArbiter {
             : currentPrice * 0.008;
 
         const isTurbo = tradeStyle === 'SCALP_TURBO';
+        const isStalker = tradeStyle === 'STALKER_SNIPER';
 
         // In SCALP_TURBO: stop loss is balanced between 0.8% and 1.0% to match the quick 0.55% micro-target
+        // In STALKER_SNIPER: stop loss is balanced between 1.0% and 2.2% around structural swing highs/lows
         // For HYBRID / SWING / SCALP: enforce minimum 1.6% or 1.8x ATR to avoid noise stop hunts
         const minSlDist = isTurbo
             ? currentPrice * 0.008 // 0.8% minimum
-            : Math.max(atr15m * 1.8, currentPrice * 0.016);
+            : isStalker
+                ? Math.max(atr15m * 1.2, currentPrice * 0.010) // 1.0% minimum
+                : Math.max(atr15m * 1.8, currentPrice * 0.016);
 
         const maxSlDist = isTurbo
             ? currentPrice * 0.010 // 1.0% maximum
-            : currentPrice * 0.035;
+            : isStalker
+                ? currentPrice * 0.022 // 2.2% maximum
+                : currentPrice * 0.035;
 
         // Filter SL candidates that strictly match the recommended trade direction and respect the safety buffers
         const validSlCandidates = slCandidates.filter(sl => {

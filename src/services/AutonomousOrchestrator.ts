@@ -14,6 +14,8 @@ import User from '../models/User';
 import Trade from '../models/Trade';
 import { TradingMemoryService } from './TradingMemoryService';
 import { BtcMarketCompass } from '../core/analysis/BtcMarketCompass';
+import { OpportunityStalker } from '../core/analysis/OpportunityStalker';
+import { MicroVolumeAnalyzer } from '../core/analysis/MicroVolumeAnalyzer';
 
 export type AutonomousMode = 'PAPER_TRADING' | 'SEMI_AUTO' | 'FULL_AUTO';
 
@@ -21,9 +23,12 @@ export class AutonomousOrchestrator {
     private isRunning = false;
     private scanIntervalId?: NodeJS.Timeout;
     private paperEvalIntervalId?: NodeJS.Timeout;
+    private stalkerIntervalId?: NodeJS.Timeout;
+    private isStalkerTickRunning: boolean = false;
 
     private paperEngine: PaperTradingEngine;
     private pickerService: SymbolPickerService;
+    public opportunityStalker: OpportunityStalker;
 
     // Configurable state
     public currentMode: AutonomousMode = 'PAPER_TRADING';
@@ -36,7 +41,7 @@ export class AutonomousOrchestrator {
     public minConfluenceScore: number = 70;
     public maxConcurrentTrades: number = 3;
     public maxNewTradesPerCycle: number = 1;
-    public tradeStyle: 'HYBRID' | 'SCALP' | 'SWING' | 'SCALP_TURBO' | 'WHALE_SURGE' = 'HYBRID';
+    public tradeStyle: 'HYBRID' | 'SCALP' | 'SWING' | 'SCALP_TURBO' | 'WHALE_SURGE' | 'STALKER_SNIPER' = 'HYBRID';
     public tpExecutionMode: 'single' | 'multiple' = 'multiple';
 
     // Advanced Risk and Strategy Controls
@@ -52,6 +57,17 @@ export class AutonomousOrchestrator {
     public btcCompassEnabled: boolean = true;
     public btcCompassTimeframe: '5m' | '15m' | '1h' | '4h' = '15m';
 
+    // Clean Crypto & Engine Weight Optimization
+    public cleanCryptoOnlyEnabled: boolean = true;
+    public optimizedWeightsEnabled: boolean = true;
+
+    // Opportunity Stalker & 1m Volume Burst Trigger
+    public stalkerEnabled: boolean = true;
+    public stalkerMaxPairs: number = 3;
+    public stalkerTimeoutMinutes: number = 30;
+    public volumeBurstThreshold: number = 2.0;
+    public minBuyVolumeRatio: number = 65;
+
     // Cooldown map: key = `${cleanSymbol}_${direction}`, value = expireTimestamp (epoch ms)
     private recentTpCooldowns: Map<string, { direction: string; expireAt: number; symbol: string }> = new Map();
 
@@ -62,6 +78,7 @@ export class AutonomousOrchestrator {
     ) {
         this.paperEngine = new PaperTradingEngine(bingx);
         this.pickerService = new SymbolPickerService(bingx);
+        this.opportunityStalker = new OpportunityStalker();
     }
 
     /**
@@ -126,6 +143,13 @@ export class AutonomousOrchestrator {
                 if (admin.autonomousSettings.frontRunTpEnabled !== undefined) this.frontRunTpEnabled = admin.autonomousSettings.frontRunTpEnabled;
                 if (admin.autonomousSettings.btcCompassEnabled !== undefined) this.btcCompassEnabled = admin.autonomousSettings.btcCompassEnabled;
                 if (admin.autonomousSettings.btcCompassTimeframe) this.btcCompassTimeframe = admin.autonomousSettings.btcCompassTimeframe;
+                if (admin.autonomousSettings.cleanCryptoOnlyEnabled !== undefined) this.cleanCryptoOnlyEnabled = admin.autonomousSettings.cleanCryptoOnlyEnabled;
+                if (admin.autonomousSettings.optimizedWeightsEnabled !== undefined) this.optimizedWeightsEnabled = admin.autonomousSettings.optimizedWeightsEnabled;
+                if (admin.autonomousSettings.stalkerEnabled !== undefined) this.stalkerEnabled = admin.autonomousSettings.stalkerEnabled;
+                if (admin.autonomousSettings.stalkerMaxPairs) this.stalkerMaxPairs = admin.autonomousSettings.stalkerMaxPairs;
+                if (admin.autonomousSettings.stalkerTimeoutMinutes) this.stalkerTimeoutMinutes = admin.autonomousSettings.stalkerTimeoutMinutes;
+                if (admin.autonomousSettings.volumeBurstThreshold) this.volumeBurstThreshold = admin.autonomousSettings.volumeBurstThreshold;
+                if (admin.autonomousSettings.minBuyVolumeRatio) this.minBuyVolumeRatio = admin.autonomousSettings.minBuyVolumeRatio;
             }
             if (admin?.autoBreakEven !== undefined) {
                 this.autoBreakEvenEnabled = admin.autoBreakEven;
@@ -163,6 +187,11 @@ export class AutonomousOrchestrator {
             this.paperEngine.evaluateActivePositions().catch(() => {});
         }, 20 * 1000);
 
+        // 5. Opportunity Stalker micro-loop (evaluates every 15 seconds)
+        this.stalkerIntervalId = setInterval(() => {
+            this.runStalkerMicroTick().catch(e => logger.warn(`[Orchestrator] Stalker micro-tick warning: ${e.message}`));
+        }, 15 * 1000);
+
         logger.info(`✅ [AutonomousOrchestrator] Operational! Active Mode: [${this.currentMode}]`);
     }
 
@@ -173,6 +202,7 @@ export class AutonomousOrchestrator {
         this.isRunning = false;
         if (this.scanIntervalId) clearInterval(this.scanIntervalId);
         if (this.paperEvalIntervalId) clearInterval(this.paperEvalIntervalId);
+        if (this.stalkerIntervalId) clearInterval(this.stalkerIntervalId);
         logger.info('🛑 [AutonomousOrchestrator] Stopped.');
     }
 
@@ -203,8 +233,8 @@ export class AutonomousOrchestrator {
      */
     async refreshWatchlist(): Promise<void> {
         try {
-            logger.info('[AutonomousOrchestrator] Refreshing top watchlist via Live Market CCXT Scanner...');
-            const results = await this.pickerService.refreshScan(25, 'ccxt');
+            logger.info(`[AutonomousOrchestrator] Refreshing top watchlist via Live Market CCXT Scanner (cleanCryptoOnly: ${this.cleanCryptoOnlyEnabled})...`);
+            const results = await this.pickerService.refreshScan(25, 'ccxt', undefined, this.cleanCryptoOnlyEnabled);
             if (results && results.length > 0) {
                 // Pick top 20 active liquid coins with high market momentum
                 const top = results
@@ -219,6 +249,71 @@ export class AutonomousOrchestrator {
             }
         } catch (e: any) {
             logger.warn(`[AutonomousOrchestrator] Could not refresh watchlist: ${e.message}`);
+        }
+    }
+
+    /**
+     * Stalker micro-loop (runs every 15 seconds) to check if any stalked candidate
+     * hit its entry zone with aggressive 1m volume burst confirmation.
+     */
+    private async runStalkerMicroTick(): Promise<void> {
+        if (!this.stalkerEnabled && this.tradeStyle !== 'STALKER_SNIPER') return;
+        if (this.isPaused || this.isStalkerTickRunning) return;
+
+        const activeCandidates = this.opportunityStalker.getActiveCandidates();
+        if (activeCandidates.length === 0) return;
+
+        this.isStalkerTickRunning = true;
+        try {
+            const isPaper = this.currentMode === 'PAPER_TRADING';
+            const openPositionsCount = await Trade.countDocuments({
+                isPaperTrade: isPaper ? true : { $ne: true },
+                currentStatus: { $in: ['OPEN', 'TP1_HIT', 'TP2_HIT'] }
+            });
+
+            if (openPositionsCount >= this.maxConcurrentTrades) {
+                return;
+            }
+
+            const adminUser = await User.findOne({ isActive: true });
+            if (!adminUser) return;
+
+            for (const cand of activeCandidates) {
+                const check = await this.opportunityStalker.checkCandidateTick(
+                    this.bingx,
+                    cand,
+                    this.volumeBurstThreshold,
+                    this.minBuyVolumeRatio
+                );
+
+                if (check.shouldExecute) {
+                    logger.info(`🎯 [OpportunityStalker] Sniper trigger fired for ${cand.symbol}! Price: ${check.currentPrice}. Executing trade...`);
+                    
+                    const result = await this.auditAndExecuteCandidate(
+                        {
+                            shortSymbol: cand.symbol,
+                            fullSymbol: cand.fullSymbol,
+                            score: cand.confluenceScore,
+                            recDir: cand.direction,
+                            dossier: cand.dossier
+                        },
+                        adminUser,
+                        isPaper,
+                        check.reason
+                    );
+
+                    this.opportunityStalker.removeCandidate(cand.symbol);
+
+                    if (result && result.executed) {
+                        logger.info(`✅ [OpportunityStalker] Trade executed successfully for ${cand.symbol}!`);
+                        break;
+                    }
+                }
+            }
+        } catch (e: any) {
+            logger.warn(`[OpportunityStalker] Micro-tick warning: ${e.message}`);
+        } finally {
+            this.isStalkerTickRunning = false;
         }
     }
 
@@ -323,7 +418,8 @@ export class AutonomousOrchestrator {
                     const dossier = EngineConfluenceArbiter.buildDossier(fullSymbol, pricePrecision, mtfOHLCV, {
                         quickTF,
                         longTF,
-                        tradeStyle: this.tradeStyle
+                        tradeStyle: this.tradeStyle,
+                        optimizedWeights: this.optimizedWeightsEnabled
                     });
 
                     const score = dossier.confluenceMetrics.overallScore;
@@ -436,12 +532,59 @@ export class AutonomousOrchestrator {
                     continue;
                 }
 
-                // Process single qualified candidate
-                const result = await this.auditAndExecuteCandidate(cand, adminUser, isPaper);
-                if (result) {
-                    evaluations.push(result);
-                    if (result.executed) {
-                        executedInThisCycle++;
+                // Stalker Sniper Check: If stalker is enabled or style is STALKER_SNIPER
+                if (this.stalkerEnabled || this.tradeStyle === 'STALKER_SNIPER') {
+                    // Check if 1-minute volume burst is ALREADY confirmed right now
+                    const volumeCheck = await MicroVolumeAnalyzer.analyze1mVolumeFlow(
+                        this.bingx,
+                        cand.fullSymbol,
+                        cand.recDir,
+                        this.minBuyVolumeRatio,
+                        this.volumeBurstThreshold
+                    );
+
+                    if (volumeCheck.isReady) {
+                        logger.info(`🚀 [AutonomousOrchestrator] 1m volume burst confirmed immediately for ${cand.shortSymbol}! Executing...`);
+                        const result = await this.auditAndExecuteCandidate(cand, adminUser, isPaper, volumeCheck.reason);
+                        if (result) {
+                            evaluations.push(result);
+                            if (result.executed) {
+                                executedInThisCycle++;
+                            }
+                        }
+                    } else {
+                        // Queue into OpportunityStalker to stalk the coin every 15 seconds
+                        const added = this.opportunityStalker.addCandidate({
+                            symbol: cand.shortSymbol,
+                            fullSymbol: cand.fullSymbol,
+                            direction: cand.recDir,
+                            targetEntry: cand.dossier.currentPrice,
+                            targetZone: {
+                                min: Math.min(cand.dossier.currentPrice, cand.dossier.supportResistance.pivot || cand.dossier.currentPrice),
+                                max: Math.max(cand.dossier.currentPrice, cand.dossier.supportResistance.pivot || cand.dossier.currentPrice)
+                            },
+                            tp: cand.dossier.confluenceMetrics.suggestedTPs[0] || 0,
+                            sl: cand.dossier.confluenceMetrics.suggestedSL,
+                            confluenceScore: cand.score,
+                            dossier: cand.dossier
+                        }, this.stalkerTimeoutMinutes, this.stalkerMaxPairs);
+
+                        evaluations.push({
+                            symbol: cand.shortSymbol,
+                            score: cand.score,
+                            direction: added ? `${cand.recDir} (في التربص 🎯)` : `${cand.recDir} (طابور التربص ممتلئ)`,
+                            executed: false
+                        });
+                        logger.info(`🎯 [AutonomousOrchestrator] ${cand.shortSymbol} (${cand.score}%) added to OpportunityStalker (waiting for 1m volume confirmation)`);
+                    }
+                } else {
+                    // Direct candle-close execution
+                    const result = await this.auditAndExecuteCandidate(cand, adminUser, isPaper);
+                    if (result) {
+                        evaluations.push(result);
+                        if (result.executed) {
+                            executedInThisCycle++;
+                        }
                     }
                 }
             }
@@ -466,13 +609,17 @@ export class AutonomousOrchestrator {
     private async auditAndExecuteCandidate(
         cand: { shortSymbol: string; fullSymbol: string; score: number; recDir: 'LONG' | 'SHORT'; dossier: InstitutionalMarketDossier },
         user: any,
-        isPaper: boolean
+        isPaper: boolean,
+        triggerReason?: string
     ): Promise<{ symbol: string; score: number; direction: string; executed: boolean }> {
         const { shortSymbol, fullSymbol, score, recDir, dossier } = cand;
         let finalDirection: 'LONG' | 'SHORT' | 'NONE' = recDir;
         let finalStopLoss = dossier.confluenceMetrics.suggestedSL;
         let finalTargets = dossier.confluenceMetrics.suggestedTPs;
         let justification = `التوافق الرياضي (${score}%)`;
+        if (triggerReason) {
+            justification += ` | ${triggerReason}`;
+        }
 
         const isTurbo = this.tradeStyle === 'SCALP_TURBO';
         const isWhale = this.tradeStyle === 'WHALE_SURGE';
