@@ -287,6 +287,20 @@ export class AutonomousOrchestrator {
                 );
 
                 if (check.shouldExecute) {
+                    // Pre-check BTC Compass if enabled: ensure market direction hasn't reversed since queuing
+                    if (this.btcCompassEnabled && cand.symbol !== 'BTC') {
+                        try {
+                            const btcCompass = await BtcMarketCompass.getMarketCompass(this.bingx, false, this.btcCompassTimeframe);
+                            if (btcCompass.isBlackout || (cand.direction === 'LONG' && !btcCompass.allowLongs) || (cand.direction === 'SHORT' && !btcCompass.allowShorts)) {
+                                logger.info(`[OpportunityStalker] 🛑 إلغاء فرصة التربص لـ ${cand.symbol} (${cand.direction}): انعكس اتجاه بوصلة البيتكوين [${this.btcCompassTimeframe}]`);
+                                this.opportunityStalker.removeCandidate(cand.symbol);
+                                continue;
+                            }
+                        } catch (compErr: any) {
+                            // If compass check fails, proceed cautiously
+                        }
+                    }
+
                     logger.info(`🎯 [OpportunityStalker] Sniper trigger fired for ${cand.symbol}! Price: ${check.currentPrice}. Executing trade...`);
                     
                     const result = await this.auditAndExecuteCandidate(
