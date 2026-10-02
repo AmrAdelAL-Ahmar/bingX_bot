@@ -144,6 +144,14 @@ export const OPTIMIZED_ENGINE_WEIGHTS: Record<string, number> = {
     'V8': 0.60        // Nerfed: -$4.87 PnL & 23% Win Rate due to falling knife liquidity sweeps
 };
 
+export const ALL_AVAILABLE_ENGINES: string[] = [
+    'V1', 'V2', 'V3', 'V6', 'V7', 'V8', 'V9', 'V10',
+    'V11', 'V12', 'V13', 'V14', 'V15', 'V16', 'V17', 'V18',
+    'HARMONIC', 'WHALE_SURGE'
+];
+
+export const GOLDEN_ENGINES: string[] = ['V1', 'V11', 'HARMONIC', 'WHALE_SURGE'];
+
 export class EngineConfluenceArbiter {
     /**
      * Calculates pivot point support & resistance levels from 1h/4h OHLCV
@@ -456,12 +464,20 @@ export class EngineConfluenceArbiter {
             longTF?: string;
             tradeStyle?: 'HYBRID' | 'SCALP' | 'SWING' | 'SCALP_TURBO' | 'WHALE_SURGE' | 'STALKER_SNIPER';
             optimizedWeights?: boolean;
+            disabledEngines?: string[];
+            slMode?: 'ATR_STRUCTURAL' | 'FIXED_TURBO';
+            minSlPercentage?: number;
+            maxSlPercentage?: number;
         } = {}
     ): InstitutionalMarketDossier {
         const quickTF = options.quickTF || '15m';
         const longTF = options.longTF || '1h';
         const tradeStyle = options.tradeStyle || 'HYBRID';
         const engineWeights = options.optimizedWeights !== false ? OPTIMIZED_ENGINE_WEIGHTS : DEFAULT_ENGINE_WEIGHTS;
+        const disabledEnginesSet = new Set((options.disabledEngines || []).map(s => s.toUpperCase()));
+        const slMode = options.slMode || 'ATR_STRUCTURAL';
+        const minSlPct = options.minSlPercentage || 1.6;
+        const maxSlPct = options.maxSlPercentage || 2.2;
 
         const quickCandles = mtfOHLCV[quickTF] || mtfOHLCV['15m'] || mtfOHLCV['5m'] || [];
         const dailyCandles = mtfOHLCV['1d'] || [];
@@ -511,6 +527,11 @@ export class EngineConfluenceArbiter {
         const tpCandidates: number[] = [];
 
         for (const engId of enginesToTest) {
+            // Exclude disabled engines completely from analysis, voting, and execution
+            if (disabledEnginesSet.has(engId.toUpperCase())) {
+                continue;
+            }
+
             try {
                 const res = CoreAnalysisService.analyze(symbol, pricePrecision, mtfOHLCV, engId as any, {
                     quickTF,
@@ -557,6 +578,10 @@ export class EngineConfluenceArbiter {
         const snipersToCheck = ['V1-SWING', 'V6-SCALP', 'V7-SWING', 'V8-SWING', 'V10-SWING', 'V16-SWING'];
 
         for (const snpId of snipersToCheck) {
+            const baseEng = snpId.split('-')[0];
+            if (disabledEnginesSet.has(baseEng.toUpperCase())) {
+                continue;
+            }
             try {
                 const snpReport = CoreSniperScanner.scan(symbol, snpId, mtfOHLCV);
                 if (snpReport) {
@@ -643,27 +668,47 @@ export class EngineConfluenceArbiter {
             ? entryCandidates.reduce((a, b) => a + b, 0) / entryCandidates.length
             : currentPrice;
 
-        const atr15m = quickCandles.length > 14
-            ? quickCandles[quickCandles.length - 1].close * 0.008
-            : currentPrice * 0.008;
+        // ── Calculate True 14-period ATR from Quick Candles ──
+        let trueAtr = currentPrice * 0.010;
+        if (quickCandles.length >= 15) {
+            const trList: number[] = [];
+            for (let i = 1; i < quickCandles.length; i++) {
+                const prevClose = quickCandles[i - 1].close;
+                const h = quickCandles[i].high;
+                const l = quickCandles[i].low;
+                trList.push(Math.max(h - l, Math.abs(h - prevClose), Math.abs(l - prevClose)));
+            }
+            const last14 = trList.slice(-14);
+            if (last14.length > 0) {
+                trueAtr = last14.reduce((a, b) => a + b, 0) / last14.length;
+            }
+        }
 
-        const isTurbo = tradeStyle === 'SCALP_TURBO';
+        // ── Recent Swing Low & Swing High of last 6 candles ──
+        const recentCandles = quickCandles.slice(-6);
+        const swingLow = recentCandles.length > 0 ? Math.min(...recentCandles.map(c => c.low)) : currentPrice * 0.985;
+        const swingHigh = recentCandles.length > 0 ? Math.max(...recentCandles.map(c => c.high)) : currentPrice * 1.015;
+
+        const isAtrStructural = slMode === 'ATR_STRUCTURAL';
+        const isTurbo = !isAtrStructural && tradeStyle === 'SCALP_TURBO';
         const isStalker = tradeStyle === 'STALKER_SNIPER';
 
-        // In SCALP_TURBO: stop loss is balanced between 0.8% and 1.0% to match the quick 0.55% micro-target
-        // In STALKER_SNIPER: stop loss is balanced between 1.0% and 2.2% around structural swing highs/lows
-        // For HYBRID / SWING / SCALP: enforce minimum 1.6% or 1.8x ATR to avoid noise stop hunts
-        const minSlDist = isTurbo
-            ? currentPrice * 0.008 // 0.8% minimum
-            : isStalker
-                ? Math.max(atr15m * 1.2, currentPrice * 0.010) // 1.0% minimum
-                : Math.max(atr15m * 1.8, currentPrice * 0.016);
+        // Distance bounds
+        const minSlDist = isAtrStructural
+            ? currentPrice * (minSlPct / 100) // Default 1.6%
+            : isTurbo
+                ? currentPrice * 0.008 // 0.8% minimum in fixed turbo
+                : isStalker
+                    ? Math.max(trueAtr * 1.2, currentPrice * 0.010)
+                    : Math.max(trueAtr * 1.8, currentPrice * 0.016);
 
-        const maxSlDist = isTurbo
-            ? currentPrice * 0.010 // 1.0% maximum
-            : isStalker
-                ? currentPrice * 0.022 // 2.2% maximum
-                : currentPrice * 0.035;
+        const maxSlDist = isAtrStructural
+            ? currentPrice * (maxSlPct / 100) // Default 2.2%
+            : isTurbo
+                ? currentPrice * 0.010 // 1.0% maximum in fixed turbo
+                : isStalker
+                    ? currentPrice * 0.022
+                    : currentPrice * 0.035;
 
         // Filter SL candidates that strictly match the recommended trade direction and respect the safety buffers
         const validSlCandidates = slCandidates.filter(sl => {
@@ -680,20 +725,41 @@ export class EngineConfluenceArbiter {
 
         let suggestedSL: number;
         if (recDir === 'LONG') {
-            suggestedSL = validSlCandidates.length > 0
-                ? Math.max(...validSlCandidates)
-                : currentPrice - (isTurbo ? currentPrice * 0.009 : minSlDist);
-            // Strict bound: SL must always be below entry
+            if (isAtrStructural) {
+                // Structural SL: below recent swing low minus ATR buffer, clamped safely
+                let structural = swingLow - (trueAtr * 0.35);
+                const dist = currentPrice - structural;
+                if (dist < minSlDist) structural = currentPrice - minSlDist;
+                if (dist > maxSlDist) structural = currentPrice - maxSlDist;
+                suggestedSL = validSlCandidates.length > 0 ? Math.max(...validSlCandidates) : Number(structural.toFixed(pricePrecision));
+            } else {
+                suggestedSL = validSlCandidates.length > 0
+                    ? Math.max(...validSlCandidates)
+                    : currentPrice - (isTurbo ? currentPrice * 0.009 : minSlDist);
+            }
+            // Strict bound: SL must always be below entry and within [minSlDist, maxSlDist]
             if (suggestedSL >= currentPrice) suggestedSL = currentPrice - minSlDist;
-            if (isTurbo && (currentPrice - suggestedSL) > maxSlDist) suggestedSL = currentPrice - maxSlDist;
+            if ((currentPrice - suggestedSL) > maxSlDist) suggestedSL = currentPrice - maxSlDist;
+            if ((currentPrice - suggestedSL) < minSlDist) suggestedSL = currentPrice - minSlDist;
         } else {
-            suggestedSL = validSlCandidates.length > 0
-                ? Math.min(...validSlCandidates)
-                : currentPrice + (isTurbo ? currentPrice * 0.009 : minSlDist);
-            // Strict bound: SL must always be above entry
+            if (isAtrStructural) {
+                // Structural SL: above recent swing high plus ATR buffer, clamped safely
+                let structural = swingHigh + (trueAtr * 0.35);
+                const dist = structural - currentPrice;
+                if (dist < minSlDist) structural = currentPrice + minSlDist;
+                if (dist > maxSlDist) structural = currentPrice + maxSlDist;
+                suggestedSL = validSlCandidates.length > 0 ? Math.min(...validSlCandidates) : Number(structural.toFixed(pricePrecision));
+            } else {
+                suggestedSL = validSlCandidates.length > 0
+                    ? Math.min(...validSlCandidates)
+                    : currentPrice + (isTurbo ? currentPrice * 0.009 : minSlDist);
+            }
+            // Strict bound: SL must always be above entry and within [minSlDist, maxSlDist]
             if (suggestedSL <= currentPrice) suggestedSL = currentPrice + minSlDist;
-            if (isTurbo && (suggestedSL - currentPrice) > maxSlDist) suggestedSL = currentPrice + maxSlDist;
+            if ((suggestedSL - currentPrice) > maxSlDist) suggestedSL = currentPrice + maxSlDist;
+            if ((suggestedSL - currentPrice) < minSlDist) suggestedSL = currentPrice + minSlDist;
         }
+        suggestedSL = Number(suggestedSL.toFixed(pricePrecision));
 
         const riskDist = Math.max(Math.abs(currentPrice - suggestedSL), minSlDist);
 
@@ -772,7 +838,7 @@ export class EngineConfluenceArbiter {
                     macdHist: 0,
                     stochRsi: 50,
                     trend: isAboveVWAP ? 'BULLISH' : 'BEARISH',
-                    atr: atr15m
+                    atr: trueAtr
                 }
             },
             enginesSummary: engineVerdicts,

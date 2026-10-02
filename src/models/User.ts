@@ -97,6 +97,11 @@ export interface IUser extends Document {
         stalkerTimeoutMinutes?: number;
         volumeBurstThreshold?: number;
         minBuyVolumeRatio?: number;
+        disabledEngines?: string[];
+        slMode?: 'ATR_STRUCTURAL' | 'FIXED_TURBO';
+        minSlPercentage?: number;
+        maxSlPercentage?: number;
+        atrMultiplier?: number;
     };
 }
 
@@ -196,7 +201,15 @@ const UserSchema: Schema = new Schema({
         stalkerMaxPairs: { type: Number, default: 3 },
         stalkerTimeoutMinutes: { type: Number, default: 30 },
         volumeBurstThreshold: { type: Number, default: 2.0 },
-        minBuyVolumeRatio: { type: Number, default: 65 }
+        minBuyVolumeRatio: { type: Number, default: 65 },
+        disabledEngines: { 
+            type: [String], 
+            default: ['V10', 'V9', 'V12', 'V13', 'V16', 'V17', 'V18', 'V4', 'V5', 'V6', 'V2', 'V8'] 
+        },
+        slMode: { type: String, enum: ['ATR_STRUCTURAL', 'FIXED_TURBO'], default: 'ATR_STRUCTURAL' },
+        minSlPercentage: { type: Number, default: 1.6 },
+        maxSlPercentage: { type: Number, default: 2.2 },
+        atrMultiplier: { type: Number, default: 1.5 }
     }
 });
 

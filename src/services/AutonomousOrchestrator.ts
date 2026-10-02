@@ -61,6 +61,15 @@ export class AutonomousOrchestrator {
     public cleanCryptoOnlyEnabled: boolean = true;
     public optimizedWeightsEnabled: boolean = true;
 
+    // Engine Selection & Ban List (Default: Golden engines active, weak ones banned)
+    public disabledEngines: string[] = ['V10', 'V9', 'V12', 'V13', 'V16', 'V17', 'V18', 'V4', 'V5', 'V6', 'V2', 'V8'];
+
+    // Adaptive ATR & Structural SL Settings
+    public slMode: 'ATR_STRUCTURAL' | 'FIXED_TURBO' = 'ATR_STRUCTURAL';
+    public minSlPercentage: number = 1.6;
+    public maxSlPercentage: number = 2.2;
+    public atrMultiplier: number = 1.5;
+
     // Opportunity Stalker & 1m Volume Burst Trigger
     public stalkerEnabled: boolean = true;
     public stalkerMaxPairs: number = 3;
@@ -150,6 +159,11 @@ export class AutonomousOrchestrator {
                 if (admin.autonomousSettings.stalkerTimeoutMinutes) this.stalkerTimeoutMinutes = admin.autonomousSettings.stalkerTimeoutMinutes;
                 if (admin.autonomousSettings.volumeBurstThreshold) this.volumeBurstThreshold = admin.autonomousSettings.volumeBurstThreshold;
                 if (admin.autonomousSettings.minBuyVolumeRatio) this.minBuyVolumeRatio = admin.autonomousSettings.minBuyVolumeRatio;
+                if (admin.autonomousSettings.disabledEngines !== undefined) this.disabledEngines = admin.autonomousSettings.disabledEngines;
+                if (admin.autonomousSettings.slMode) this.slMode = admin.autonomousSettings.slMode;
+                if (admin.autonomousSettings.minSlPercentage) this.minSlPercentage = admin.autonomousSettings.minSlPercentage;
+                if (admin.autonomousSettings.maxSlPercentage) this.maxSlPercentage = admin.autonomousSettings.maxSlPercentage;
+                if (admin.autonomousSettings.atrMultiplier) this.atrMultiplier = admin.autonomousSettings.atrMultiplier;
             }
             if (admin?.autoBreakEven !== undefined) {
                 this.autoBreakEvenEnabled = admin.autoBreakEven;
@@ -433,7 +447,11 @@ export class AutonomousOrchestrator {
                         quickTF,
                         longTF,
                         tradeStyle: this.tradeStyle,
-                        optimizedWeights: this.optimizedWeightsEnabled
+                        optimizedWeights: this.optimizedWeightsEnabled,
+                        disabledEngines: this.disabledEngines,
+                        slMode: this.slMode,
+                        minSlPercentage: this.minSlPercentage,
+                        maxSlPercentage: this.maxSlPercentage
                     });
 
                     const score = dossier.confluenceMetrics.overallScore;
@@ -693,8 +711,28 @@ export class AutonomousOrchestrator {
             finalTargets = [finalTargets[0]];
         }
 
-        // Clamp Turbo Scalp SL strictly between 0.8% and 1.0% distance
-        if (isTurbo) {
+        // Stop Loss Application based on slMode (ATR_STRUCTURAL vs FIXED_TURBO)
+        if (this.slMode === 'ATR_STRUCTURAL') {
+            const entryP = dossier.currentPrice;
+            const minAllowedDist = entryP * (this.minSlPercentage / 100); // e.g. 1.6%
+            const maxAllowedDist = entryP * (this.maxSlPercentage / 100); // e.g. 2.2%
+            if (finalDirection === 'LONG') {
+                const dist = entryP - finalStopLoss;
+                if (dist < minAllowedDist || finalStopLoss >= entryP) {
+                    finalStopLoss = Number((entryP * (1 - (this.minSlPercentage / 100))).toFixed(dossier.pricePrecision));
+                } else if (dist > maxAllowedDist) {
+                    finalStopLoss = Number((entryP * (1 - (this.maxSlPercentage / 100))).toFixed(dossier.pricePrecision));
+                }
+            } else if (finalDirection === 'SHORT') {
+                const dist = finalStopLoss - entryP;
+                if (dist < minAllowedDist || finalStopLoss <= entryP) {
+                    finalStopLoss = Number((entryP * (1 + (this.minSlPercentage / 100))).toFixed(dossier.pricePrecision));
+                } else if (dist > maxAllowedDist) {
+                    finalStopLoss = Number((entryP * (1 + (this.maxSlPercentage / 100))).toFixed(dossier.pricePrecision));
+                }
+            }
+        } else if (isTurbo) {
+            // Legacy Turbo Scalp SL strictly between 0.8% and 1.0% distance
             const entryP = dossier.currentPrice;
             const maxAllowedDist = entryP * 0.010; // max 1.0%
             if (finalDirection === 'LONG') {
@@ -713,9 +751,17 @@ export class AutonomousOrchestrator {
         if (this.leverageMode === 'FIXED') {
             dynamicLeverage = this.fixedLeverageValue || 20;
         } else {
-            // Dynamic tier-based leverage
-            if (isTurbo) {
-                const cleanSym = shortSymbol.toUpperCase();
+            // Dynamic tier-based leverage (balanced safely for structural SL)
+            const cleanSym = shortSymbol.toUpperCase();
+            if (this.slMode === 'ATR_STRUCTURAL') {
+                if (['BTC', 'ETH'].includes(cleanSym)) {
+                    dynamicLeverage = 40;
+                } else if (['SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'NEAR'].includes(cleanSym)) {
+                    dynamicLeverage = 25;
+                } else {
+                    dynamicLeverage = 18;
+                }
+            } else if (isTurbo) {
                 if (['BTC', 'ETH'].includes(cleanSym)) {
                     dynamicLeverage = 50;
                 } else if (['SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'NEAR'].includes(cleanSym)) {
@@ -724,7 +770,6 @@ export class AutonomousOrchestrator {
                     dynamicLeverage = 20;
                 }
             } else if (isWhale) {
-                const cleanSym = shortSymbol.toUpperCase();
                 if (['BTC', 'ETH'].includes(cleanSym)) {
                     dynamicLeverage = 25;
                 } else if (['SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'NEAR'].includes(cleanSym)) {

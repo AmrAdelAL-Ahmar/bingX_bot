@@ -5,7 +5,8 @@ import { TradeManager } from '../../services/TradeManager';
 import { TradingMemoryService } from '../../services/TradingMemoryService';
 import { MacroCalendarService } from '../../services/MacroCalendarService';
 import { BingXService } from '../../services/BingXService';
-import { EngineConfluenceArbiter } from '../../core/analysis/EngineConfluenceArbiter';
+import { EngineConfluenceArbiter, ALL_AVAILABLE_ENGINES, GOLDEN_ENGINES } from '../../core/analysis/EngineConfluenceArbiter';
+export { ALL_AVAILABLE_ENGINES, GOLDEN_ENGINES };
 import { MATRIX_TFS } from '../../core/analysis/TechnicalAnalyzer';
 import { OHLCV } from '../../core/shared/types';
 import { GeminiService } from '../../services/GeminiService';
@@ -472,6 +473,98 @@ export const registerAutonomousHandlers = (
                 inline_keyboard: [[{ text: '🔙 رجوع لإعدادات الحماية', callback_data: 'aut_settings_hub' }]]
             }
         }).catch(() => {});
+    });
+
+    // ── Engine Selector & Preset Actions ──
+    bot.action('aut_engine_selector_menu', async (ctx) => {
+        try {
+            await ctx.answerCbQuery().catch(() => {});
+            await renderEngineSelectorHub(ctx, orchestrator, true);
+        } catch (e: any) {
+            logger.error('Error in aut_engine_selector_menu:', e);
+        }
+    });
+
+    bot.action('aut_eng_preset_golden', async (ctx) => {
+        try {
+            // Keep ONLY GOLDEN_ENGINES active, disable all others
+            orchestrator.disabledEngines = ALL_AVAILABLE_ENGINES.filter((e: string) => !GOLDEN_ENGINES.includes(e));
+            await User.updateOne({ isActive: true }, { 'autonomousSettings.disabledEngines': orchestrator.disabledEngines }).catch(() => {});
+            await ctx.answerCbQuery('👑 تم تفعيل المحركات الذهبية فقط (HARMONIC, V11, WHALE, V1)').catch(() => {});
+            await renderEngineSelectorHub(ctx, orchestrator, true);
+        } catch (e: any) {
+            logger.error('Error in aut_eng_preset_golden:', e);
+        }
+    });
+
+    bot.action('aut_eng_preset_all', async (ctx) => {
+        try {
+            orchestrator.disabledEngines = [];
+            await User.updateOne({ isActive: true }, { 'autonomousSettings.disabledEngines': [] }).catch(() => {});
+            await ctx.answerCbQuery('🔄 تم تفعيل جميع المحركات').catch(() => {});
+            await renderEngineSelectorHub(ctx, orchestrator, true);
+        } catch (e: any) {
+            logger.error('Error in aut_eng_preset_all:', e);
+        }
+    });
+
+    bot.action(/^aut_eng_toggle_([A-Za-z0-9_]+)$/, async (ctx) => {
+        try {
+            const targetEng = ctx.match[1].toUpperCase();
+            const idx = orchestrator.disabledEngines.indexOf(targetEng);
+            if (idx >= 0) {
+                // Was disabled -> enable it
+                orchestrator.disabledEngines.splice(idx, 1);
+                await ctx.answerCbQuery(`✅ تم تفعيل محرك ${targetEng}`).catch(() => {});
+            } else {
+                // Was enabled -> disable it
+                orchestrator.disabledEngines.push(targetEng);
+                await ctx.answerCbQuery(`❌ تم حظر محرك ${targetEng}`).catch(() => {});
+            }
+            await User.updateOne({ isActive: true }, { 'autonomousSettings.disabledEngines': orchestrator.disabledEngines }).catch(() => {});
+            await renderEngineSelectorHub(ctx, orchestrator, true);
+        } catch (e: any) {
+            logger.error('Error in aut_eng_toggle:', e);
+        }
+    });
+
+    // ── Stop Loss Mode & Adaptive Range Presets ──
+    bot.action('aut_toggle_sl_mode', async (ctx) => {
+        try {
+            orchestrator.slMode = orchestrator.slMode === 'ATR_STRUCTURAL' ? 'FIXED_TURBO' : 'ATR_STRUCTURAL';
+            await User.updateOne({ isActive: true }, { 'autonomousSettings.slMode': orchestrator.slMode }).catch(() => {});
+            const badge = orchestrator.slMode === 'ATR_STRUCTURAL' ? '🛑 تم تفعيل الاستوب الهيكلي التكيفي (ATR)' : '🛑 تم تفعيل الاستوب الثابت (0.9%)';
+            await ctx.answerCbQuery(badge).catch(() => {});
+            await renderAutonomousSettingsHub(ctx, orchestrator, true);
+        } catch (e: any) {
+            logger.error('Error in aut_toggle_sl_mode:', e);
+        }
+    });
+
+    bot.action(/^aut_minsl_(14|16|18|20)$/, async (ctx) => {
+        try {
+            const valMap: Record<string, number> = { '14': 1.4, '16': 1.6, '18': 1.8, '20': 2.0 };
+            const val = valMap[ctx.match[1]] || 1.6;
+            orchestrator.minSlPercentage = val;
+            await User.updateOne({ isActive: true }, { 'autonomousSettings.minSlPercentage': val }).catch(() => {});
+            await ctx.answerCbQuery(`🛑 أدنى استوب تكيفي: ${val}%`).catch(() => {});
+            await renderAutonomousSettingsHub(ctx, orchestrator, true);
+        } catch (e: any) {
+            logger.error('Error in aut_minsl:', e);
+        }
+    });
+
+    bot.action(/^aut_maxsl_(20|22|25|30)$/, async (ctx) => {
+        try {
+            const valMap: Record<string, number> = { '20': 2.0, '22': 2.2, '25': 2.5, '30': 3.0 };
+            const val = valMap[ctx.match[1]] || 2.2;
+            orchestrator.maxSlPercentage = val;
+            await User.updateOne({ isActive: true }, { 'autonomousSettings.maxSlPercentage': val }).catch(() => {});
+            await ctx.answerCbQuery(`🛑 أقصى استوب تكيفي: ${val}%`).catch(() => {});
+            await renderAutonomousSettingsHub(ctx, orchestrator, true);
+        } catch (e: any) {
+            logger.error('Error in aut_maxsl:', e);
+        }
     });
 
     // ── Position Margin % Presets & Custom ──
@@ -1706,6 +1799,12 @@ async function renderAutonomousSettingsHub(ctx: any, orchestrator: AutonomousOrc
         ? `[${stalkedCoins.map(c => `${c.symbol} ${c.direction}`).join(' • ')}]`
         : 'لا يوجد حالياً (فارغ)';
 
+    const activeEnginesCount = ALL_AVAILABLE_ENGINES.length - orchestrator.disabledEngines.length;
+    const enginesSelectorStatus = `${activeEnginesCount} مفعل | ${orchestrator.disabledEngines.length} محظور`;
+    const slModeStatus = orchestrator.slMode === 'ATR_STRUCTURAL'
+        ? `هيكلي تكيفي ATR (${orchestrator.minSlPercentage}% - ${orchestrator.maxSlPercentage}%) 🟢`
+        : `ثابت تيربو (${orchestrator.turboSlPercentage}%) ⚪`;
+
     let msg = `⚙️ <b>لوحة إعدادات الحماية وإدارة المخاطر للتداول الذاتي</b>\n`;
     msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
     msg += `• <b>نسبة الدخول من رأس المال (Position Margin):</b>\n  👉 <b>${marginStatus}</b>\n`;
@@ -1715,7 +1814,13 @@ async function renderAutonomousSettingsHub(ctx: any, orchestrator: AutonomousOrc
     msg += `  <i>يمنع فتح صفقات جديدة إذا وصل عدد الصفقات النشطة لهذا الحد</i>\n\n`;
 
     msg += `• <b>الرافعة المالية (Leverage):</b>\n  👉 <b>${levStatus}</b>\n`;
-    msg += `  <i>التلقائي يوزع الرافعة بأمان (BTC/ETH 50x، كبار العملات 30x، الفرعية 20x)</i>\n\n`;
+    msg += `  <i>التلقائي يوزع الرافعة بأمان (BTC/ETH 40x، كبار العملات 25x، الفرعية 18x)</i>\n\n`;
+
+    msg += `• <b>المحركات المسؤولة عن التحليل (Engine Selector):</b>\n  👉 <b>${enginesSelectorStatus}</b>\n`;
+    msg += `  <i>تخصيص المحركات الفنية والكمية المسموح لها بالتحليل والتداول لحين تطوير المحركات الأخرى</i>\n\n`;
+
+    msg += `• <b>نمط وقف الخسارة (Stop Loss Mode):</b>\n  👉 <b>${slModeStatus}</b>\n`;
+    msg += `  <i>وقف هيكلي مبني على قاع/قمة الشمعة ومؤشر ATR لمنح الصفقة مساحة للتنفس ومنع الاحتراق المبكر</i>\n\n`;
 
     msg += `• <b>حظر عملات الميم والسلع (Clean Crypto Filter):</b>\n  👉 <b>${cleanCryptoStatus}</b>\n`;
     msg += `  <i>يستبعد PUMP والنفط والذهب لتفادي الذيول الوهمية والتذبذب العشوائي</i>\n\n`;
@@ -1740,8 +1845,6 @@ async function renderAutonomousSettingsHub(ctx: any, orchestrator: AutonomousOrc
     msg += `  <i>ينقل الستوب لسعر الدخول + الرسوم فور صعود الصفقة +0.35% لضمان عدم الخسارة</i>\n\n`;
 
     msg += `• <b>الاتجاه المسموح للصفقات:</b>\n  👉 <b>${dirStatus}</b>\n\n`;
-
-    msg += `• <b>وقف خسارة السكالبينج التيربو:</b>\n  👉 <b>${slStatus}</b> <i>(موازنة المخاطرة مع الهدف 0.55%)</i>\n\n`;
 
     msg += `• <b>فترة حظر العملة بعد الهدف (Anti-Peak Cooldown):</b>\n  👉 <b>${coolStatus}</b>\n`;
     msg += `  <i>تمنع إعادة الدخول في نفس العملة فور ضرب الهدف لتجنب الشراء من قمة الحركة</i>\n`;
@@ -1795,7 +1898,52 @@ async function renderAutonomousSettingsHub(ctx: any, orchestrator: AutonomousOrc
                 { text: '✍️ كتابة رافعة مخصصة...', callback_data: 'aut_lev_custom' }
             ],
 
-            // Row 4: Clean Crypto & Engine Weights
+            // Row 4: Engine Selector Section
+            [
+                { text: '── 🎛️ إدارة وتحديد المحركات المسؤولة ──', callback_data: 'aut_noop' }
+            ],
+            [
+                { text: `🎛️ تخصيص وحظر المحركات (${activeEnginesCount} نشط)`, callback_data: 'aut_engine_selector_menu' },
+                { text: '👑 المحركات الذهبية فقط', callback_data: 'aut_eng_preset_golden' }
+            ],
+
+            // Row 5: Stop Loss Mode & Range Presets
+            [
+                { text: '── 🛑 نمط وقف الخسارة ونطاق الأمان ──', callback_data: 'aut_noop' }
+            ],
+            [
+                {
+                    text: orchestrator.slMode === 'ATR_STRUCTURAL'
+                        ? '🛑 نمط الاستوب: هيكلي تكيفي ATR 🟢'
+                        : '🛑 نمط الاستوب: ثابت 0.9% ⚪',
+                    callback_data: 'aut_toggle_sl_mode'
+                }
+            ],
+            ...(orchestrator.slMode === 'ATR_STRUCTURAL' ? [
+                [
+                    { text: 'أدنى استوب:', callback_data: 'aut_noop' },
+                    { text: orchestrator.minSlPercentage === 1.4 ? '🔘 1.4%' : '1.4%', callback_data: 'aut_minsl_14' },
+                    { text: orchestrator.minSlPercentage === 1.6 ? '🔘 1.6%' : '1.6%', callback_data: 'aut_minsl_16' },
+                    { text: orchestrator.minSlPercentage === 1.8 ? '🔘 1.8%' : '1.8%', callback_data: 'aut_minsl_18' },
+                    { text: orchestrator.minSlPercentage === 2.0 ? '🔘 2.0%' : '2.0%', callback_data: 'aut_minsl_20' }
+                ],
+                [
+                    { text: 'أقصى استوب:', callback_data: 'aut_noop' },
+                    { text: orchestrator.maxSlPercentage === 2.0 ? '🔘 2.0%' : '2.0%', callback_data: 'aut_maxsl_20' },
+                    { text: orchestrator.maxSlPercentage === 2.2 ? '🔘 2.2%' : '2.2%', callback_data: 'aut_maxsl_22' },
+                    { text: orchestrator.maxSlPercentage === 2.5 ? '🔘 2.5%' : '2.5%', callback_data: 'aut_maxsl_25' },
+                    { text: orchestrator.maxSlPercentage === 3.0 ? '🔘 3.0%' : '3.0%', callback_data: 'aut_maxsl_30' }
+                ]
+            ] : [
+                [
+                    { text: orchestrator.turboSlPercentage === 0.8 ? '🔘 🛑 0.8%' : '🛑 0.8%', callback_data: 'aut_turbosl_08' },
+                    { text: orchestrator.turboSlPercentage === 0.9 ? '🔘 🛑 0.9%' : '🛑 0.9%', callback_data: 'aut_turbosl_09' },
+                    { text: orchestrator.turboSlPercentage === 1.0 ? '🔘 🛑 1.0%' : '🛑 1.0%', callback_data: 'aut_turbosl_10' },
+                    { text: orchestrator.turboSlPercentage === 1.2 ? '🔘 🛑 1.2%' : '🛑 1.2%', callback_data: 'aut_turbosl_12' }
+                ]
+            ]),
+
+            // Row 6: Clean Crypto & Engine Weights
             [
                 { text: '── 🛡️ فلترة العملات وموازنة المحركات ──', callback_data: 'aut_noop' }
             ],
@@ -1904,23 +2052,67 @@ async function renderAutonomousSettingsHub(ctx: any, orchestrator: AutonomousOrc
                 { text: orchestrator.allowedDirection === 'SHORT_ONLY' ? '🔘 🔴 بيع' : '🔴 بيع', callback_data: 'aut_dir_short' }
             ],
             [
-                { text: orchestrator.turboSlPercentage === 0.8 ? '🔘 🛑 0.8%' : '🛑 0.8%', callback_data: 'aut_turbosl_08' },
-                { text: orchestrator.turboSlPercentage === 0.9 ? '🔘 🛑 0.9%' : '🛑 0.9%', callback_data: 'aut_turbosl_09' },
-                { text: orchestrator.turboSlPercentage === 1.0 ? '🔘 🛑 1.0%' : '🛑 1.0%', callback_data: 'aut_turbosl_10' },
-                { text: orchestrator.turboSlPercentage === 1.2 ? '🔘 🛑 1.2%' : '🛑 1.2%', callback_data: 'aut_turbosl_12' }
-            ],
-            [
                 { text: orchestrator.postTpCooldownMinutes === 15 ? '🔘 ⏱️ 15 د' : '⏱️ 15 د', callback_data: 'aut_cool_15' },
                 { text: orchestrator.postTpCooldownMinutes === 30 ? '🔘 ⏱️ 30 د' : '⏱️ 30 د', callback_data: 'aut_cool_30' },
                 { text: orchestrator.postTpCooldownMinutes === 45 ? '🔘 ⏱️ 45 د' : '⏱️ 45 د', callback_data: 'aut_cool_45' },
                 { text: orchestrator.postTpCooldownMinutes === 0 ? '🔘 ⚪ بدون' : '⚪ بدون', callback_data: 'aut_cool_0' }
             ],
-            // Row 9: Navigation
+            // Row 11: Navigation
             [
                 { text: '🔙 رجوع للوحة القيادة الذاتية', callback_data: 'aut_main_menu' }
             ]
         ]
     };
+
+    if (isEdit && ctx.callbackQuery) {
+        await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: keyboard }).catch(async () => {
+            await ctx.replyWithHTML(msg, { reply_markup: keyboard });
+        });
+    } else {
+        await ctx.replyWithHTML(msg, { reply_markup: keyboard });
+    }
+}
+
+/**
+ * 13. Interactive Engine Selector Hub
+ */
+async function renderEngineSelectorHub(ctx: any, orchestrator: AutonomousOrchestrator, isEdit = false) {
+    const disabledSet = new Set(orchestrator.disabledEngines.map(e => e.toUpperCase()));
+    const activeCount = ALL_AVAILABLE_ENGINES.length - disabledSet.size;
+
+    let msg = `🎛️ <b>لوحة تحديد وإدارة محركات التحليل والتداول</b>\n`;
+    msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
+    msg += `• <b>المحركات المفعلة:</b> <b>${activeCount} محرك</b> ✅\n`;
+    msg += `• <b>المحركات المحظورة:</b> <b>${disabledSet.size} محرك</b> ❌\n\n`;
+    msg += `💡 <i>المحركات المحظورة تُستبعد كلياً من استهلاك موارد المعالج، ولن تشارك في التوافق أو فتح الصفقات حتى يتم تطويرها وتحديثها.</i>\n\n`;
+    msg += `👇 <b>اضغط على أي محرك لتبديل حالته بين تفعيل [✅] أو حظر [❌]:</b>`;
+
+    const engineRows: any[][] = [];
+    // Fast presets row
+    engineRows.push([
+        { text: '👑 المحركات الذهبية فقط', callback_data: 'aut_eng_preset_golden' },
+        { text: '🔄 تفعيل الجميع', callback_data: 'aut_eng_preset_all' }
+    ]);
+
+    // Grid of engines (3 per row)
+    for (let i = 0; i < ALL_AVAILABLE_ENGINES.length; i += 3) {
+        const row = ALL_AVAILABLE_ENGINES.slice(i, i + 3).map((eng: string) => {
+            const isEnabled = !disabledSet.has(eng);
+            const icon = isEnabled ? '✅' : '❌';
+            return {
+                text: `${icon} ${eng}`,
+                callback_data: `aut_eng_toggle_${eng}`
+            };
+        });
+        engineRows.push(row);
+    }
+
+    // Back button
+    engineRows.push([
+        { text: '🔙 رجوع لإعدادات التداول الذاتي', callback_data: 'aut_settings_hub' }
+    ]);
+
+    const keyboard = { inline_keyboard: engineRows };
 
     if (isEdit && ctx.callbackQuery) {
         await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: keyboard }).catch(async () => {
