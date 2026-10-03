@@ -330,6 +330,18 @@ export const registerAutonomousHandlers = (
         await renderAutonomousSettingsHub(ctx, orchestrator, true);
     });
 
+    bot.action('aut_toggle_loss_cooldown', async (ctx) => {
+        orchestrator.consecutiveLossCooldownEnabled = !orchestrator.consecutiveLossCooldownEnabled;
+        await User.updateOne({ isActive: true }, {
+            'autonomousSettings.consecutiveLossCooldownEnabled': orchestrator.consecutiveLossCooldownEnabled
+        }).catch(() => {});
+        const statusText = orchestrator.consecutiveLossCooldownEnabled
+            ? '🟢 تم تفعيل درع تبريد الخسائر (4 ساعات بعد خسارتين)'
+            : '⚪ تم تعطيل درع تبريد الخسائر';
+        await ctx.answerCbQuery(statusText).catch(() => {});
+        await renderAutonomousSettingsHub(ctx, orchestrator, true);
+    });
+
     bot.action(/^aut_turbosl_(08|09|10|12)$/, async (ctx) => {
         const valMap: Record<string, number> = { '08': 0.8, '09': 0.9, '10': 1.0, '12': 1.2 };
         const val = valMap[ctx.match[1]] || 0.9;
@@ -1844,6 +1856,12 @@ async function renderAutonomousSettingsHub(ctx: any, orchestrator: AutonomousOrc
     msg += `• <b>التأمين الفوري (Auto Break-Even):</b>\n  👉 <b>${beStatus}</b>\n`;
     msg += `  <i>ينقل الستوب لسعر الدخول + الرسوم فور صعود الصفقة +0.35% لضمان عدم الخسارة</i>\n\n`;
 
+    const lossCoolStatus = orchestrator.consecutiveLossCooldownEnabled
+        ? `🟢 مفعل (حظر العملة ${orchestrator.consecutiveLossCooldownHours} ساعات بعد ${orchestrator.consecutiveLossThreshold} خسارة متتالية)`
+        : '⚪ معطل';
+    msg += `• <b>درع تبريد الخسائر المتتالية (Loss Cooldown Guard):</b>\n  👉 <b>${lossCoolStatus}</b>\n`;
+    msg += `  <i>يحظر العملة تلقائياً 4 ساعات إذا سجلت خسارتين متتاليتين لمنع تكرار النزيف في عملات مثل QNT</i>\n\n`;
+
     msg += `• <b>الاتجاه المسموح للصفقات:</b>\n  👉 <b>${dirStatus}</b>\n\n`;
 
     msg += `• <b>فترة حظر العملة بعد الهدف (Anti-Peak Cooldown):</b>\n  👉 <b>${coolStatus}</b>\n`;
@@ -2044,12 +2062,16 @@ async function renderAutonomousSettingsHub(ctx: any, orchestrator: AutonomousOrc
                 {
                     text: orchestrator.autoBreakEvenEnabled ? '🛡️ تأمين الأرباح (BE): مفعل 🟢' : '🛡️ تأمين الأرباح (BE): معطل ⚪',
                     callback_data: 'aut_toggle_be'
+                },
+                {
+                    text: orchestrator.consecutiveLossCooldownEnabled ? '❄️ تبريد الخسائر: مفعل 🟢' : '❄️ تبريد الخسائر: معطل ⚪',
+                    callback_data: 'aut_toggle_loss_cooldown'
                 }
             ],
             [
                 { text: orchestrator.allowedDirection === 'BOTH' ? '🔘 🔄 كلاهما' : '🔄 كلاهما', callback_data: 'aut_dir_both' },
-                { text: orchestrator.allowedDirection === 'LONG_ONLY' ? '🔘 🟢 شراء' : '🟢 شراء', callback_data: 'aut_dir_long' },
-                { text: orchestrator.allowedDirection === 'SHORT_ONLY' ? '🔘 🔴 بيع' : '🔴 بيع', callback_data: 'aut_dir_short' }
+                { text: orchestrator.allowedDirection === 'LONG_ONLY' ? '🔘 🟢 شراء فقط (LONG)' : '🟢 شراء فقط (LONG)', callback_data: 'aut_dir_long' },
+                { text: orchestrator.allowedDirection === 'SHORT_ONLY' ? '🔘 🔴 بيع فقط (SHORT)' : '🔴 بيع فقط (SHORT)', callback_data: 'aut_dir_short' }
             ],
             [
                 { text: orchestrator.postTpCooldownMinutes === 15 ? '🔘 ⏱️ 15 د' : '⏱️ 15 د', callback_data: 'aut_cool_15' },

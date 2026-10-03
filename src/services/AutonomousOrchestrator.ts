@@ -46,8 +46,11 @@ export class AutonomousOrchestrator {
 
     // Advanced Risk and Strategy Controls
     public autoBreakEvenEnabled: boolean = true;
-    public allowedDirection: 'BOTH' | 'LONG_ONLY' | 'SHORT_ONLY' = 'BOTH';
+    public allowedDirection: 'BOTH' | 'LONG_ONLY' | 'SHORT_ONLY' = 'LONG_ONLY';
     public postTpCooldownMinutes: number = 30;
+    public consecutiveLossCooldownEnabled: boolean = true;
+    public consecutiveLossCooldownHours: number = 4;
+    public consecutiveLossThreshold: number = 2;
     public turboSlPercentage: number = 0.9; // 0.8% - 1.0%
     public positionMarginPct: number = 3; // % of capital margin per trade
     public leverageMode: 'DYNAMIC' | 'FIXED' = 'DYNAMIC';
@@ -79,6 +82,8 @@ export class AutonomousOrchestrator {
 
     // Cooldown map: key = `${cleanSymbol}_${direction}`, value = expireTimestamp (epoch ms)
     private recentTpCooldowns: Map<string, { direction: string; expireAt: number; symbol: string }> = new Map();
+    // Consecutive Loss Cooldown map: key = cleanSymbol, value = expireTimestamp
+    private recentLossCooldowns: Map<string, { expireAt: number; symbol: string; count: number }> = new Map();
 
     constructor(
         private bingx: BingXService,
@@ -134,6 +139,62 @@ export class AutonomousOrchestrator {
     }
 
     /**
+     * Checks if a symbol is in post-consecutive-loss cooldown period (e.g. 2 consecutive losses -> 4h ban)
+     */
+    async isSymbolInLossCooldown(symbol: string): Promise<{ inCooldown: boolean; remainingMinutes: number }> {
+        if (!this.consecutiveLossCooldownEnabled || this.consecutiveLossCooldownHours <= 0) {
+            return { inCooldown: false, remainingMinutes: 0 };
+        }
+
+        const cleanSym = symbol.toUpperCase().replace('/USDT:USDT', '').replace('-USDT', '').replace('/USDT', '');
+        const now = Date.now();
+
+        // 1. Check in-memory map
+        const memEntry = this.recentLossCooldowns.get(cleanSym);
+        if (memEntry && memEntry.expireAt > now) {
+            const remMins = Math.ceil((memEntry.expireAt - now) / 60000);
+            return { inCooldown: true, remainingMinutes: remMins };
+        } else if (memEntry && memEntry.expireAt <= now) {
+            this.recentLossCooldowns.delete(cleanSym);
+        }
+
+        // 2. Query database for last trades of this symbol
+        try {
+            const isPaper = this.currentMode === 'PAPER_TRADING';
+            const cooldownMs = this.consecutiveLossCooldownHours * 60 * 60 * 1000;
+
+            const lastTrades = await Trade.find({
+                isPaperTrade: isPaper ? true : { $ne: true },
+                symbol: new RegExp(`^${cleanSym}(/|-|$)`, 'i'),
+                currentStatus: { $in: ['CLOSED_PROFIT', 'CLOSED_LOSS'] }
+            }).sort({ closeTime: -1, closedAt: -1, createdAt: -1 }).limit(this.consecutiveLossThreshold);
+
+            if (lastTrades.length >= this.consecutiveLossThreshold) {
+                // Check if all last trades were full losses (pnl < -0.2 to exclude break-even tiny fee differences)
+                const allLosses = lastTrades.every(t => t.currentStatus === 'CLOSED_LOSS' && (t.pnl ?? 0) < -0.2);
+                if (allLosses) {
+                    const mostRecentClose = lastTrades[0].closeTime || lastTrades[0].closedAt || new Date();
+                    const elapsedMs = now - mostRecentClose.getTime();
+                    if (elapsedMs < cooldownMs) {
+                        const remMins = Math.ceil((cooldownMs - elapsedMs) / 60000);
+                        this.recentLossCooldowns.set(cleanSym, {
+                            expireAt: now + (cooldownMs - elapsedMs),
+                            symbol: cleanSym,
+                            count: lastTrades.length
+                        });
+                        logger.warn(`❄️ [LossCooldown] Symbol ${cleanSym} has ${lastTrades.length} consecutive losses. Cooldown active for next ${remMins}m.`);
+                        return { inCooldown: true, remainingMinutes: remMins };
+                    }
+                }
+            }
+        } catch (e: any) {
+            logger.warn(`[AutonomousOrchestrator] Error checking loss cooldown for ${cleanSym}: ${e.message}`);
+        }
+
+        return { inCooldown: false, remainingMinutes: 0 };
+    }
+
+    /**
      * Syncs runtime preferences from active database user
      */
     async syncSettingsFromUser(): Promise<void> {
@@ -142,6 +203,9 @@ export class AutonomousOrchestrator {
             if (admin?.autonomousSettings) {
                 if (admin.autonomousSettings.allowedDirection) this.allowedDirection = admin.autonomousSettings.allowedDirection;
                 if (admin.autonomousSettings.postTpCooldownMinutes !== undefined) this.postTpCooldownMinutes = admin.autonomousSettings.postTpCooldownMinutes;
+                if (admin.autonomousSettings.consecutiveLossCooldownEnabled !== undefined) this.consecutiveLossCooldownEnabled = admin.autonomousSettings.consecutiveLossCooldownEnabled;
+                if (admin.autonomousSettings.consecutiveLossCooldownHours !== undefined) this.consecutiveLossCooldownHours = admin.autonomousSettings.consecutiveLossCooldownHours;
+                if (admin.autonomousSettings.consecutiveLossThreshold !== undefined) this.consecutiveLossThreshold = admin.autonomousSettings.consecutiveLossThreshold;
                 if (admin.autonomousSettings.turboSlPercentage) this.turboSlPercentage = admin.autonomousSettings.turboSlPercentage;
                 if (admin.autonomousSettings.tradeStyle) this.tradeStyle = admin.autonomousSettings.tradeStyle;
                 if (admin.autonomousSettings.positionMarginPct) this.positionMarginPct = admin.autonomousSettings.positionMarginPct;
@@ -250,9 +314,24 @@ export class AutonomousOrchestrator {
             logger.info(`[AutonomousOrchestrator] Refreshing top watchlist via Live Market CCXT Scanner (cleanCryptoOnly: ${this.cleanCryptoOnlyEnabled})...`);
             const results = await this.pickerService.refreshScan(25, 'ccxt', undefined, this.cleanCryptoOnlyEnabled);
             if (results && results.length > 0) {
-                // Pick top 20 active liquid coins with high market momentum
+                // Pick top 20 active liquid crypto coins, strictly excluding TradFi indices/commodities
                 const top = results
-                    .filter(r => r.label !== 'AVOID')
+                    .filter(r => {
+                        if (r.label === 'AVOID') return false;
+                        const s = (r.shortName || '').toUpperCase();
+                        return !(
+                            s.startsWith('NCCO') ||
+                            s.startsWith('NCSI') ||
+                            s.includes('NASDAQ') ||
+                            s.includes('SPX') ||
+                            s.includes('US30') ||
+                            s.includes('DJI') ||
+                            s.includes('GER') ||
+                            s.includes('OIL') ||
+                            s.includes('GOLD') ||
+                            s.includes('SILVER')
+                        );
+                    })
                     .slice(0, 20)
                     .map(r => r.shortName);
 
@@ -417,11 +496,40 @@ export class AutonomousOrchestrator {
 
             for (const sym of this.activeWatchlist) {
                 const cleanSym = sym.toUpperCase().replace('/USDT:USDT', '').replace('-USDT', '').replace('/USDT', '');
+
+                // 1. Strict TradFi / Commodity / NASDAQ Exclusion
+                if (
+                    cleanSym.startsWith('NCCO') ||
+                    cleanSym.startsWith('NCSI') ||
+                    cleanSym.includes('NASDAQ') ||
+                    cleanSym.includes('SPX') ||
+                    cleanSym.includes('US30') ||
+                    cleanSym.includes('DJI') ||
+                    cleanSym.includes('GER') ||
+                    cleanSym.includes('OIL') ||
+                    cleanSym.includes('GOLD') ||
+                    cleanSym.includes('SILVER')
+                ) {
+                    continue;
+                }
+
                 if (activeSymbols.has(cleanSym)) {
                     evaluations.push({
                         symbol: sym,
                         score: 0,
                         direction: 'صفقة نشطة حالياً 🔒',
+                        executed: false
+                    });
+                    continue;
+                }
+
+                // 2. Consecutive Loss Cooldown Filter (e.g. 2 consecutive losses -> 4h ban)
+                const lossCooldownCheck = await this.isSymbolInLossCooldown(cleanSym);
+                if (lossCooldownCheck.inCooldown) {
+                    evaluations.push({
+                        symbol: sym,
+                        score: 0,
+                        direction: `تبريد خسائر ❄️ (باقي ${lossCooldownCheck.remainingMinutes} د)`,
                         executed: false
                     });
                     continue;

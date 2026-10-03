@@ -78,6 +78,9 @@ export interface IUser extends Document {
     autonomousSettings?: {
         allowedDirection: 'BOTH' | 'LONG_ONLY' | 'SHORT_ONLY';
         postTpCooldownMinutes: number;
+        consecutiveLossCooldownEnabled?: boolean;
+        consecutiveLossCooldownHours?: number;
+        consecutiveLossThreshold?: number;
         turboSlPercentage: number;
         breakEvenTriggerPct: number;
         microTpPercentage: number;
@@ -181,8 +184,11 @@ const UserSchema: Schema = new Schema({
         limit: { type: Number, default: 20 }
     },
     autonomousSettings: {
-        allowedDirection: { type: String, enum: ['BOTH', 'LONG_ONLY', 'SHORT_ONLY'], default: 'BOTH' },
+        allowedDirection: { type: String, enum: ['BOTH', 'LONG_ONLY', 'SHORT_ONLY'], default: 'LONG_ONLY' },
         postTpCooldownMinutes: { type: Number, default: 30 },
+        consecutiveLossCooldownEnabled: { type: Boolean, default: true },
+        consecutiveLossCooldownHours: { type: Number, default: 4 },
+        consecutiveLossThreshold: { type: Number, default: 2 },
         turboSlPercentage: { type: Number, default: 0.9 },
         breakEvenTriggerPct: { type: Number, default: 0.35 },
         microTpPercentage: { type: Number, default: 0.55 },

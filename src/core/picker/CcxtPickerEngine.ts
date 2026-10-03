@@ -7,7 +7,10 @@ import logger from '../../utils/logger';
 export const JUNK_AND_COMMODITY_BLACKLIST = new Set([
     'PUMP', 'NCCO1OILBRENT2USD', 'NCCOGOLD2USD', 'NCCOSILVER2USD', 'NCCOXAG2USD', 'NCCO1OILWTI2USD',
     'OIL', 'BRENT', 'GOLD', 'SILVER', 'XAUT', 'PAXG', 'XAU', 'XAG',
-    'LUNA', 'LUNC', 'FTT', 'USTC'
+    'LUNA', 'LUNC', 'FTT', 'USTC',
+    // TradFi Indices & Commodities
+    'NASDAQ', 'NCSINASDAQ', 'NCSINASDAQ1002USD', 'SPX', 'US30', 'DJI', 'GER40', 'UK100', 'US500', 'TECH100', 'NDX',
+    'WTI', 'COPPER', 'NGAS', 'NATGAS'
 ]);
 
 export class CcxtPickerEngine {
@@ -35,7 +38,20 @@ export class CcxtPickerEngine {
                 if (!isUsdtSwap) return false;
                 if (filterJunk) {
                     const cleanBase = symbol.split('/')[0].split(':')[0].toUpperCase();
-                    if (JUNK_AND_COMMODITY_BLACKLIST.has(cleanBase) || cleanBase.startsWith('NCCO')) {
+                    if (
+                        JUNK_AND_COMMODITY_BLACKLIST.has(cleanBase) ||
+                        cleanBase.startsWith('NCCO') ||
+                        cleanBase.startsWith('NCSI') ||
+                        cleanBase.includes('NASDAQ') ||
+                        cleanBase.includes('SPX') ||
+                        cleanBase.includes('US30') ||
+                        cleanBase.includes('DJI') ||
+                        cleanBase.includes('GER') ||
+                        cleanBase.includes('DOW') ||
+                        cleanBase.includes('OIL') ||
+                        cleanBase.includes('GOLD') ||
+                        cleanBase.includes('SILVER')
+                    ) {
                         return false;
                     }
                 }
